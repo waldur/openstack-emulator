@@ -17,6 +17,8 @@ from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
 )
+from emulator.core.scenario_manager import scenario_manager
+from emulator.core.scenarios import ScenarioCategory
 
 router = APIRouter()
 
@@ -34,6 +36,7 @@ SERVICES: dict[str, ServiceInfo] = {
     "glance": {"port": 9292, "name": "Image"},
     "neutron": {"port": 9696, "name": "Networking"},
     "octavia": {"port": 9876, "name": "Load Balancer"},
+    "scenarios": {"port": 8999, "name": "Scenarios"},
 }
 
 
@@ -663,6 +666,142 @@ tailwind.config = {
     .service-card-link:hover {
         transform: translateY(-2px);
     }
+    /* Scenario styles */
+    .scenario-warning {
+        background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.85; }
+    }
+    .scenario-card {
+        background: #161b22;
+        padding: 15px;
+        margin-bottom: 10px;
+        border: 1px solid #1e3a5f;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .scenario-card:hover {
+        border-color: #2d4a6f;
+    }
+    .scenario-card.active {
+        border-color: #f97316;
+        background: rgba(249, 115, 22, 0.1);
+    }
+    .scenario-card .scenario-info h4 {
+        margin: 0 0 5px 0;
+        font-size: 0.95rem;
+        color: #e6edf3;
+    }
+    .scenario-card .scenario-info p {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #8b949e;
+    }
+    .scenario-toggle {
+        position: relative;
+        width: 50px;
+        height: 26px;
+        background: #30363d;
+        border-radius: 13px;
+        cursor: pointer;
+        transition: background 0.3s;
+        flex-shrink: 0;
+    }
+    .scenario-toggle.active {
+        background: #f97316;
+    }
+    .scenario-toggle::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 20px;
+        height: 20px;
+        background: #e6edf3;
+        border-radius: 50%;
+        transition: transform 0.3s;
+    }
+    .scenario-toggle.active::after {
+        transform: translateX(24px);
+    }
+    .scenario-category {
+        margin-bottom: 25px;
+    }
+    .scenario-category h4 {
+        color: #f97316;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #1e3a5f;
+    }
+    .load-slider-container {
+        background: #161b22;
+        padding: 20px;
+        border: 1px solid #1e3a5f;
+        margin-bottom: 20px;
+    }
+    .load-slider-container h4 {
+        margin: 0 0 15px 0;
+        color: #00d4ff;
+    }
+    .load-slider {
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        background: #30363d;
+        outline: none;
+        -webkit-appearance: none;
+    }
+    .load-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #f97316;
+        cursor: pointer;
+    }
+    .load-value {
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #f97316;
+        margin-top: 10px;
+    }
+    .scenario-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+    }
+    .stat-card {
+        background: #161b22;
+        padding: 15px;
+        border: 1px solid #1e3a5f;
+        text-align: center;
+    }
+    .stat-card .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #00ff41;
+    }
+    .stat-card .stat-label {
+        font-size: 0.8rem;
+        color: #8b949e;
+        margin-top: 5px;
+    }
 </style>
 """
 
@@ -884,6 +1023,93 @@ JS_SCRIPT = """
             } else {
                 const result = await response.json();
                 showToast(result.detail || 'Action failed', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    // Scenario management functions
+    async function toggleScenario(scenarioId, isActive) {
+        const action = isActive ? 'disable' : 'enable';
+        try {
+            const response = await fetch('/api/scenarios/' + scenarioId + '/' + action, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('Scenario ' + (isActive ? 'disabled' : 'enabled'));
+                setTimeout(() => location.reload(), 500);
+            } else {
+                const result = await response.json();
+                showToast(result.detail || 'Failed to toggle scenario', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    let loadLevelTimeout = null;
+    function updateLoadDisplay(level) {
+        // Calculate delay range based on level (matches API logic)
+        const minDelay = Math.round(level * 20);  // 0-2000ms
+        const maxDelay = Math.round(level * 100); // 0-10000ms
+        const display = level == 0 ? 'No delay' : minDelay + '-' + maxDelay + 'ms';
+        document.getElementById('load-value').textContent = display;
+    }
+    function setLoadLevel(level) {
+        updateLoadDisplay(level);
+        // Debounce the API call - only fire after 300ms of no movement
+        if (loadLevelTimeout) clearTimeout(loadLevelTimeout);
+        loadLevelTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch('/api/scenarios/load', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: parseInt(level) })
+                });
+                if (response.ok && level > 0) {
+                    const minDelay = Math.round(level * 20);
+                    const maxDelay = Math.round(level * 100);
+                    showToast('Injecting ' + minDelay + '-' + maxDelay + 'ms delay');
+                } else if (response.ok && level == 0) {
+                    showToast('Load injection disabled');
+                }
+            } catch (error) {
+                console.error('Failed to set load level:', error);
+            }
+        }, 300);
+    }
+
+    async function resetAllScenarios() {
+        if (!confirm('Are you sure you want to disable all scenarios?')) {
+            return;
+        }
+        try {
+            const response = await fetch('/api/scenarios/reset', {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('All scenarios disabled');
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast('Failed to reset scenarios', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function applyPreset(presetName) {
+        try {
+            const response = await fetch('/api/scenarios/preset/' + presetName, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('Preset "' + presetName + '" applied');
+                setTimeout(() => location.reload(), 500);
+            } else {
+                const result = await response.json();
+                showToast(result.detail || 'Failed to apply preset', 'error');
             }
         } catch (error) {
             showToast('Network error', 'error');
@@ -1827,6 +2053,151 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
     """
 
 
+def build_scenarios_content(
+    all_scenarios: list,
+    active_scenarios: list,
+    stats: dict,
+) -> str:
+    """Build the scenarios tab content HTML."""
+    active_ids = {s.id for s in active_scenarios}
+
+    # Group scenarios by category
+    categories: dict[str, list] = {}
+    for scenario in all_scenarios:
+        cat = scenario.category.value
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(scenario)
+
+    # Build load slider
+    load_slider = """
+    <div class="load-slider-container">
+        <h4>System Load Level</h4>
+        <p style="font-size: 0.85rem; color: #8b949e; margin-bottom: 10px;">
+            Drag the slider to inject artificial latency into all API responses
+        </p>
+        <input type="range" class="load-slider" min="0" max="100" value="0"
+               oninput="setLoadLevel(this.value)">
+        <div id="load-value" class="load-value">No delay</div>
+    </div>
+    """
+
+    # Build preset buttons
+    presets = """
+    <div style="margin-bottom: 25px;">
+        <h4 style="margin-bottom: 12px; color: #00d4ff;">Environment Presets</h4>
+        <p style="font-size: 0.85rem; color: #6e7681; margin-bottom: 12px;">
+            Apply pre-configured scenario combinations to simulate real-world conditions
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-sm btn-success" onclick="applyPreset('healthy')" title="Reset all scenarios">
+                Healthy
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('degraded')" title="Light load + slow database">
+                Degraded
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('storage_crisis')" title="Storage issues + disk full">
+                Storage Crisis
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('network_trouble')" title="Network partition + latency">
+                Network Trouble
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('overloaded')" title="Heavy load + MQ issues + slow DB">
+                Overloaded
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('meltdown')" title="Complete infrastructure failure">
+                Meltdown
+            </button>
+        </div>
+    </div>
+    """
+
+    # Build scenario cards by category
+    scenario_sections = ""
+    category_names = {
+        "performance": "Performance / Load",
+        "service_crash": "Service Crashes",
+        "storage": "Storage Failures",
+        "network": "Network Issues",
+        "message_queue": "Message Queue",
+        "database": "Database",
+        "resource": "Resource Exhaustion",
+        "authentication": "Authentication",
+    }
+
+    for cat, scenarios in sorted(categories.items()):
+        cards = ""
+        for scenario in scenarios:
+            is_active = scenario.id in active_ids
+            active_class = "active" if is_active else ""
+            toggle_class = "active" if is_active else ""
+            target = scenario.target_service or "all services"
+
+            cards += f"""
+            <div class="scenario-card {active_class}">
+                <div class="scenario-info">
+                    <h4>{scenario.name}</h4>
+                    <p>{scenario.description}</p>
+                    <p style="font-size: 0.75rem; color: #6e7681;">Target: {target}</p>
+                </div>
+                <div class="scenario-toggle {toggle_class}"
+                     onclick="toggleScenario('{scenario.id}', {str(is_active).lower()})">
+                </div>
+            </div>
+            """
+
+        cat_name = category_names.get(cat, cat.replace("_", " ").title())
+        scenario_sections += f"""
+        <div class="scenario-category">
+            <h4>{cat_name}</h4>
+            {cards}
+        </div>
+        """
+
+    # Build stats section
+    global_stats = stats.get("global", {})
+    stats_html = f"""
+    <div style="margin-top: 30px;">
+        <h4 style="color: #00d4ff; margin-bottom: 15px;">Injection Statistics</h4>
+        <div class="scenario-stats">
+            <div class="stat-card">
+                <div class="stat-value">{len(active_scenarios)}</div>
+                <div class="stat-label">Active Scenarios</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('times_triggered', 0)}</div>
+                <div class="stat-label">Times Triggered</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('failures_injected', 0)}</div>
+                <div class="stat-label">Failures Injected</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('total_delay_injected_ms', 0) // 1000}s</div>
+                <div class="stat-label">Total Delay Added</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('timeouts_injected', 0)}</div>
+                <div class="stat-label">Timeouts Injected</div>
+            </div>
+        </div>
+    </div>
+    """
+
+    return f"""
+    <div class="resource-group">
+        <p style="margin-bottom: 20px; color: #8b949e;">
+            Enable scenarios to simulate various failure conditions and test your integration's resilience.
+            Active scenarios will inject delays, errors, or timeouts into API responses.
+        </p>
+        {load_slider}
+        {presets}
+        {scenario_sections}
+        {stats_html}
+    </div>
+    """
+
+
 def render_create_modals(
     flavors: list,
     images: list,
@@ -2412,6 +2783,15 @@ async def status_page(
     # Build modals
     modals = render_create_modals(flavors, images, networks, volumes, volume_types)
 
+    # Get active scenario count for badge display in header
+    active_scenarios = scenario_manager.get_active_scenarios()
+    active_count = len(active_scenarios)
+    scenarios_badge = (
+        f'<span class="count-badge" style="background: #f97316;">{active_count}</span>'
+        if active_count > 0
+        else ""
+    )
+
     # Build the full HTML page
     html = f"""
     <!DOCTYPE html>
@@ -2435,6 +2815,9 @@ async def status_page(
                         <p class="text-[#00d4ff] text-sm mt-1">Real-time monitoring &amp; resource management</p>
                     </div>
                     <div class="flex items-center gap-4">
+                        <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
+                            <span class="mr-2">⚡</span> SCENARIOS {scenarios_badge}
+                        </a>
                         <button class="btn btn-primary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
                         </button>
@@ -2678,6 +3061,96 @@ async def status_page(
         </div>
 
         {modals}
+        {JS_SCRIPT}
+    </body>
+    </html>
+    """
+
+    return html
+
+
+@router.get("/scenarios", response_class=HTMLResponse)
+async def scenarios_page(
+    request: Request,
+    auth_token: str | None = Cookie(default=None),
+) -> str:
+    """Render the dedicated scenarios management page."""
+    # Get scenarios data
+    all_scenarios = scenario_manager.list_scenarios()
+    active_scenarios = scenario_manager.get_active_scenarios()
+    stats = scenario_manager.get_stats()
+    active_count = len(active_scenarios)
+
+    # Build scenarios content HTML
+    scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
+
+    # Build the full HTML page
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>OPENSTACK EMULATOR // SCENARIOS</title>
+        {CSS_STYLES}
+    </head>
+    <body class="min-h-screen">
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Header -->
+        <header class="bg-[#0d1117] border-b border-[#1e3a5f] py-6 mb-8">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <div class="text-[#4a5568] text-xs uppercase tracking-widest mb-1">// FAILURE INJECTION SYSTEM</div>
+                        <h1 class="text-2xl font-bold text-[#f97316] tracking-wide">SCENARIO MANAGER</h1>
+                        <p class="text-[#00d4ff] text-sm mt-1">Simulate failures, latency, and chaos conditions</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <a href="/" class="btn btn-primary">
+                            <span class="mr-2">←</span> BACK TO STATUS
+                        </a>
+                        <button class="btn btn-secondary" onclick="location.reload()">
+                            <span class="mr-2">↻</span> REFRESH
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto px-6 pb-12">
+            <!-- Active Scenarios Summary -->
+            <div class="mb-8 bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#f97316] text-lg">⚡</span>
+                    <h2 class="text-lg font-semibold text-[#f97316] uppercase tracking-wider">Active Scenarios</h2>
+                    <span class="bg-[#f97316] bg-opacity-20 text-[#f97316] px-3 py-1 text-sm border border-[#f97316]">{active_count} ACTIVE</span>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#f97316] to-transparent"></div>
+                </div>
+                <p class="text-[#4a5568] text-sm mb-4">
+                    Enable scenarios below to inject failures and latency into API responses.
+                    Use this to test how your applications handle degraded OpenStack conditions.
+                </p>
+            </div>
+
+            <!-- Scenarios Content -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#00ff41] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Scenario Configuration</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                {scenarios_content}
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 text-center text-[#4a5568] text-xs">
+                <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
+                <div>OPENSTACK EMULATOR // SCENARIO INJECTION SYSTEM</div>
+                <div class="text-[#1e3a5f] mt-1">Changes take effect immediately</div>
+            </div>
+        </div>
+
         {JS_SCRIPT}
     </body>
     </html>
@@ -3400,3 +3873,149 @@ async def api_delete_snapshot(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     return {"message": "Snapshot deleted"}
+
+
+# =============================================================================
+# Management API - Scenarios
+# =============================================================================
+
+
+class ScenarioLoadRequest(BaseModel):
+    """Request to set load level."""
+
+    level: int
+
+
+@router.post("/api/scenarios/{scenario_id}/enable")
+async def api_enable_scenario(scenario_id: str) -> dict:
+    """Enable a scenario."""
+    scenario = scenario_manager.enable_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return {"message": f"Scenario '{scenario.name}' enabled"}
+
+
+@router.post("/api/scenarios/{scenario_id}/disable")
+async def api_disable_scenario(scenario_id: str) -> dict:
+    """Disable a scenario."""
+    scenario = scenario_manager.disable_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return {"message": f"Scenario '{scenario.name}' disabled"}
+
+
+@router.post("/api/scenarios/reset")
+async def api_reset_scenarios() -> dict:
+    """Reset all scenarios."""
+    scenario_manager.reset()
+    return {"message": "All scenarios disabled"}
+
+
+@router.post("/api/scenarios/preset/{preset_name}")
+async def api_apply_preset(preset_name: str) -> dict:
+    """Apply a scenario preset (enables multiple related scenarios)."""
+    preset_configs = {
+        "healthy": {
+            "description": "All systems nominal",
+            "scenarios": [],
+        },
+        "degraded": {
+            "description": "Degraded performance - slow responses",
+            "scenarios": ["light_load", "database_slow"],
+        },
+        "storage_crisis": {
+            "description": "Storage infrastructure problems",
+            "scenarios": ["slow_storage_backend", "cinder_disk_full", "cinder_slow"],
+        },
+        "network_trouble": {
+            "description": "Network infrastructure issues",
+            "scenarios": ["neutron_network_partition", "neutron_slow"],
+        },
+        "overloaded": {
+            "description": "System overload - multiple bottlenecks",
+            "scenarios": ["heavy_load", "rabbitmq_unstable", "database_slow"],
+        },
+        "meltdown": {
+            "description": "Complete infrastructure meltdown",
+            "scenarios": [
+                "cascading_failure",
+                "rabbitmq_down",
+                "quota_exceeded",
+                "keystone_overloaded",
+            ],
+        },
+    }
+
+    if preset_name not in preset_configs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown preset: {preset_name}. Available: {list(preset_configs.keys())}",
+        )
+
+    config = preset_configs[preset_name]
+
+    # Reset all scenarios first
+    scenario_manager.reset()
+
+    # Enable the preset's scenarios
+    for scenario_id in config["scenarios"]:
+        scenario_manager.enable_scenario(scenario_id)
+
+    return {
+        "message": f"Preset '{preset_name}' applied: {config['description']}",
+        "count": len(config["scenarios"]),
+    }
+
+
+@router.post("/api/scenarios/load")
+async def api_set_load_level(request: ScenarioLoadRequest) -> dict:
+    """Set system load level (0-100%)."""
+    from emulator.core.scenarios import (
+        DelayDistribution,
+        FailureType,
+        LoadProfile,
+        Scenario,
+    )
+
+    level = request.level
+
+    # Disable existing load level scenario
+    scenario_id = "load_level_all"
+    scenario_manager.disable_scenario(scenario_id)
+
+    if level == 0:
+        return {"message": "Load level set to 0%"}
+
+    # Calculate delays based on level
+    min_delay = int(level * 20)  # 0-2000ms
+    max_delay = int(level * 100)  # 0-10000ms
+    timeout_prob = max(0, (level - 80) / 100)
+    spike_prob = level / 200
+
+    # Create or update the load level scenario
+    existing = scenario_manager.get_scenario(scenario_id)
+    if existing:
+        scenario_manager.unregister_scenario(scenario_id)
+
+    scenario = Scenario(
+        id=scenario_id,
+        name=f"Load Level {level}%",
+        description=f"System load at {level}%",
+        category=ScenarioCategory.PERFORMANCE,
+        failure_type=FailureType.SLOW_RESPONSE,
+        target_service=None,
+        load_profile=LoadProfile(
+            min_delay_ms=min_delay,
+            max_delay_ms=max_delay,
+            distribution=DelayDistribution.NORMAL,
+            spike_probability=spike_prob,
+            spike_multiplier=2.0,
+            timeout_probability=timeout_prob,
+        ),
+        builtin=False,
+    )
+
+    scenario_manager.register_scenario(scenario)
+    scenario_manager.enable_scenario(scenario_id)
+
+    return {"message": f"Load level set to {level}%"}

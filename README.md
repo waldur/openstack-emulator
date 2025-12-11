@@ -71,6 +71,22 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - JSON API endpoint for programmatic access
   - Auto-refresh capability
 
+- **Scenario/Failure Injection System**
+  - **Load Simulation**: Inject latency into API responses (0-100% load levels)
+  - **Failure Injection**: Simulate service crashes, timeouts, and errors
+  - **Built-in Scenarios**: Pre-configured scenarios for common failure modes
+    - Service unavailability (Nova OOM, Glance down, etc.)
+    - Storage failures (disk full, slow backend)
+    - Network issues (partition, latency)
+    - Message queue problems (RabbitMQ unstable/down)
+    - Database connectivity issues
+    - Resource exhaustion (quota exceeded)
+  - **Load Presets**: Quick presets (light, moderate, heavy, stressed, chaos)
+  - **Gradual Degradation**: Simulate memory leaks with increasing latency
+  - **Per-service Targeting**: Apply scenarios to specific services or all
+  - **Statistics Tracking**: Monitor injection counts and total delay added
+  - **Web UI Integration**: Manage scenarios from the Status UI
+
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
   - Reset endpoint for testing
@@ -108,6 +124,7 @@ The emulator runs services on their standard OpenStack ports:
 - **Glance (Image)**: port 9292
 - **Neutron (Networking)**: port 9696
 - **Status (Web UI)**: port 10000
+- **Scenarios (Failure Injection)**: port 8999
 
 ```bash
 # Run all services on standard ports
@@ -203,6 +220,139 @@ DELETE /api/snapshots/{id} - Delete a snapshot
 ```
 
 The page auto-refreshes every 30 seconds. Use the JSON API endpoint for programmatic access to status information.
+
+### Scenario/Failure Injection
+
+The Scenario service allows you to simulate various failure conditions to test your OpenStack client's resilience.
+
+- **Scenarios API**: http://localhost:8999/
+- **Swagger UI**: http://localhost:8999/docs
+- **Web UI**: Available in the Status UI "Scenarios" tab (http://localhost:8000/)
+
+**Built-in Scenarios:**
+
+| Category | Scenario | Description |
+|----------|----------|-------------|
+| Performance | `light_load` | Light system load (100-500ms delays) |
+| Performance | `system_under_load` | Moderate load (500-3000ms delays) |
+| Performance | `heavy_load` | Heavy load with spikes |
+| Performance | `system_stressed` | Severe load with timeouts |
+| Performance | `gradual_degradation` | Increasing latency over time |
+| Service Crash | `nova_oom_crash` | Nova returns 503 errors |
+| Service Crash | `glance_unavailable` | Glance returns 503 errors |
+| Storage | `cinder_disk_full` | Volume creation fails |
+| Storage | `slow_storage_backend` | High latency storage ops |
+| Network | `neutron_network_partition` | Random network failures |
+| Message Queue | `rabbitmq_unstable` | Intermittent failures |
+| Message Queue | `rabbitmq_down` | Complete MQ failure |
+| Database | `database_connection_lost` | DB connectivity failure |
+| Resource | `quota_exceeded` | Create operations fail |
+| Auth | `keystone_overloaded` | Auth rate limiting |
+
+**API Endpoints:**
+
+```bash
+# List all available scenarios
+curl http://localhost:8999/scenarios | jq
+
+# Get active scenarios
+curl http://localhost:8999/scenarios/active | jq
+
+# Enable a scenario
+curl -X POST http://localhost:8999/scenarios/heavy_load/enable | jq
+
+# Disable a scenario
+curl -X POST http://localhost:8999/scenarios/heavy_load/disable | jq
+
+# Reset all scenarios
+curl -X POST http://localhost:8999/scenarios/reset | jq
+
+# Apply a preset (light, moderate, heavy, stressed, chaos)
+curl -X POST http://localhost:8999/scenarios/preset/heavy | jq
+
+# Set load level (0-100%)
+curl -X POST http://localhost:8999/scenarios/load \
+  -H "Content-Type: application/json" \
+  -d '{"level": 50}' | jq
+
+# Get injection statistics
+curl http://localhost:8999/scenarios/stats | jq
+
+# Create a custom scenario
+curl -X POST http://localhost:8999/scenarios/custom \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "my_scenario",
+    "name": "My Custom Scenario",
+    "description": "Custom test scenario",
+    "category": "performance",
+    "failureType": "slow_response",
+    "loadProfile": {
+      "minDelayMs": 500,
+      "maxDelayMs": 2000
+    }
+  }' | jq
+```
+
+**Example: Testing with Failure Injection**
+
+```bash
+# Enable Nova crash scenario
+curl -X POST http://localhost:8999/scenarios/nova_oom_crash/enable
+
+# Now Nova API calls will fail with 503
+curl -s http://localhost:8774/v2.1/servers \
+  -H "X-Auth-Token: $TOKEN"
+# Returns: {"error": {"message": "Service Unavailable...", "code": 503}}
+
+# Disable the scenario
+curl -X POST http://localhost:8999/scenarios/nova_oom_crash/disable
+```
+
+**Example: Load Testing**
+
+```bash
+# Set 50% load level (adds latency to all requests)
+curl -X POST http://localhost:8999/scenarios/load \
+  -H "Content-Type: application/json" \
+  -d '{"level": 50}'
+
+# API calls now have artificial delays
+time curl -s http://localhost:8774/v2.1/flavors \
+  -H "X-Auth-Token: $TOKEN"
+# real    0m1.234s  (includes injected delay)
+
+# Reset to normal
+curl -X POST http://localhost:8999/scenarios/reset
+```
+
+**Cross-Process State Sharing:**
+
+When running multiple services as separate processes (the default mode), the Scenario service shares state with other services via a file-based mechanism:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Multi-Process Architecture                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Scenarios Service (8999)         Nova Service (8774)           │
+│  ┌─────────────────────┐         ┌─────────────────────┐        │
+│  │ POST /enable        │         │ ScenarioMiddleware  │        │
+│  │       │             │         │       │             │        │
+│  │       ▼             │         │       ▼             │        │
+│  │  Write to file ─────┼─────────┼──► Read from file   │        │
+│  └─────────────────────┘         └─────────────────────┘        │
+│                                                                  │
+│  State File: /tmp/openstack-emulator-scenarios.json             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **State File**: Enabled scenarios are persisted to `/tmp/openstack-emulator-scenarios.json`
+- **File Locking**: Uses `fcntl` for safe concurrent access across processes
+- **Caching**: State is cached with a 0.5-second TTL to minimize file reads
+- **Automatic Sync**: Middleware reads shared state before processing each request
+
+This architecture ensures that when you enable a scenario via the Scenarios API, all service processes (Nova, Keystone, Cinder, etc.) immediately start applying the configured failures and delays.
 
 ### Example Usage with OpenStack CLI
 
@@ -704,7 +854,8 @@ GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
 GET http://localhost:9292/health   # Glance
 GET http://localhost:9696/health   # Neutron
-GET http://localhost:10000/health   # Status UI
+GET http://localhost:10000/health  # Status UI
+GET http://localhost:8999/health   # Scenarios
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
 
@@ -736,16 +887,22 @@ openstack-emulator/
 │   │   ├── app_glance.py    # Glance-only app (port 9292)
 │   │   ├── app_neutron.py   # Neutron-only app (port 9696)
 │   │   ├── app_status.py    # Status Web UI app (port 10000)
+│   │   ├── app_scenarios.py # Scenarios API app (port 8999)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── glance.py        # Glance Image API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
 │   │   ├── neutron.py       # Neutron Networking API endpoints
 │   │   ├── nova.py          # Nova Compute API endpoints
+│   │   ├── scenarios.py     # Scenario management API endpoints
 │   │   └── status_ui.py     # Status Web UI routes
 │   └── core/
 │       ├── __init__.py
 │       ├── database.py      # In-memory database
-│       └── models.py        # Data models (Server, Flavor, Image, Volume, Network, etc.)
+│       ├── middleware.py    # Scenario injection middleware
+│       ├── models.py        # Data models (Server, Flavor, Image, Volume, Network, etc.)
+│       ├── scenarios.py     # Scenario models and definitions
+│       ├── scenario_manager.py  # Scenario state and injection logic
+│       └── shared_state.py  # Cross-process state sharing for scenarios
 ├── tests/
 │   ├── __init__.py
 │   ├── test_cinder.py       # Cinder API tests
@@ -753,6 +910,7 @@ openstack-emulator/
 │   ├── test_keystone.py     # Keystone API tests
 │   ├── test_neutron.py      # Neutron API tests
 │   ├── test_nova.py         # Nova API tests
+│   ├── test_scenarios.py    # Scenario injection tests
 │   └── test_status.py       # Status UI tests
 ├── pyproject.toml           # Project configuration
 ├── CLAUDE.md                # Development guide
