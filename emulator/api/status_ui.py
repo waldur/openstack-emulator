@@ -3924,30 +3924,58 @@ async def api_reset_scenarios() -> dict:
 
 @router.post("/api/scenarios/preset/{preset_name}")
 async def api_apply_preset(preset_name: str) -> dict:
-    """Apply a scenario preset."""
-    preset_scenarios = {
-        "light": "light_load",
-        "moderate": "system_under_load",
-        "heavy": "heavy_load",
-        "stressed": "system_stressed",
-        "chaos": "cascading_failure",
+    """Apply a scenario preset (enables multiple related scenarios)."""
+    preset_configs = {
+        "healthy": {
+            "description": "All systems nominal",
+            "scenarios": [],
+        },
+        "degraded": {
+            "description": "Degraded performance - slow responses",
+            "scenarios": ["light_load", "database_slow"],
+        },
+        "storage_crisis": {
+            "description": "Storage infrastructure problems",
+            "scenarios": ["slow_storage_backend", "cinder_disk_full", "cinder_slow"],
+        },
+        "network_trouble": {
+            "description": "Network infrastructure issues",
+            "scenarios": ["neutron_network_partition", "neutron_slow"],
+        },
+        "overloaded": {
+            "description": "System overload - multiple bottlenecks",
+            "scenarios": ["heavy_load", "rabbitmq_unstable", "database_slow"],
+        },
+        "meltdown": {
+            "description": "Complete infrastructure meltdown",
+            "scenarios": [
+                "cascading_failure",
+                "rabbitmq_down",
+                "quota_exceeded",
+                "keystone_overloaded",
+            ],
+        },
     }
 
-    if preset_name not in preset_scenarios:
+    if preset_name not in preset_configs:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown preset: {preset_name}",
+            detail=f"Unknown preset: {preset_name}. Available: {list(preset_configs.keys())}",
         )
 
-    # Disable existing load scenarios
-    for scenario in scenario_manager.list_scenarios(enabled_only=True):
-        if scenario.category == ScenarioCategory.PERFORMANCE:
-            scenario_manager.disable_scenario(scenario.id)
+    config = preset_configs[preset_name]
 
-    scenario_id = preset_scenarios[preset_name]
-    scenario = scenario_manager.enable_scenario(scenario_id)
+    # Reset all scenarios first
+    scenario_manager.reset()
 
-    return {"message": f"Preset '{preset_name}' applied"}
+    # Enable the preset's scenarios
+    for scenario_id in config["scenarios"]:
+        scenario_manager.enable_scenario(scenario_id)
+
+    return {
+        "message": f"Preset '{preset_name}' applied: {config['description']}",
+        "count": len(config["scenarios"]),
+    }
 
 
 @router.post("/api/scenarios/load")
