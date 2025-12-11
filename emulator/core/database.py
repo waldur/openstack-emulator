@@ -4812,7 +4812,6 @@ class Database:
         url_path: str = "/",
         expected_codes: str = "200",
         admin_state_up: bool = True,
-        domain_name: str | None = None,
         tags: list[str] | None = None,
     ) -> HealthMonitor | None:
         """Create a new health monitor."""
@@ -4884,7 +4883,6 @@ class Database:
         url_path: str | None = None,
         expected_codes: str | None = None,
         admin_state_up: bool | None = None,
-        domain_name: str | None = None,
         tags: list[str] | None = None,
     ) -> HealthMonitor | None:
         """Update a health monitor."""
@@ -4911,8 +4909,6 @@ class Database:
                 monitor.expected_codes = expected_codes
             if admin_state_up is not None:
                 monitor.admin_state_up = admin_state_up
-            if domain_name is not None:
-                monitor.domain_name = domain_name
             if tags is not None:
                 monitor.tags = tags
 

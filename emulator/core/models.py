@@ -1555,6 +1555,8 @@ class RbacPolicy:
             "project_id": self.project_id,
             "action": self.action,
         }
+
+
 # Octavia Load Balancer Models
 
 
@@ -1674,9 +1676,7 @@ class HealthMonitor:
     admin_state_up: bool = True
     pool_id: str = ""
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -1719,9 +1719,7 @@ class PoolMember:
     admin_state_up: bool = True
     pool_id: str = ""
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     backup: bool = False
     monitor_address: str | None = None
@@ -1766,9 +1764,7 @@ class Pool:
     listener_id: str | None = None
     healthmonitor_id: str | None = None
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     members: list[PoolMember] = field(default_factory=list)
     session_persistence: dict[str, Any] | None = None
@@ -1792,9 +1788,7 @@ class Pool:
             "protocol": self.protocol.value,
             "lb_algorithm": self.lb_algorithm.value,
             "admin_state_up": self.admin_state_up,
-            "loadbalancers": (
-                [{"id": self.loadbalancer_id}] if self.loadbalancer_id else []
-            ),
+            "loadbalancers": ([{"id": self.loadbalancer_id}] if self.loadbalancer_id else []),
             "listeners": [{"id": self.listener_id}] if self.listener_id else [],
             "healthmonitor_id": self.healthmonitor_id,
             "project_id": self.project_id,
@@ -1829,9 +1823,7 @@ class L7Rule:
     admin_state_up: bool = True
     l7policy_id: str = ""
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -1872,9 +1864,7 @@ class L7Policy:
     admin_state_up: bool = True
     listener_id: str = ""
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     rules: list[L7Rule] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -1919,9 +1909,7 @@ class Listener:
     admin_state_up: bool = True
     loadbalancer_id: str = ""
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     default_tls_container_ref: str | None = None
     sni_container_refs: list[str] = field(default_factory=list)
@@ -1995,9 +1983,7 @@ class LoadBalancer:
     availability_zone: str | None = None
     provider: str = "amphora"
     project_id: str = ""
-    provisioning_status: LoadBalancerProvisioningStatus = (
-        LoadBalancerProvisioningStatus.ACTIVE
-    )
+    provisioning_status: LoadBalancerProvisioningStatus = LoadBalancerProvisioningStatus.ACTIVE
     operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
     listeners: list[Listener] = field(default_factory=list)
     pools: list[Pool] = field(default_factory=list)

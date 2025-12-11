@@ -391,9 +391,7 @@ class TestPools:
         # Update it
         response = client.put(
             f"/v2.0/lbaas/pools/{pool_id}",
-            json={
-                "pool": {"name": "updated-pool", "lb_algorithm": "LEAST_CONNECTIONS"}
-            },
+            json={"pool": {"name": "updated-pool", "lb_algorithm": "LEAST_CONNECTIONS"}},
         )
         assert response.status_code == 200
         data = response.json()
@@ -546,9 +544,7 @@ class TestMembers:
         assert response.status_code == 204
 
         # Verify it's gone
-        get_response = client.get(
-            f"/v2.0/lbaas/pools/{pool_id}/members/{member_id}"
-        )
+        get_response = client.get(f"/v2.0/lbaas/pools/{pool_id}/members/{member_id}")
         assert get_response.status_code == 404
 
 
@@ -888,9 +884,7 @@ class TestL7Rules:
         )
         rule_id = create_response.json()["rule"]["id"]
 
-        response = client.get(
-            f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}"
-        )
+        response = client.get(f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
         assert response.status_code == 200
         data = response.json()
         assert data["rule"]["id"] == rule_id
@@ -937,15 +931,11 @@ class TestL7Rules:
         )
         rule_id = create_response.json()["rule"]["id"]
 
-        response = client.delete(
-            f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}"
-        )
+        response = client.delete(f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
         assert response.status_code == 204
 
         # Verify it's gone
-        get_response = client.get(
-            f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}"
-        )
+        get_response = client.get(f"/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
         assert get_response.status_code == 404
 
 
@@ -990,9 +980,7 @@ class TestCascadeDelete:
         pool_id = pool_response.json()["pool"]["id"]
 
         # Cascade delete
-        response = client.delete(
-            f"/v2.0/lbaas/loadbalancers/{lb_id}?cascade=true"
-        )
+        response = client.delete(f"/v2.0/lbaas/loadbalancers/{lb_id}?cascade=true")
         assert response.status_code == 204
 
         # Verify all are gone

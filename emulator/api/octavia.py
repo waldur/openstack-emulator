@@ -66,17 +66,11 @@ class ListenerCreateRequest(BaseModel):
     loadbalancer_id: str = Field(alias="loadbalancer_id")
     connection_limit: int = Field(default=-1, alias="connection_limit")
     default_pool_id: str | None = Field(default=None, alias="default_pool_id")
-    default_tls_container_ref: str | None = Field(
-        default=None, alias="default_tls_container_ref"
-    )
-    sni_container_refs: list[str] | None = Field(
-        default=None, alias="sni_container_refs"
-    )
+    default_tls_container_ref: str | None = Field(default=None, alias="default_tls_container_ref")
+    sni_container_refs: list[str] | None = Field(default=None, alias="sni_container_refs")
     insert_headers: dict[str, str] | None = Field(default=None, alias="insert_headers")
     timeout_client_data: int | None = Field(default=None, alias="timeout_client_data")
-    timeout_member_connect: int | None = Field(
-        default=None, alias="timeout_member_connect"
-    )
+    timeout_member_connect: int | None = Field(default=None, alias="timeout_member_connect")
     timeout_member_data: int | None = Field(default=None, alias="timeout_member_data")
     allowed_cidrs: list[str] | None = Field(default=None, alias="allowed_cidrs")
     tags: list[str] | None = None
@@ -98,17 +92,11 @@ class ListenerUpdateRequest(BaseModel):
     admin_state_up: bool | None = Field(default=None, alias="admin_state_up")
     connection_limit: int | None = Field(default=None, alias="connection_limit")
     default_pool_id: str | None = Field(default=None, alias="default_pool_id")
-    default_tls_container_ref: str | None = Field(
-        default=None, alias="default_tls_container_ref"
-    )
-    sni_container_refs: list[str] | None = Field(
-        default=None, alias="sni_container_refs"
-    )
+    default_tls_container_ref: str | None = Field(default=None, alias="default_tls_container_ref")
+    sni_container_refs: list[str] | None = Field(default=None, alias="sni_container_refs")
     insert_headers: dict[str, str] | None = Field(default=None, alias="insert_headers")
     timeout_client_data: int | None = Field(default=None, alias="timeout_client_data")
-    timeout_member_connect: int | None = Field(
-        default=None, alias="timeout_member_connect"
-    )
+    timeout_member_connect: int | None = Field(default=None, alias="timeout_member_connect")
     timeout_member_data: int | None = Field(default=None, alias="timeout_member_data")
     allowed_cidrs: list[str] | None = Field(default=None, alias="allowed_cidrs")
     tags: list[str] | None = None
@@ -132,9 +120,7 @@ class PoolCreateRequest(BaseModel):
     lb_algorithm: str = Field(alias="lb_algorithm")
     loadbalancer_id: str | None = Field(default=None, alias="loadbalancer_id")
     listener_id: str | None = Field(default=None, alias="listener_id")
-    session_persistence: dict[str, Any] | None = Field(
-        default=None, alias="session_persistence"
-    )
+    session_persistence: dict[str, Any] | None = Field(default=None, alias="session_persistence")
     tls_enabled: bool = Field(default=False, alias="tls_enabled")
     tags: list[str] | None = None
 
@@ -154,9 +140,7 @@ class PoolUpdateRequest(BaseModel):
     description: str | None = None
     admin_state_up: bool | None = Field(default=None, alias="admin_state_up")
     lb_algorithm: str | None = Field(default=None, alias="lb_algorithm")
-    session_persistence: dict[str, Any] | None = Field(
-        default=None, alias="session_persistence"
-    )
+    session_persistence: dict[str, Any] | None = Field(default=None, alias="session_persistence")
     tls_enabled: bool | None = Field(default=None, alias="tls_enabled")
     tags: list[str] | None = None
 
@@ -428,9 +412,7 @@ async def get_loadbalancer(lb_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/loadbalancers/{lb_id}")
 @router.put("/v2/lbaas/loadbalancers/{lb_id}")
-async def update_loadbalancer(
-    lb_id: str, body: LoadBalancerUpdateBody
-) -> dict[str, Any]:
+async def update_loadbalancer(lb_id: str, body: LoadBalancerUpdateBody) -> dict[str, Any]:
     """Update a load balancer."""
     req = body.loadbalancer
     lb = db.update_load_balancer(
@@ -447,9 +429,7 @@ async def update_loadbalancer(
 
 @router.delete("/v2.0/lbaas/loadbalancers/{lb_id}", status_code=204)
 @router.delete("/v2/lbaas/loadbalancers/{lb_id}", status_code=204)
-async def delete_loadbalancer(
-    lb_id: str, cascade: bool = Query(default=False)
-) -> None:
+async def delete_loadbalancer(lb_id: str, cascade: bool = Query(default=False)) -> None:
     """Delete a load balancer."""
     if not db.delete_load_balancer(lb_id, cascade=cascade):
         raise HTTPException(status_code=404, detail="Load balancer not found")
@@ -610,9 +590,7 @@ async def get_listener(listener_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/listeners/{listener_id}")
 @router.put("/v2/lbaas/listeners/{listener_id}")
-async def update_listener(
-    listener_id: str, body: ListenerUpdateBody
-) -> dict[str, Any]:
+async def update_listener(listener_id: str, body: ListenerUpdateBody) -> dict[str, Any]:
     """Update a listener."""
     req = body.listener
     listener = db.update_listener(
@@ -807,9 +785,7 @@ async def get_member(pool_id: str, member_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/pools/{pool_id}/members/{member_id}")
 @router.put("/v2/lbaas/pools/{pool_id}/members/{member_id}")
-async def update_member(
-    pool_id: str, member_id: str, body: MemberUpdateBody
-) -> dict[str, Any]:
+async def update_member(pool_id: str, member_id: str, body: MemberUpdateBody) -> dict[str, Any]:
     """Update a pool member."""
     req = body.member
     member = db.update_pool_member(
@@ -985,9 +961,7 @@ async def get_l7policy(l7policy_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/l7policies/{l7policy_id}")
 @router.put("/v2/lbaas/l7policies/{l7policy_id}")
-async def update_l7policy(
-    l7policy_id: str, body: L7PolicyUpdateBody
-) -> dict[str, Any]:
+async def update_l7policy(l7policy_id: str, body: L7PolicyUpdateBody) -> dict[str, Any]:
     """Update an L7 policy."""
     req = body.l7policy
     policy = db.update_l7policy(
@@ -1070,9 +1044,7 @@ async def get_l7rule(l7policy_id: str, rule_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
 @router.put("/v2/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
-async def update_l7rule(
-    l7policy_id: str, rule_id: str, body: L7RuleUpdateBody
-) -> dict[str, Any]:
+async def update_l7rule(l7policy_id: str, rule_id: str, body: L7RuleUpdateBody) -> dict[str, Any]:
     """Update an L7 rule."""
     req = body.rule
     rule = db.update_l7rule(
