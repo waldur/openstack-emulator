@@ -326,6 +326,34 @@ time curl -s http://localhost:8774/v2.1/flavors \
 curl -X POST http://localhost:8999/scenarios/reset
 ```
 
+**Cross-Process State Sharing:**
+
+When running multiple services as separate processes (the default mode), the Scenario service shares state with other services via a file-based mechanism:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Multi-Process Architecture                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Scenarios Service (8999)         Nova Service (8774)           │
+│  ┌─────────────────────┐         ┌─────────────────────┐        │
+│  │ POST /enable        │         │ ScenarioMiddleware  │        │
+│  │       │             │         │       │             │        │
+│  │       ▼             │         │       ▼             │        │
+│  │  Write to file ─────┼─────────┼──► Read from file   │        │
+│  └─────────────────────┘         └─────────────────────┘        │
+│                                                                  │
+│  State File: /tmp/openstack-emulator-scenarios.json             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **State File**: Enabled scenarios are persisted to `/tmp/openstack-emulator-scenarios.json`
+- **File Locking**: Uses `fcntl` for safe concurrent access across processes
+- **Caching**: State is cached with a 0.5-second TTL to minimize file reads
+- **Automatic Sync**: Middleware reads shared state before processing each request
+
+This architecture ensures that when you enable a scenario via the Scenarios API, all service processes (Nova, Keystone, Cinder, etc.) immediately start applying the configured failures and delays.
+
 ### Example Usage with OpenStack CLI
 
 ```bash
@@ -873,7 +901,8 @@ openstack-emulator/
 │       ├── middleware.py    # Scenario injection middleware
 │       ├── models.py        # Data models (Server, Flavor, Image, Volume, Network, etc.)
 │       ├── scenarios.py     # Scenario models and definitions
-│       └── scenario_manager.py  # Scenario state and injection logic
+│       ├── scenario_manager.py  # Scenario state and injection logic
+│       └── shared_state.py  # Cross-process state sharing for scenarios
 ├── tests/
 │   ├── __init__.py
 │   ├── test_cinder.py       # Cinder API tests

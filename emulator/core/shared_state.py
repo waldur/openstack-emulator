@@ -6,14 +6,12 @@ service and the individual OpenStack service processes (nova, keystone, etc.).
 
 import fcntl
 import json
-import os
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
+from typing import Any, cast
 
 # Default state file location
 DEFAULT_STATE_FILE = Path(tempfile.gettempdir()) / "openstack-emulator-scenarios.json"
@@ -63,7 +61,7 @@ class SharedStateManager:
                     content = f.read()
                     if not content:
                         return {"enabled_scenarios": {}, "version": 1}
-                    return json.loads(content)
+                    return cast(dict[str, Any], json.loads(content))
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except (FileNotFoundError, json.JSONDecodeError):
@@ -109,7 +107,7 @@ class SharedStateManager:
     def get_enabled_scenarios(self) -> dict[str, dict[str, Any]]:
         """Get dictionary of enabled scenario IDs and their config overrides."""
         state = self.get_state()
-        return state.get("enabled_scenarios", {})
+        return cast(dict[str, dict[str, Any]], state.get("enabled_scenarios", {}))
 
     def is_scenario_enabled(self, scenario_id: str) -> bool:
         """Check if a specific scenario is enabled."""

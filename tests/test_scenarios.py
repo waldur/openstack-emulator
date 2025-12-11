@@ -5,13 +5,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app_scenarios import app as scenarios_app
 from emulator.api.app_nova import app as nova_app
+from emulator.api.app_scenarios import app as scenarios_app
 from emulator.core.database import db
 from emulator.core.scenario_manager import scenario_manager
 from emulator.core.scenarios import (
-    DelayDistribution,
-    FailureConfig,
     FailureType,
     LoadProfile,
     Scenario,

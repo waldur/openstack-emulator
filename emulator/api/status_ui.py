@@ -13,12 +13,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
-from emulator.core.scenario_manager import scenario_manager
-from emulator.core.scenarios import ScenarioCategory
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
 )
+from emulator.core.scenario_manager import scenario_manager
+from emulator.core.scenarios import ScenarioCategory
 
 router = APIRouter()
 
@@ -2783,12 +2783,8 @@ async def status_page(
     # Build modals
     modals = render_create_modals(flavors, images, networks, volumes, volume_types)
 
-    # Build scenarios content
-    all_scenarios = scenario_manager.list_scenarios()
+    # Get active scenario count for badge display in header
     active_scenarios = scenario_manager.get_active_scenarios()
-    stats = scenario_manager.get_stats()
-
-    # Badge for active scenarios
     active_count = len(active_scenarios)
     scenarios_badge = (
         f'<span class="count-badge" style="background: #f97316;">{active_count}</span>'
@@ -3083,14 +3079,7 @@ async def scenarios_page(
     all_scenarios = scenario_manager.list_scenarios()
     active_scenarios = scenario_manager.get_active_scenarios()
     stats = scenario_manager.get_stats()
-
-    # Badge for active scenarios
     active_count = len(active_scenarios)
-    scenarios_badge = (
-        f'<span class="count-badge" style="background: #f97316;">{active_count}</span>'
-        if active_count > 0
-        else ""
-    )
 
     # Build scenarios content HTML
     scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
@@ -3986,7 +3975,6 @@ async def api_set_load_level(request: ScenarioLoadRequest) -> dict:
         FailureType,
         LoadProfile,
         Scenario,
-        ScenarioCategory,
     )
 
     level = request.level

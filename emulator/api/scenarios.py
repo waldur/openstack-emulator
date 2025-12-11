@@ -14,7 +14,6 @@ from emulator.core.scenarios import (
     LoadProfile,
     Scenario,
     ScenarioCategory,
-    ScenarioStats,
 )
 
 router = APIRouter(tags=["scenarios"])
