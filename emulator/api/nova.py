@@ -448,17 +448,31 @@ async def update_server_metadata(
     return {"metadata": updated.metadata if updated else {}}
 
 
+def _parse_is_public(value: str | None) -> bool | None:
+    """Parse is_public query parameter.
+
+    OpenStack SDK sends 'None' as a string, so we need to handle that case.
+    """
+    if value is None or value == "None":
+        return None
+    if value.lower() in ("true", "1", "yes"):
+        return True
+    if value.lower() in ("false", "0", "no"):
+        return False
+    return None
+
+
 # Flavor endpoints
 @router.get("/v2.1/flavors")
 async def list_flavors(
-    is_public: bool | None = None,
+    is_public: str | None = Query(None),
     limit: int | None = Query(None, ge=1),
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List flavors (basic info)."""
     get_token_or_raise(x_auth_token)
 
-    flavors = db.list_flavors(is_public=is_public, limit=limit)
+    flavors = db.list_flavors(is_public=_parse_is_public(is_public), limit=limit)
     return {
         "flavors": [f.to_dict(detailed=False) for f in flavors],
         "flavors_links": [],
@@ -467,14 +481,14 @@ async def list_flavors(
 
 @router.get("/v2.1/flavors/detail")
 async def list_flavors_detail(
-    is_public: bool | None = None,
+    is_public: str | None = Query(None),
     limit: int | None = Query(None, ge=1),
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List flavors (detailed info)."""
     get_token_or_raise(x_auth_token)
 
-    flavors = db.list_flavors(is_public=is_public, limit=limit)
+    flavors = db.list_flavors(is_public=_parse_is_public(is_public), limit=limit)
     return {
         "flavors": [f.to_dict(detailed=True) for f in flavors],
         "flavors_links": [],

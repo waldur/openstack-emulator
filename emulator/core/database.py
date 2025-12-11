@@ -2935,6 +2935,7 @@ class Database:
             name="private",
             description="Default private network",
             project_id="admin",
+            shared=True,  # Shared so all projects can see/use it
         )
         self._networks[private_network.id] = private_network
 
