@@ -2053,7 +2053,7 @@ async def status_page(
 ) -> str:
     """Render the main status page."""
     # Determine the host from the request
-    host = request.headers.get("host", "localhost:8000").split(":")[0]
+    host = request.headers.get("host", "localhost:10000").split(":")[0]
     if host == "localhost" or host == "127.0.0.1":
         check_host = "localhost"
     else:
@@ -2402,7 +2402,7 @@ async def status_page(
 @router.get("/api/status")
 async def api_status(request: Request) -> dict:
     """Return status as JSON for programmatic access."""
-    host = request.headers.get("host", "localhost:8000").split(":")[0]
+    host = request.headers.get("host", "localhost:10000").split(":")[0]
     if host == "localhost" or host == "127.0.0.1":
         check_host = "localhost"
     else:

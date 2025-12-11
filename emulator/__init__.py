@@ -18,7 +18,7 @@ SERVICE_PORTS = {
     "cinder": 8776,
     "glance": 9292,
     "neutron": 9696,
-    "status": 8000,
+    "status": 10000,
 }
 
 SERVICE_APPS = {
@@ -103,7 +103,7 @@ def main() -> None:
         choices=["keystone", "nova", "cinder", "glance", "neutron", "status", "all"],
         default="all",
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
-        "glance (9292), neutron (9696), status (8000), or all (default: all)",
+        "glance (9292), neutron (9696), status (10000), or all (default: all)",
     )
     parser.add_argument(
         "--port-offset",

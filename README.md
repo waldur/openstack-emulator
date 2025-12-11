@@ -107,7 +107,7 @@ The emulator runs services on their standard OpenStack ports:
 - **Cinder (Block Storage)**: port 8776
 - **Glance (Image)**: port 9292
 - **Neutron (Networking)**: port 9696
-- **Status (Web UI)**: port 8000
+- **Status (Web UI)**: port 10000
 
 ```bash
 # Run all services on standard ports
@@ -119,7 +119,7 @@ openstack-emulator --service=nova       # Port 8774
 openstack-emulator --service=cinder     # Port 8776
 openstack-emulator --service=glance     # Port 9292
 openstack-emulator --service=neutron    # Port 9696
-openstack-emulator --service=status     # Port 8000 (Web UI)
+openstack-emulator --service=status     # Port 10000 (Web UI)
 
 # Or using uvicorn directly for individual services
 uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
@@ -127,7 +127,7 @@ uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
 uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
 uvicorn emulator.api.app_glance:app --host 0.0.0.0 --port 9292
 uvicorn emulator.api.app_neutron:app --host 0.0.0.0 --port 9696
-uvicorn emulator.api.app_status:app --host 0.0.0.0 --port 8000
+uvicorn emulator.api.app_status:app --host 0.0.0.0 --port 10000
 ```
 
 ### API Documentation
@@ -138,14 +138,14 @@ Once running, you can access Swagger UI for each service:
 - Cinder: http://localhost:8776/docs
 - Glance: http://localhost:9292/docs
 - Neutron: http://localhost:9696/docs
-- Status UI: http://localhost:8000/
+- Status UI: http://localhost:10000/
 
 ### Status Web UI
 
 The Status Web UI provides a real-time dashboard to view and manage the state of the emulator:
 
-- **Dashboard URL**: http://localhost:8000/
-- **JSON API**: http://localhost:8000/api/status
+- **Dashboard URL**: http://localhost:10000/
+- **JSON API**: http://localhost:10000/api/status
 
 **Features:**
 - Service health status (running/offline)
@@ -704,7 +704,7 @@ GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
 GET http://localhost:9292/health   # Glance
 GET http://localhost:9696/health   # Neutron
-GET http://localhost:8000/health   # Status UI
+GET http://localhost:10000/health   # Status UI
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
 
@@ -735,7 +735,7 @@ openstack-emulator/
 │   │   ├── app_cinder.py    # Cinder-only app (port 8776)
 │   │   ├── app_glance.py    # Glance-only app (port 9292)
 │   │   ├── app_neutron.py   # Neutron-only app (port 9696)
-│   │   ├── app_status.py    # Status Web UI app (port 8000)
+│   │   ├── app_status.py    # Status Web UI app (port 10000)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── glance.py        # Glance Image API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
