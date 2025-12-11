@@ -335,7 +335,25 @@ class Database:
             return False
 
     def _generate_service_catalog(self, base_url: str) -> list[dict[str, Any]]:
-        """Generate a service catalog for tokens."""
+        """Generate a service catalog for tokens.
+
+        Uses standard OpenStack ports:
+        - Keystone (Identity): 5000
+        - Nova (Compute): 8774
+        - Cinder (Block Storage): 8776
+        """
+        from urllib.parse import urlparse
+
+        # Parse the base URL to extract host for building service URLs
+        parsed = urlparse(base_url)
+        host = parsed.hostname or "localhost"
+        scheme = parsed.scheme or "http"
+
+        # Build URLs with standard OpenStack ports
+        keystone_url = f"{scheme}://{host}:5000"
+        nova_url = f"{scheme}://{host}:8774"
+        cinder_url = f"{scheme}://{host}:8776"
+
         return [
             {
                 "type": "compute",
@@ -344,17 +362,17 @@ class Database:
                     {
                         "region": "RegionOne",
                         "interface": "public",
-                        "url": f"{base_url}/v2.1",
+                        "url": f"{nova_url}/v2.1",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "internal",
-                        "url": f"{base_url}/v2.1",
+                        "url": f"{nova_url}/v2.1",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "admin",
-                        "url": f"{base_url}/v2.1",
+                        "url": f"{nova_url}/v2.1",
                     },
                 ],
             },
@@ -365,17 +383,17 @@ class Database:
                     {
                         "region": "RegionOne",
                         "interface": "public",
-                        "url": f"{base_url}/v3",
+                        "url": f"{keystone_url}/v3",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "internal",
-                        "url": f"{base_url}/v3",
+                        "url": f"{keystone_url}/v3",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "admin",
-                        "url": f"{base_url}/v3",
+                        "url": f"{keystone_url}/v3",
                     },
                 ],
             },
@@ -386,17 +404,17 @@ class Database:
                     {
                         "region": "RegionOne",
                         "interface": "public",
-                        "url": f"{base_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/%(project_id)s",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "internal",
-                        "url": f"{base_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/%(project_id)s",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "admin",
-                        "url": f"{base_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/%(project_id)s",
                     },
                 ],
             },

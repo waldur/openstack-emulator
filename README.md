@@ -68,30 +68,44 @@ pip install -e ".[dev]"
 
 ### Running the emulator
 
+The emulator runs services on their standard OpenStack ports:
+- **Keystone (Identity)**: port 5000
+- **Nova (Compute)**: port 8774
+- **Cinder (Block Storage)**: port 8776
+
 ```bash
-# Using the CLI
+# Run all services on standard ports (recommended)
 openstack-emulator
 
-# Or using Python
-python -m emulator
+# Run all services on standard ports (explicit)
+openstack-emulator --service=all
 
-# Or using uvicorn directly
-uvicorn emulator.api.app:app --host 0.0.0.0 --port 8774
+# Run a specific service
+openstack-emulator --service=keystone   # Port 5000
+openstack-emulator --service=nova       # Port 8774
+openstack-emulator --service=cinder     # Port 8776
+
+# Run combined mode (all services on single port - legacy)
+openstack-emulator --service=combined --port=8774
+
+# Or using uvicorn directly for individual services
+uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
+uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
+uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
 ```
-
-The emulator will start on `http://localhost:8774` by default.
 
 ### API Documentation
 
-Once running, you can access:
-- Swagger UI: http://localhost:8774/docs
-- ReDoc: http://localhost:8774/redoc
+Once running, you can access Swagger UI for each service:
+- Keystone: http://localhost:5000/docs
+- Nova: http://localhost:8774/docs
+- Cinder: http://localhost:8776/docs
 
 ### Example Usage with OpenStack CLI
 
 ```bash
-# Set environment variables
-export OS_AUTH_URL=http://localhost:8774/v3
+# Set environment variables (using standard OpenStack ports)
+export OS_AUTH_URL=http://localhost:5000/v3
 export OS_PROJECT_NAME=admin
 export OS_USERNAME=admin
 export OS_PASSWORD=secret
@@ -150,7 +164,7 @@ openstack volume delete my-volume
 from openstack import connection
 
 conn = connection.Connection(
-    auth_url="http://localhost:8774/v3",
+    auth_url="http://localhost:5000/v3",
     project_name="admin",
     username="admin",
     password="secret",
@@ -184,8 +198,8 @@ conn.compute.delete_server(server)
 ### Example Usage with curl
 
 ```bash
-# Get authentication token
-TOKEN=$(curl -s -X POST http://localhost:8774/v3/auth/tokens \
+# Get authentication token (Keystone on port 5000)
+TOKEN=$(curl -s -X POST http://localhost:5000/v3/auth/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "auth": {
@@ -232,157 +246,160 @@ curl -s http://localhost:8774/v2.1/flavors/detail \
 ### Keystone API Examples
 
 ```bash
-# List domains
-curl -s http://localhost:8774/v3/domains \
+# List domains (Keystone on port 5000)
+curl -s http://localhost:5000/v3/domains \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a new domain
-curl -s -X POST http://localhost:8774/v3/domains \
+curl -s -X POST http://localhost:5000/v3/domains \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"domain": {"name": "my-domain", "description": "My Domain"}}' | jq
 
 # List projects
-curl -s http://localhost:8774/v3/projects \
+curl -s http://localhost:5000/v3/projects \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a new project
-curl -s -X POST http://localhost:8774/v3/projects \
+curl -s -X POST http://localhost:5000/v3/projects \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"project": {"name": "my-project", "description": "My Project"}}' | jq
 
 # List users
-curl -s http://localhost:8774/v3/users \
+curl -s http://localhost:5000/v3/users \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a new user
-curl -s -X POST http://localhost:8774/v3/users \
+curl -s -X POST http://localhost:5000/v3/users \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user": {"name": "newuser", "password": "secret123", "email": "user@example.com"}}' | jq
 
 # List roles
-curl -s http://localhost:8774/v3/roles \
+curl -s http://localhost:5000/v3/roles \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Assign role to user on project
-curl -s -X PUT "http://localhost:8774/v3/projects/<project-id>/users/<user-id>/roles/<role-id>" \
+curl -s -X PUT "http://localhost:5000/v3/projects/<project-id>/users/<user-id>/roles/<role-id>" \
   -H "X-Auth-Token: $TOKEN"
 
 # List groups
-curl -s http://localhost:8774/v3/groups \
+curl -s http://localhost:5000/v3/groups \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a group and add user
-curl -s -X POST http://localhost:8774/v3/groups \
+curl -s -X POST http://localhost:5000/v3/groups \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"group": {"name": "developers", "description": "Developer group"}}' | jq
 
 # Add user to group
-curl -s -X PUT "http://localhost:8774/v3/groups/<group-id>/users/<user-id>" \
+curl -s -X PUT "http://localhost:5000/v3/groups/<group-id>/users/<user-id>" \
   -H "X-Auth-Token: $TOKEN"
 
 # List services
-curl -s http://localhost:8774/v3/services \
+curl -s http://localhost:5000/v3/services \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # List endpoints
-curl -s http://localhost:8774/v3/endpoints \
+curl -s http://localhost:5000/v3/endpoints \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # List regions
-curl -s http://localhost:8774/v3/regions \
+curl -s http://localhost:5000/v3/regions \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
 ### Cinder API Examples
 
 ```bash
-# Get project ID from token (needed for Cinder API)
-PROJECT_ID=$(curl -s http://localhost:8774/v3/auth/tokens \
+# Get project ID from token (Keystone on port 5000)
+PROJECT_ID=$(curl -s http://localhost:5000/v3/auth/tokens \
   -H "X-Auth-Token: $TOKEN" \
   -H "X-Subject-Token: $TOKEN" | jq -r '.token.project.id')
 
-# List volumes
-curl -s "http://localhost:8774/v3/$PROJECT_ID/volumes/detail" \
+# List volumes (Cinder on port 8776)
+curl -s "http://localhost:8776/v3/$PROJECT_ID/volumes/detail" \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a volume
-curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/volumes" \
+curl -s -X POST "http://localhost:8776/v3/$PROJECT_ID/volumes" \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"volume": {"name": "my-volume", "size": 10}}' | jq
 
 # Show volume details
-curl -s "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+curl -s "http://localhost:8776/v3/$PROJECT_ID/volumes/<volume-id>" \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Update a volume
-curl -s -X PUT "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+curl -s -X PUT "http://localhost:8776/v3/$PROJECT_ID/volumes/<volume-id>" \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"volume": {"name": "renamed-volume", "description": "Updated description"}}' | jq
 
 # Extend a volume
-curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>/action" \
+curl -s -X POST "http://localhost:8776/v3/$PROJECT_ID/volumes/<volume-id>/action" \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"os-extend": {"new_size": 20}}'
 
 # Delete a volume
-curl -s -X DELETE "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+curl -s -X DELETE "http://localhost:8776/v3/$PROJECT_ID/volumes/<volume-id>" \
   -H "X-Auth-Token: $TOKEN"
 
 # List snapshots
-curl -s "http://localhost:8774/v3/$PROJECT_ID/snapshots/detail" \
+curl -s "http://localhost:8776/v3/$PROJECT_ID/snapshots/detail" \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a snapshot
-curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/snapshots" \
+curl -s -X POST "http://localhost:8776/v3/$PROJECT_ID/snapshots" \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"snapshot": {"name": "my-snapshot", "volume_id": "<volume-id>"}}' | jq
 
 # Delete a snapshot
-curl -s -X DELETE "http://localhost:8774/v3/$PROJECT_ID/snapshots/<snapshot-id>" \
+curl -s -X DELETE "http://localhost:8776/v3/$PROJECT_ID/snapshots/<snapshot-id>" \
   -H "X-Auth-Token: $TOKEN"
 
 # List volume types
-curl -s "http://localhost:8774/v3/$PROJECT_ID/types" \
+curl -s "http://localhost:8776/v3/$PROJECT_ID/types" \
   -H "X-Auth-Token: $TOKEN" | jq
 
 # Create a volume type
-curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/types" \
+curl -s -X POST "http://localhost:8776/v3/$PROJECT_ID/types" \
   -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"volume_type": {"name": "ssd", "description": "SSD storage"}}' | jq
 
 # Get volume limits
-curl -s "http://localhost:8774/v3/$PROJECT_ID/limits" \
+curl -s "http://localhost:8776/v3/$PROJECT_ID/limits" \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
 ## Emulator-Specific Endpoints
 
 ### Health Check
+Each service provides a health check endpoint:
 ```
-GET /health
+GET http://localhost:5000/health   # Keystone
+GET http://localhost:8774/health   # Nova
+GET http://localhost:8776/health   # Cinder
 ```
-Returns `{"status": "healthy"}` if the emulator is running.
+Returns `{"status": "healthy", "service": "<service-name>"}`.
 
-### Emulator Status
+### Emulator Status (Combined mode only)
 ```
 GET /emulator/status
 ```
-Returns statistics about the emulator state (number of servers, flavors, images, etc.).
+Returns statistics about the emulator state (number of servers, flavors, images, volumes, etc.).
 
-### Reset Emulator
+### Reset Emulator (Combined mode only)
 ```
 POST /emulator/reset
 ```
-Resets the emulator to its initial state, clearing all servers, tokens, and keypairs while preserving default flavors and images.
+Resets the emulator to its initial state, clearing all servers, volumes, tokens, and keypairs while preserving default flavors, images, and volume types.
 
 ## Running Tests
 
@@ -405,7 +422,10 @@ openstack-emulator/
 │   ├── __init__.py          # Package init and CLI entry point
 │   ├── api/
 │   │   ├── __init__.py
-│   │   ├── app.py           # Main FastAPI application
+│   │   ├── app.py           # Combined FastAPI application (all services)
+│   │   ├── app_keystone.py  # Keystone-only app (port 5000)
+│   │   ├── app_nova.py      # Nova-only app (port 8774)
+│   │   ├── app_cinder.py    # Cinder-only app (port 8776)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
 │   │   └── nova.py          # Nova Compute API endpoints
