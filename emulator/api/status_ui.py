@@ -1718,9 +1718,7 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
             else str(pool.provisioning_status)
         )
         prov_class = get_status_class(prov_status)
-        protocol = (
-            pool.protocol.value if hasattr(pool.protocol, "value") else str(pool.protocol)
-        )
+        protocol = pool.protocol.value if hasattr(pool.protocol, "value") else str(pool.protocol)
         lb_algorithm = (
             pool.lb_algorithm.value
             if hasattr(pool.lb_algorithm, "value")
@@ -1786,9 +1784,7 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
             else str(monitor.provisioning_status)
         )
         prov_class = get_status_class(prov_status)
-        mon_type = (
-            monitor.type.value if hasattr(monitor.type, "value") else str(monitor.type)
-        )
+        mon_type = monitor.type.value if hasattr(monitor.type, "value") else str(monitor.type)
 
         actions = ""
         if authenticated:

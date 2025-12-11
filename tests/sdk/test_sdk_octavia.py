@@ -188,9 +188,7 @@ class TestOctaviaListeners:
 class TestOctaviaPools:
     """Test Octavia pool operations via SDK."""
 
-    def _create_load_balancer_with_listener(
-        self, openstack_connection: Connection
-    ) -> tuple:
+    def _create_load_balancer_with_listener(self, openstack_connection: Connection) -> tuple:
         """Helper to create a load balancer and listener for pool tests."""
         network, subnet = _create_network_and_subnet(openstack_connection, "pool-lb")
 
