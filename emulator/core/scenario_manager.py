@@ -1,6 +1,9 @@
-"""Scenario manager for controlling failure and load injection."""
+"""Scenario manager for controlling failure and load injection.
 
-import math
+This module provides centralized scenario management with cross-process
+state sharing via file-based persistence.
+"""
+
 import random
 import threading
 import time
@@ -12,13 +15,13 @@ from emulator.core.scenarios import (
     DelayDistribution,
     FailureConfig,
     FailureType,
-    GradualDegradation,
     LoadProfile,
     Scenario,
     ScenarioCategory,
     ScenarioStats,
     get_builtin_scenarios,
 )
+from emulator.core.shared_state import shared_state
 
 
 @dataclass
@@ -64,18 +67,57 @@ class DelayResult:
 
 
 class ScenarioManager:
-    """Central manager for scenario state and injection logic."""
+    """Central manager for scenario state and injection logic.
 
-    def __init__(self) -> None:
+    This manager supports cross-process state sharing via file-based persistence.
+    When scenarios are enabled/disabled via the API (scenarios service), the state
+    is persisted to a shared file. Other service processes (nova, keystone, etc.)
+    read this shared state to know which scenarios are active.
+    """
+
+    def __init__(self, is_primary: bool = False) -> None:
+        """
+        Initialize the scenario manager.
+
+        Args:
+            is_primary: If True, this instance writes to shared state (scenarios service).
+                       If False, this instance reads from shared state (other services).
+        """
         self._lock = threading.RLock()
         self._scenarios: dict[str, Scenario] = {}
         self._global_stats = ScenarioStats()
+        self._is_primary = is_primary
         self._init_builtin_scenarios()
 
     def _init_builtin_scenarios(self) -> None:
         """Initialize built-in scenarios."""
         for scenario in get_builtin_scenarios():
             self._scenarios[scenario.id] = scenario
+
+    def sync_from_shared_state(self) -> None:
+        """
+        Synchronize local state from shared file state.
+
+        Called by middleware before processing requests to ensure
+        the local scenario state matches what's in the shared file.
+        """
+        with self._lock:
+            enabled_scenarios = shared_state.get_enabled_scenarios()
+
+            # Update local scenarios to match shared state
+            for scenario in self._scenarios.values():
+                if scenario.id in enabled_scenarios:
+                    if not scenario.enabled:
+                        scenario.enabled = True
+                        scenario.enabled_at = datetime.utcnow()
+                        # Start gradual degradation timer if enabled
+                        if scenario.load_profile.gradual_degradation.enabled:
+                            scenario.load_profile.gradual_degradation.started_at = datetime.utcnow()
+                else:
+                    if scenario.enabled:
+                        scenario.enabled = False
+                        scenario.enabled_at = None
+                        scenario.load_profile.gradual_degradation.started_at = None
 
     def reset(self) -> None:
         """Reset all scenarios to disabled state and clear stats."""
@@ -87,6 +129,9 @@ class ScenarioManager:
                 # Reset gradual degradation start time
                 scenario.load_profile.gradual_degradation.started_at = None
             self._global_stats = ScenarioStats()
+
+            # Persist to shared state
+            shared_state.reset()
 
     def register_scenario(self, scenario: Scenario) -> Scenario:
         """Register a new scenario (custom or override builtin)."""
@@ -153,6 +198,9 @@ class ScenarioManager:
             if scenario.load_profile.gradual_degradation.enabled:
                 scenario.load_profile.gradual_degradation.started_at = datetime.utcnow()
 
+            # Persist to shared state
+            shared_state.enable_scenario(scenario_id, config_override)
+
             return scenario
 
     def disable_scenario(self, scenario_id: str) -> Scenario | None:
@@ -166,6 +214,10 @@ class ScenarioManager:
             scenario.enabled_at = None
             # Reset gradual degradation
             scenario.load_profile.gradual_degradation.started_at = None
+
+            # Persist to shared state
+            shared_state.disable_scenario(scenario_id)
+
             return scenario
 
     def get_active_scenarios(

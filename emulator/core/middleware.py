@@ -1,7 +1,11 @@
-"""Middleware for scenario-based failure and load injection."""
+"""Middleware for scenario-based failure and load injection.
+
+This middleware synchronizes with shared state to enable cross-process
+scenario coordination. The scenarios service writes state to a shared file,
+and other service processes read from it.
+"""
 
 import asyncio
-import time
 from typing import Callable
 
 from fastapi import Request, Response
@@ -96,6 +100,10 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
         # Skip injection for excluded paths
         if any(path.startswith(excluded) for excluded in self.exclude_paths):
             return await call_next(request)
+
+        # Sync local state from shared file (enables cross-process coordination)
+        # This is cached with a short TTL to avoid excessive file reads
+        scenario_manager.sync_from_shared_state()
 
         # Get operation and resource for filtering
         operation = get_operation_from_method(request.method)
