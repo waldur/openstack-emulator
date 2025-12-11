@@ -668,7 +668,7 @@ tailwind.config = {
 # JavaScript for interactivity
 JS_SCRIPT = """
 <script>
-    // Tab switching
+    // Tab switching with persistence
     function switchTab(tabName) {
         document.querySelectorAll('.tab-content').forEach(el => {
             el.classList.remove('active');
@@ -678,7 +678,17 @@ JS_SCRIPT = """
         });
         document.getElementById('tab-' + tabName).classList.add('active');
         document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+        // Save current tab to localStorage
+        localStorage.setItem('openstack-emulator-tab', tabName);
     }
+
+    // Restore saved tab on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedTab = localStorage.getItem('openstack-emulator-tab');
+        if (savedTab && document.getElementById('tab-' + savedTab)) {
+            switchTab(savedTab);
+        }
+    });
 
     // Copy UUID to clipboard
     function copyUuid(element) {
