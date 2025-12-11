@@ -1048,20 +1048,36 @@ JS_SCRIPT = """
         }
     }
 
-    async function setLoadLevel(level) {
-        document.getElementById('load-value').textContent = level + '%';
-        try {
-            const response = await fetch('/api/scenarios/load', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ level: parseInt(level) })
-            });
-            if (response.ok) {
-                showToast('Load level set to ' + level + '%');
+    let loadLevelTimeout = null;
+    function updateLoadDisplay(level) {
+        // Calculate delay range based on level (matches API logic)
+        const minDelay = Math.round(level * 20);  // 0-2000ms
+        const maxDelay = Math.round(level * 100); // 0-10000ms
+        const display = level == 0 ? 'No delay' : minDelay + '-' + maxDelay + 'ms';
+        document.getElementById('load-value').textContent = display;
+    }
+    function setLoadLevel(level) {
+        updateLoadDisplay(level);
+        // Debounce the API call - only fire after 300ms of no movement
+        if (loadLevelTimeout) clearTimeout(loadLevelTimeout);
+        loadLevelTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch('/api/scenarios/load', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: parseInt(level) })
+                });
+                if (response.ok && level > 0) {
+                    const minDelay = Math.round(level * 20);
+                    const maxDelay = Math.round(level * 100);
+                    showToast('Injecting ' + minDelay + '-' + maxDelay + 'ms delay');
+                } else if (response.ok && level == 0) {
+                    showToast('Load injection disabled');
+                }
+            } catch (error) {
+                console.error('Failed to set load level:', error);
             }
-        } catch (error) {
-            console.error('Failed to set load level:', error);
-        }
+        }, 300);
     }
 
     async function resetAllScenarios() {
@@ -2058,11 +2074,11 @@ def build_scenarios_content(
     <div class="load-slider-container">
         <h4>System Load Level</h4>
         <p style="font-size: 0.85rem; color: #8b949e; margin-bottom: 10px;">
-            Drag the slider to apply global latency to all services
+            Drag the slider to inject artificial latency into all API responses
         </p>
         <input type="range" class="load-slider" min="0" max="100" value="0"
                oninput="setLoadLevel(this.value)">
-        <div id="load-value" class="load-value">0%</div>
+        <div id="load-value" class="load-value">No delay</div>
     </div>
     """
 
