@@ -4,7 +4,6 @@ Provides a web interface to view the status of all services and objects
 in the OpenStack emulator, with authentication support and CRUD operations.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
 
@@ -15,27 +14,8 @@ from pydantic import BaseModel
 
 from emulator.core.database import db
 from emulator.core.models import (
-    FloatingIP,
-    FloatingIPStatus,
-    GlanceImage,
-    ImageStatus,
     ImageVisibility,
-    Network,
-    NetworkStatus,
-    Port,
-    PortStatus,
-    Project,
-    Router,
-    RouterStatus,
-    SecurityGroup,
-    Server,
     ServerStatus,
-    Snapshot,
-    SnapshotStatus,
-    Subnet,
-    User,
-    Volume,
-    VolumeStatus,
 )
 
 router = APIRouter()
@@ -2052,7 +2032,7 @@ async def status_page(
     volume_types = db.list_volume_types()
 
     # Build authentication section
-    if authenticated:
+    if authenticated and current_user:
         auth_section = f"""
         <div class="flex items-center gap-4">
             <div class="flex items-center gap-3">
@@ -2380,7 +2360,6 @@ async def api_login(request: LoginRequest) -> JSONResponse:
 
     # Find the project (optional)
     project = None
-    project_name = request.project_name or "admin"
     if request.project_name:
         project = db.get_project_by_name(request.project_name)
         if not project:
@@ -2618,6 +2597,9 @@ async def api_create_subnet(
         gateway_ip=request.gateway_ip,
         enable_dhcp=request.enable_dhcp,
     )
+
+    if not subnet:
+        raise HTTPException(status_code=500, detail="Failed to create subnet")
 
     return {"subnet": {"id": subnet.id, "name": subnet.name, "cidr": subnet.cidr}}
 
