@@ -20,6 +20,7 @@ SERVICE_PORTS = {
     "neutron": 9696,
     "octavia": 9876,
     "status": 10000,
+    "scenarios": 8999,
 }
 
 SERVICE_APPS = {
@@ -30,6 +31,7 @@ SERVICE_APPS = {
     "neutron": "emulator.api.app_neutron:app",
     "octavia": "emulator.api.app_octavia:app",
     "status": "emulator.api.app_status:app",
+    "scenarios": "emulator.api.app_scenarios:app",
 }
 
 
@@ -65,6 +67,7 @@ def run_all_services(host: str, port_offset: int = 0) -> None:
     print(f"  - Neutron (Network):       http://{host}:{ports['neutron']}")
     print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
     print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
+    print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
     print("\nPress Ctrl+C to stop all services.\n")
 
     for service, port in ports.items():
@@ -103,10 +106,20 @@ def main() -> None:
     )
     parser.add_argument(
         "--service",
-        choices=["keystone", "nova", "cinder", "glance", "neutron", "octavia", "status", "all"],
+        choices=[
+            "keystone",
+            "nova",
+            "cinder",
+            "glance",
+            "neutron",
+            "octavia",
+            "status",
+            "scenarios",
+            "all",
+        ],
         default="all",
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
-        "glance (9292), neutron (9696), octavia (9876), status (10000), or all (default: all)",
+        "glance (9292), neutron (9696), octavia (9876), status (10000), scenarios (8999), or all (default: all)",
     )
     parser.add_argument(
         "--port-offset",

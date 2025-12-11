@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from emulator.api.cinder import router as cinder_router
+from emulator.core.middleware import ScenarioMiddleware
 
 app = FastAPI(
     title="OpenStack Cinder Emulator",
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add scenario injection middleware
+app.add_middleware(ScenarioMiddleware, service_name="cinder")
 
 
 # Custom exception handler for OpenStack-style errors

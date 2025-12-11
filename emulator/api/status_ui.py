@@ -13,6 +13,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
+from emulator.core.scenario_manager import scenario_manager
+from emulator.core.scenarios import ScenarioCategory
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -34,6 +36,7 @@ SERVICES: dict[str, ServiceInfo] = {
     "glance": {"port": 9292, "name": "Image"},
     "neutron": {"port": 9696, "name": "Networking"},
     "octavia": {"port": 9876, "name": "Load Balancer"},
+    "scenarios": {"port": 8999, "name": "Scenarios"},
 }
 
 
@@ -663,6 +666,137 @@ tailwind.config = {
     .service-card-link:hover {
         transform: translateY(-2px);
     }
+    /* Scenario styles */
+    .scenario-warning {
+        background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.85; }
+    }
+    .scenario-card {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .scenario-card.active {
+        border-color: #f97316;
+        background: #fff7ed;
+    }
+    .scenario-card .scenario-info h4 {
+        margin: 0 0 5px 0;
+        font-size: 0.95rem;
+    }
+    .scenario-card .scenario-info p {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #666;
+    }
+    .scenario-toggle {
+        position: relative;
+        width: 50px;
+        height: 26px;
+        background: #e2e8f0;
+        border-radius: 13px;
+        cursor: pointer;
+        transition: background 0.3s;
+    }
+    .scenario-toggle.active {
+        background: #f97316;
+    }
+    .scenario-toggle::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 20px;
+        height: 20px;
+        background: white;
+        border-radius: 50%;
+        transition: transform 0.3s;
+    }
+    .scenario-toggle.active::after {
+        transform: translateX(24px);
+    }
+    .scenario-category {
+        margin-bottom: 20px;
+    }
+    .scenario-category h4 {
+        color: #4a5568;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #eee;
+    }
+    .load-slider-container {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    .load-slider-container h4 {
+        margin: 0 0 15px 0;
+    }
+    .load-slider {
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        background: #e2e8f0;
+        outline: none;
+        -webkit-appearance: none;
+    }
+    .load-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #667eea;
+        cursor: pointer;
+    }
+    .load-value {
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #667eea;
+        margin-top: 10px;
+    }
+    .scenario-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+    }
+    .stat-card {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    .stat-card .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #1a1a2e;
+    }
+    .stat-card .stat-label {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+    }
 </style>
 """
 
@@ -884,6 +1018,77 @@ JS_SCRIPT = """
             } else {
                 const result = await response.json();
                 showToast(result.detail || 'Action failed', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    // Scenario management functions
+    async function toggleScenario(scenarioId, isActive) {
+        const action = isActive ? 'disable' : 'enable';
+        try {
+            const response = await fetch('/api/scenarios/' + scenarioId + '/' + action, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('Scenario ' + (isActive ? 'disabled' : 'enabled'));
+                setTimeout(() => location.reload(), 500);
+            } else {
+                const result = await response.json();
+                showToast(result.detail || 'Failed to toggle scenario', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function setLoadLevel(level) {
+        document.getElementById('load-value').textContent = level + '%';
+        try {
+            const response = await fetch('/api/scenarios/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ level: parseInt(level) })
+            });
+            if (response.ok) {
+                showToast('Load level set to ' + level + '%');
+            }
+        } catch (error) {
+            console.error('Failed to set load level:', error);
+        }
+    }
+
+    async function resetAllScenarios() {
+        if (!confirm('Are you sure you want to disable all scenarios?')) {
+            return;
+        }
+        try {
+            const response = await fetch('/api/scenarios/reset', {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('All scenarios disabled');
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast('Failed to reset scenarios', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function applyPreset(presetName) {
+        try {
+            const response = await fetch('/api/scenarios/preset/' + presetName, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showToast('Preset "' + presetName + '" applied');
+                setTimeout(() => location.reload(), 500);
+            } else {
+                const result = await response.json();
+                showToast(result.detail || 'Failed to apply preset', 'error');
             }
         } catch (error) {
             showToast('Network error', 'error');
@@ -1827,6 +2032,136 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
     """
 
 
+def build_scenarios_content(
+    all_scenarios: list,
+    active_scenarios: list,
+    stats: dict,
+) -> str:
+    """Build the scenarios tab content HTML."""
+    active_ids = {s.id for s in active_scenarios}
+
+    # Group scenarios by category
+    categories: dict[str, list] = {}
+    for scenario in all_scenarios:
+        cat = scenario.category.value
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(scenario)
+
+    # Build load slider
+    load_slider = """
+    <div class="load-slider-container">
+        <h4>System Load Level</h4>
+        <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">
+            Drag the slider to apply global latency to all services
+        </p>
+        <input type="range" class="load-slider" min="0" max="100" value="0"
+               oninput="setLoadLevel(this.value)">
+        <div id="load-value" class="load-value">0%</div>
+    </div>
+    """
+
+    # Build preset buttons
+    presets = """
+    <div style="margin-bottom: 20px;">
+        <h4 style="margin-bottom: 10px;">Quick Presets</h4>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-sm" onclick="applyPreset('light')">Light Load</button>
+            <button class="btn btn-sm" onclick="applyPreset('moderate')">Moderate Load</button>
+            <button class="btn btn-sm" onclick="applyPreset('heavy')">Heavy Load</button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('stressed')">Stressed</button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('chaos')">Chaos Mode</button>
+            <button class="btn btn-sm btn-secondary" onclick="resetAllScenarios()">Reset All</button>
+        </div>
+    </div>
+    """
+
+    # Build scenario cards by category
+    scenario_sections = ""
+    category_names = {
+        "performance": "Performance / Load",
+        "service_crash": "Service Crashes",
+        "storage": "Storage Failures",
+        "network": "Network Issues",
+        "message_queue": "Message Queue",
+        "database": "Database",
+        "resource": "Resource Exhaustion",
+        "authentication": "Authentication",
+    }
+
+    for cat, scenarios in sorted(categories.items()):
+        cards = ""
+        for scenario in scenarios:
+            is_active = scenario.id in active_ids
+            active_class = "active" if is_active else ""
+            toggle_class = "active" if is_active else ""
+            target = scenario.target_service or "all services"
+
+            cards += f"""
+            <div class="scenario-card {active_class}">
+                <div class="scenario-info">
+                    <h4>{scenario.name}</h4>
+                    <p>{scenario.description}</p>
+                    <p style="font-size: 0.75rem; color: #888;">Target: {target}</p>
+                </div>
+                <div class="scenario-toggle {toggle_class}"
+                     onclick="toggleScenario('{scenario.id}', {str(is_active).lower()})">
+                </div>
+            </div>
+            """
+
+        cat_name = category_names.get(cat, cat.replace("_", " ").title())
+        scenario_sections += f"""
+        <div class="scenario-category">
+            <h4>{cat_name}</h4>
+            {cards}
+        </div>
+        """
+
+    # Build stats section
+    global_stats = stats.get("global", {})
+    stats_html = f"""
+    <div style="margin-top: 30px;">
+        <h4>Injection Statistics</h4>
+        <div class="scenario-stats">
+            <div class="stat-card">
+                <div class="stat-value">{len(active_scenarios)}</div>
+                <div class="stat-label">Active Scenarios</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('times_triggered', 0)}</div>
+                <div class="stat-label">Times Triggered</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('failures_injected', 0)}</div>
+                <div class="stat-label">Failures Injected</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('total_delay_injected_ms', 0) // 1000}s</div>
+                <div class="stat-label">Total Delay Added</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{global_stats.get('timeouts_injected', 0)}</div>
+                <div class="stat-label">Timeouts Injected</div>
+            </div>
+        </div>
+    </div>
+    """
+
+    return f"""
+    <div class="resource-group">
+        <p style="margin-bottom: 20px; color: #666;">
+            Enable scenarios to simulate various failure conditions and test your integration's resilience.
+            Active scenarios will inject delays, errors, or timeouts into API responses.
+        </p>
+        {load_slider}
+        {presets}
+        {scenario_sections}
+        {stats_html}
+    </div>
+    """
+
+
 def render_create_modals(
     flavors: list,
     images: list,
@@ -2412,6 +2747,22 @@ async def status_page(
     # Build modals
     modals = render_create_modals(flavors, images, networks, volumes, volume_types)
 
+    # Build scenarios content
+    all_scenarios = scenario_manager.list_scenarios()
+    active_scenarios = scenario_manager.get_active_scenarios()
+    stats = scenario_manager.get_stats()
+
+    # Badge for active scenarios
+    active_count = len(active_scenarios)
+    scenarios_badge = (
+        f'<span class="count-badge" style="background: #f97316;">{active_count}</span>'
+        if active_count > 0
+        else ""
+    )
+
+    # Build scenarios content HTML
+    scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
+
     # Build the full HTML page
     html = f"""
     <!DOCTYPE html>
@@ -2473,6 +2824,7 @@ async def status_page(
                     <button class="tab" data-tab="network" onclick="switchTab('network')">[ NETWORK ]</button>
                     <button class="tab" data-tab="loadbalancer" onclick="switchTab('loadbalancer')">[ LOAD BALANCER ]</button>
                     <button class="tab" data-tab="identity" onclick="switchTab('identity')">[ IDENTITY ]</button>
+                    <button class="tab" data-tab="scenarios" onclick="switchTab('scenarios')">[ SCENARIOS ] {scenarios_badge}</button>
                 </div>
 
                 <!-- Compute Tab -->
@@ -2666,6 +3018,11 @@ async def status_page(
                         </div>
                         {render_users_table(users, authenticated)}
                     </div>
+                </div>
+
+                <!-- Scenarios Tab -->
+                <div id="tab-scenarios" class="tab-content">
+                    {scenarios_content}
                 </div>
             </div>
 
@@ -3400,3 +3757,122 @@ async def api_delete_snapshot(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     return {"message": "Snapshot deleted"}
+
+
+# =============================================================================
+# Management API - Scenarios
+# =============================================================================
+
+
+class ScenarioLoadRequest(BaseModel):
+    """Request to set load level."""
+
+    level: int
+
+
+@router.post("/api/scenarios/{scenario_id}/enable")
+async def api_enable_scenario(scenario_id: str) -> dict:
+    """Enable a scenario."""
+    scenario = scenario_manager.enable_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return {"message": f"Scenario '{scenario.name}' enabled"}
+
+
+@router.post("/api/scenarios/{scenario_id}/disable")
+async def api_disable_scenario(scenario_id: str) -> dict:
+    """Disable a scenario."""
+    scenario = scenario_manager.disable_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return {"message": f"Scenario '{scenario.name}' disabled"}
+
+
+@router.post("/api/scenarios/reset")
+async def api_reset_scenarios() -> dict:
+    """Reset all scenarios."""
+    scenario_manager.reset()
+    return {"message": "All scenarios disabled"}
+
+
+@router.post("/api/scenarios/preset/{preset_name}")
+async def api_apply_preset(preset_name: str) -> dict:
+    """Apply a scenario preset."""
+    preset_scenarios = {
+        "light": "light_load",
+        "moderate": "system_under_load",
+        "heavy": "heavy_load",
+        "stressed": "system_stressed",
+        "chaos": "cascading_failure",
+    }
+
+    if preset_name not in preset_scenarios:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown preset: {preset_name}",
+        )
+
+    # Disable existing load scenarios
+    for scenario in scenario_manager.list_scenarios(enabled_only=True):
+        if scenario.category == ScenarioCategory.PERFORMANCE:
+            scenario_manager.disable_scenario(scenario.id)
+
+    scenario_id = preset_scenarios[preset_name]
+    scenario = scenario_manager.enable_scenario(scenario_id)
+
+    return {"message": f"Preset '{preset_name}' applied"}
+
+
+@router.post("/api/scenarios/load")
+async def api_set_load_level(request: ScenarioLoadRequest) -> dict:
+    """Set system load level (0-100%)."""
+    from emulator.core.scenarios import (
+        DelayDistribution,
+        FailureType,
+        LoadProfile,
+        Scenario,
+        ScenarioCategory,
+    )
+
+    level = request.level
+
+    # Disable existing load level scenario
+    scenario_id = "load_level_all"
+    scenario_manager.disable_scenario(scenario_id)
+
+    if level == 0:
+        return {"message": "Load level set to 0%"}
+
+    # Calculate delays based on level
+    min_delay = int(level * 20)  # 0-2000ms
+    max_delay = int(level * 100)  # 0-10000ms
+    timeout_prob = max(0, (level - 80) / 100)
+    spike_prob = level / 200
+
+    # Create or update the load level scenario
+    existing = scenario_manager.get_scenario(scenario_id)
+    if existing:
+        scenario_manager.unregister_scenario(scenario_id)
+
+    scenario = Scenario(
+        id=scenario_id,
+        name=f"Load Level {level}%",
+        description=f"System load at {level}%",
+        category=ScenarioCategory.PERFORMANCE,
+        failure_type=FailureType.SLOW_RESPONSE,
+        target_service=None,
+        load_profile=LoadProfile(
+            min_delay_ms=min_delay,
+            max_delay_ms=max_delay,
+            distribution=DelayDistribution.NORMAL,
+            spike_probability=spike_prob,
+            spike_multiplier=2.0,
+            timeout_probability=timeout_prob,
+        ),
+        builtin=False,
+    )
+
+    scenario_manager.register_scenario(scenario)
+    scenario_manager.enable_scenario(scenario_id)
+
+    return {"message": f"Load level set to {level}%"}
