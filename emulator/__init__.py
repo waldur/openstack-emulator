@@ -48,26 +48,29 @@ def run_service(service: str, host: str, port: int) -> None:
     )
 
 
-def run_all_services(host: str) -> None:
+def run_all_services(host: str, port_offset: int = 0) -> None:
     """Run all OpenStack services on their standard ports."""
     processes = []
 
-    for service, port in SERVICE_PORTS.items():
+    # Calculate actual ports with offset
+    ports = {service: port + port_offset for service, port in SERVICE_PORTS.items()}
+
+    print("\nOpenStack Emulator running:")
+    print(f"  - Keystone (Identity):     http://{host}:{ports['keystone']}")
+    print(f"  - Nova (Compute):          http://{host}:{ports['nova']}")
+    print(f"  - Cinder (Block Storage):  http://{host}:{ports['cinder']}")
+    print(f"  - Glance (Image):          http://{host}:{ports['glance']}")
+    print(f"  - Neutron (Network):       http://{host}:{ports['neutron']}")
+    print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
+    print("\nPress Ctrl+C to stop all services.\n")
+
+    for service, port in ports.items():
         p = multiprocessing.Process(
             target=run_service,
             args=(service, host, port),
         )
         p.start()
         processes.append(p)
-
-    print("\nOpenStack Emulator running:")
-    print(f"  - Keystone (Identity):     http://{host}:5000")
-    print(f"  - Nova (Compute):          http://{host}:8774")
-    print(f"  - Cinder (Block Storage):  http://{host}:8776")
-    print(f"  - Glance (Image):          http://{host}:9292")
-    print(f"  - Neutron (Network):       http://{host}:9696")
-    print(f"  - Status (Web UI):         http://{host}:8000")
-    print("\nPress Ctrl+C to stop all services.\n")
 
     try:
         for p in processes:
@@ -102,13 +105,20 @@ def main() -> None:
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
         "glance (9292), neutron (9696), status (8000), or all (default: all)",
     )
+    parser.add_argument(
+        "--port-offset",
+        type=int,
+        default=0,
+        help="Offset to add to all default ports (useful if port 5000 is in use). "
+        "Example: --port-offset 1000 runs keystone on 6000",
+    )
 
     args = parser.parse_args()
 
     if args.service == "all":
         if args.port:
             print("Warning: --port is ignored when running all services")
-        run_all_services(args.host)
+        run_all_services(args.host, args.port_offset)
     else:
         port = args.port or SERVICE_PORTS[args.service]
         run_service(args.service, args.host, port)
