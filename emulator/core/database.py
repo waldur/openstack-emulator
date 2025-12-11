@@ -22,14 +22,30 @@ from emulator.core.models import (
     FloatingIPStatus,
     GlanceImage,
     Group,
+    HealthMonitor,
+    HealthMonitorType,
     Image,
     ImageMember,
     ImageStatus,
     ImageVisibility,
     Keypair,
+    L7Policy,
+    L7PolicyAction,
+    L7Rule,
+    L7RuleCompareType,
+    L7RuleType,
+    Listener,
+    ListenerProtocol,
+    LoadBalancer,
+    LoadBalancerOperatingStatus,
+    LoadBalancerProvisioningStatus,
     Network,
     NeutronQuota,
     NovaQuota,
+    Pool,
+    PoolLBAlgorithm,
+    PoolMember,
+    PoolProtocol,
     Port,
     PowerState,
     Project,
@@ -115,6 +131,16 @@ class Database:
 
         # Storage dictionaries - RBAC Policies
         self._rbac_policies: dict[str, RbacPolicy] = {}
+
+        # Storage dictionaries - Octavia
+        self._load_balancers: dict[str, LoadBalancer] = {}
+        self._listeners: dict[str, Listener] = {}
+        self._pools: dict[str, Pool] = {}
+        self._pool_members: dict[str, PoolMember] = {}  # key: pool_id:member_id
+        self._health_monitors: dict[str, HealthMonitor] = {}
+        self._l7policies: dict[str, L7Policy] = {}
+        self._l7rules: dict[str, L7Rule] = {}  # key: policy_id:rule_id
+        self._next_lb_vip: int = 1  # For generating sequential VIP addresses
 
         # Initialize with default data
         self._init_default_flavors()
@@ -4205,6 +4231,958 @@ class Database:
 
             del self._rbac_policies[policy_id]
             return True
+
+    # Octavia Load Balancer operations
+
+    def create_load_balancer(
+        self,
+        name: str,
+        project_id: str,
+        vip_subnet_id: str | None = None,
+        vip_network_id: str | None = None,
+        vip_address: str | None = None,
+        description: str = "",
+        admin_state_up: bool = True,
+        flavor_id: str | None = None,
+        provider: str = "amphora",
+        availability_zone: str | None = None,
+        tags: list[str] | None = None,
+    ) -> LoadBalancer:
+        """Create a new load balancer."""
+        with self._lock:
+            lb_id = str(uuid4())
+
+            # Generate VIP address if not provided
+            if not vip_address:
+                vip_address = f"192.168.100.{self._next_lb_vip}"
+                self._next_lb_vip += 1
+
+            # Create a VIP port
+            vip_port_id = str(uuid4())
+
+            lb = LoadBalancer(
+                id=lb_id,
+                name=name,
+                description=description,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                vip_subnet_id=vip_subnet_id or "",
+                vip_network_id=vip_network_id or "",
+                vip_port_id=vip_port_id,
+                vip_address=vip_address,
+                flavor_id=flavor_id,
+                provider=provider,
+                availability_zone=availability_zone,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._load_balancers[lb_id] = lb
+            return lb
+
+    def get_load_balancer(self, lb_id: str) -> LoadBalancer | None:
+        """Get a load balancer by ID."""
+        with self._lock:
+            return self._load_balancers.get(lb_id)
+
+    def list_load_balancers(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+        vip_address: str | None = None,
+        vip_subnet_id: str | None = None,
+        provisioning_status: str | None = None,
+        operating_status: str | None = None,
+    ) -> list[LoadBalancer]:
+        """List load balancers with optional filtering."""
+        with self._lock:
+            lbs = list(self._load_balancers.values())
+
+            if project_id:
+                lbs = [lb for lb in lbs if lb.project_id == project_id]
+            if name:
+                lbs = [lb for lb in lbs if lb.name == name]
+            if vip_address:
+                lbs = [lb for lb in lbs if lb.vip_address == vip_address]
+            if vip_subnet_id:
+                lbs = [lb for lb in lbs if lb.vip_subnet_id == vip_subnet_id]
+            if provisioning_status:
+                lbs = [lb for lb in lbs if lb.provisioning_status.value == provisioning_status]
+            if operating_status:
+                lbs = [lb for lb in lbs if lb.operating_status.value == operating_status]
+
+            return lbs
+
+    def update_load_balancer(
+        self,
+        lb_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> LoadBalancer | None:
+        """Update a load balancer."""
+        with self._lock:
+            lb = self._load_balancers.get(lb_id)
+            if not lb:
+                return None
+
+            if name is not None:
+                lb.name = name
+            if description is not None:
+                lb.description = description
+            if admin_state_up is not None:
+                lb.admin_state_up = admin_state_up
+            if tags is not None:
+                lb.tags = tags
+
+            return lb
+
+    def delete_load_balancer(self, lb_id: str, cascade: bool = False) -> bool:
+        """Delete a load balancer."""
+        with self._lock:
+            lb = self._load_balancers.get(lb_id)
+            if not lb:
+                return False
+
+            if cascade:
+                # Delete all associated resources
+                for listener in list(lb.listeners):
+                    self.delete_listener(listener.id, cascade=True)
+                for pool in list(lb.pools):
+                    self.delete_pool(pool.id)
+
+            del self._load_balancers[lb_id]
+            return True
+
+    # Listener operations
+
+    def create_listener(
+        self,
+        name: str,
+        loadbalancer_id: str,
+        protocol: str,
+        protocol_port: int,
+        project_id: str,
+        description: str = "",
+        admin_state_up: bool = True,
+        connection_limit: int = -1,
+        default_pool_id: str | None = None,
+        default_tls_container_ref: str | None = None,
+        sni_container_refs: list[str] | None = None,
+        insert_headers: dict[str, str] | None = None,
+        timeout_client_data: int | None = None,
+        timeout_member_connect: int | None = None,
+        timeout_member_data: int | None = None,
+        timeout_tcp_inspect: int | None = None,
+        allowed_cidrs: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> Listener | None:
+        """Create a new listener."""
+        with self._lock:
+            lb = self._load_balancers.get(loadbalancer_id)
+            if not lb:
+                return None
+
+            listener_id = str(uuid4())
+            listener = Listener(
+                id=listener_id,
+                name=name,
+                description=description,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                protocol=ListenerProtocol(protocol),
+                protocol_port=protocol_port,
+                connection_limit=connection_limit,
+                default_pool_id=default_pool_id,
+                default_tls_container_ref=default_tls_container_ref,
+                sni_container_refs=sni_container_refs or [],
+                insert_headers=insert_headers or {},
+                timeout_client_data=timeout_client_data,
+                timeout_member_connect=timeout_member_connect,
+                timeout_member_data=timeout_member_data,
+                timeout_tcp_inspect=timeout_tcp_inspect,
+                allowed_cidrs=allowed_cidrs or [],
+                loadbalancer_id=loadbalancer_id,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._listeners[listener_id] = listener
+            lb.listeners.append(listener)
+            return listener
+
+    def get_listener(self, listener_id: str) -> Listener | None:
+        """Get a listener by ID."""
+        with self._lock:
+            return self._listeners.get(listener_id)
+
+    def list_listeners(
+        self,
+        project_id: str | None = None,
+        loadbalancer_id: str | None = None,
+        name: str | None = None,
+        protocol: str | None = None,
+        protocol_port: int | None = None,
+    ) -> list[Listener]:
+        """List listeners with optional filtering."""
+        with self._lock:
+            listeners = list(self._listeners.values())
+
+            if project_id:
+                listeners = [lis for lis in listeners if lis.project_id == project_id]
+            if loadbalancer_id:
+                listeners = [lis for lis in listeners if lis.loadbalancer_id == loadbalancer_id]
+            if name:
+                listeners = [lis for lis in listeners if lis.name == name]
+            if protocol:
+                listeners = [lis for lis in listeners if lis.protocol.value == protocol]
+            if protocol_port:
+                listeners = [lis for lis in listeners if lis.protocol_port == protocol_port]
+
+            return listeners
+
+    def update_listener(
+        self,
+        listener_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        connection_limit: int | None = None,
+        default_pool_id: str | None = None,
+        default_tls_container_ref: str | None = None,
+        sni_container_refs: list[str] | None = None,
+        insert_headers: dict[str, str] | None = None,
+        timeout_client_data: int | None = None,
+        timeout_member_connect: int | None = None,
+        timeout_member_data: int | None = None,
+        timeout_tcp_inspect: int | None = None,
+        allowed_cidrs: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> Listener | None:
+        """Update a listener."""
+        with self._lock:
+            listener = self._listeners.get(listener_id)
+            if not listener:
+                return None
+
+            if name is not None:
+                listener.name = name
+            if description is not None:
+                listener.description = description
+            if admin_state_up is not None:
+                listener.admin_state_up = admin_state_up
+            if connection_limit is not None:
+                listener.connection_limit = connection_limit
+            if default_pool_id is not None:
+                listener.default_pool_id = default_pool_id
+            if default_tls_container_ref is not None:
+                listener.default_tls_container_ref = default_tls_container_ref
+            if sni_container_refs is not None:
+                listener.sni_container_refs = sni_container_refs
+            if insert_headers is not None:
+                listener.insert_headers = insert_headers
+            if timeout_client_data is not None:
+                listener.timeout_client_data = timeout_client_data
+            if timeout_member_connect is not None:
+                listener.timeout_member_connect = timeout_member_connect
+            if timeout_member_data is not None:
+                listener.timeout_member_data = timeout_member_data
+            if timeout_tcp_inspect is not None:
+                listener.timeout_tcp_inspect = timeout_tcp_inspect
+            if allowed_cidrs is not None:
+                listener.allowed_cidrs = allowed_cidrs
+            if tags is not None:
+                listener.tags = tags
+
+            return listener
+
+    def delete_listener(self, listener_id: str, cascade: bool = False) -> bool:
+        """Delete a listener."""
+        with self._lock:
+            listener = self._listeners.get(listener_id)
+            if not listener:
+                return False
+
+            # Remove from load balancer
+            lb = self._load_balancers.get(listener.loadbalancer_id)
+            if lb:
+                lb.listeners = [lis for lis in lb.listeners if lis.id != listener_id]
+
+            # Delete L7 policies if cascade
+            if cascade:
+                for policy in list(listener.l7policies):
+                    self.delete_l7policy(policy.id)
+
+            del self._listeners[listener_id]
+            return True
+
+    # Pool operations
+
+    def create_pool(
+        self,
+        name: str,
+        protocol: str,
+        lb_algorithm: str,
+        project_id: str,
+        loadbalancer_id: str | None = None,
+        listener_id: str | None = None,
+        description: str = "",
+        admin_state_up: bool = True,
+        session_persistence: dict[str, Any] | None = None,
+        tls_enabled: bool = False,
+        tags: list[str] | None = None,
+    ) -> Pool | None:
+        """Create a new pool."""
+        with self._lock:
+            pool_id = str(uuid4())
+
+            actual_lb_id = loadbalancer_id
+            if loadbalancer_id:
+                lb = self._load_balancers.get(loadbalancer_id)
+                if not lb:
+                    return None
+
+            actual_listener_id = listener_id
+            if listener_id:
+                listener = self._listeners.get(listener_id)
+                if not listener:
+                    return None
+                # Get load balancer from listener
+                if listener.loadbalancer_id and not actual_lb_id:
+                    actual_lb_id = listener.loadbalancer_id
+
+            pool = Pool(
+                id=pool_id,
+                name=name,
+                description=description,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                protocol=PoolProtocol(protocol),
+                lb_algorithm=PoolLBAlgorithm(lb_algorithm),
+                session_persistence=session_persistence,
+                loadbalancer_id=actual_lb_id,
+                listener_id=actual_listener_id,
+                tls_enabled=tls_enabled,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._pools[pool_id] = pool
+
+            if actual_lb_id:
+                lb = self._load_balancers.get(actual_lb_id)
+                if lb:
+                    lb.pools.append(pool)
+            if listener_id:
+                listener = self._listeners.get(listener_id)
+                if listener:
+                    listener.default_pool_id = pool_id
+
+            return pool
+
+    def get_pool(self, pool_id: str) -> Pool | None:
+        """Get a pool by ID."""
+        with self._lock:
+            return self._pools.get(pool_id)
+
+    def list_pools(
+        self,
+        project_id: str | None = None,
+        loadbalancer_id: str | None = None,
+        listener_id: str | None = None,
+        name: str | None = None,
+        protocol: str | None = None,
+    ) -> list[Pool]:
+        """List pools with optional filtering."""
+        with self._lock:
+            pools = list(self._pools.values())
+
+            if project_id:
+                pools = [p for p in pools if p.project_id == project_id]
+            if loadbalancer_id:
+                pools = [p for p in pools if p.loadbalancer_id == loadbalancer_id]
+            if listener_id:
+                pools = [p for p in pools if p.listener_id == listener_id]
+            if name:
+                pools = [p for p in pools if p.name == name]
+            if protocol:
+                pools = [p for p in pools if p.protocol.value == protocol]
+
+            return pools
+
+    def update_pool(
+        self,
+        pool_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        lb_algorithm: str | None = None,
+        session_persistence: dict[str, Any] | None = None,
+        tls_enabled: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> Pool | None:
+        """Update a pool."""
+        with self._lock:
+            pool = self._pools.get(pool_id)
+            if not pool:
+                return None
+
+            if name is not None:
+                pool.name = name
+            if description is not None:
+                pool.description = description
+            if admin_state_up is not None:
+                pool.admin_state_up = admin_state_up
+            if lb_algorithm is not None:
+                pool.lb_algorithm = PoolLBAlgorithm(lb_algorithm)
+            if session_persistence is not None:
+                pool.session_persistence = session_persistence
+            if tls_enabled is not None:
+                pool.tls_enabled = tls_enabled
+            if tags is not None:
+                pool.tags = tags
+
+            return pool
+
+    def delete_pool(self, pool_id: str) -> bool:
+        """Delete a pool."""
+        with self._lock:
+            pool = self._pools.get(pool_id)
+            if not pool:
+                return False
+
+            # Remove from load balancer
+            if pool.loadbalancer_id:
+                lb = self._load_balancers.get(pool.loadbalancer_id)
+                if lb:
+                    lb.pools = [p for p in lb.pools if p.id != pool_id]
+
+            # Remove from listener
+            if pool.listener_id:
+                listener = self._listeners.get(pool.listener_id)
+                if listener and listener.default_pool_id == pool_id:
+                    listener.default_pool_id = None
+
+            # Delete pool members
+            member_keys = [k for k in self._pool_members.keys() if k.startswith(f"{pool_id}:")]
+            for key in member_keys:
+                del self._pool_members[key]
+
+            # Delete health monitor
+            if pool.healthmonitor_id:
+                self.delete_health_monitor(pool.healthmonitor_id)
+
+            del self._pools[pool_id]
+            return True
+
+    # Pool Member operations
+
+    def create_pool_member(
+        self,
+        pool_id: str,
+        address: str,
+        protocol_port: int,
+        project_id: str,
+        name: str = "",
+        weight: int = 1,
+        subnet_id: str | None = None,
+        admin_state_up: bool = True,
+        monitor_address: str | None = None,
+        monitor_port: int | None = None,
+        backup: bool = False,
+        tags: list[str] | None = None,
+    ) -> PoolMember | None:
+        """Create a new pool member."""
+        with self._lock:
+            pool = self._pools.get(pool_id)
+            if not pool:
+                return None
+
+            member_id = str(uuid4())
+            member = PoolMember(
+                id=member_id,
+                name=name,
+                address=address,
+                protocol_port=protocol_port,
+                weight=weight,
+                subnet_id=subnet_id or "",
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                monitor_address=monitor_address,
+                monitor_port=monitor_port,
+                backup=backup,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._pool_members[f"{pool_id}:{member_id}"] = member
+            pool.members.append(member)
+            return member
+
+    def get_pool_member(self, pool_id: str, member_id: str) -> PoolMember | None:
+        """Get a pool member by ID."""
+        with self._lock:
+            return self._pool_members.get(f"{pool_id}:{member_id}")
+
+    def list_pool_members(
+        self,
+        pool_id: str,
+        project_id: str | None = None,
+        address: str | None = None,
+        protocol_port: int | None = None,
+    ) -> list[PoolMember]:
+        """List members of a pool."""
+        with self._lock:
+            pool = self._pools.get(pool_id)
+            if not pool:
+                return []
+            members = list(pool.members)
+            if project_id:
+                members = [m for m in members if m.project_id == project_id]
+            if address:
+                members = [m for m in members if m.address == address]
+            if protocol_port:
+                members = [m for m in members if m.protocol_port == protocol_port]
+            return members
+
+    def update_pool_member(
+        self,
+        pool_id: str,
+        member_id: str,
+        name: str | None = None,
+        weight: int | None = None,
+        admin_state_up: bool | None = None,
+        monitor_address: str | None = None,
+        monitor_port: int | None = None,
+        backup: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> PoolMember | None:
+        """Update a pool member."""
+        with self._lock:
+            member = self._pool_members.get(f"{pool_id}:{member_id}")
+            if not member:
+                return None
+
+            if name is not None:
+                member.name = name
+            if weight is not None:
+                member.weight = weight
+            if admin_state_up is not None:
+                member.admin_state_up = admin_state_up
+            if monitor_address is not None:
+                member.monitor_address = monitor_address
+            if monitor_port is not None:
+                member.monitor_port = monitor_port
+            if backup is not None:
+                member.backup = backup
+            if tags is not None:
+                member.tags = tags
+
+            return member
+
+    def delete_pool_member(self, pool_id: str, member_id: str) -> bool:
+        """Delete a pool member."""
+        with self._lock:
+            key = f"{pool_id}:{member_id}"
+            member = self._pool_members.get(key)
+            if not member:
+                return False
+
+            pool = self._pools.get(pool_id)
+            if pool:
+                pool.members = [m for m in pool.members if m.id != member_id]
+
+            del self._pool_members[key]
+            return True
+
+    # Health Monitor operations
+
+    def create_health_monitor(
+        self,
+        pool_id: str,
+        type: str,
+        delay: int,
+        timeout: int,
+        max_retries: int,
+        project_id: str,
+        name: str = "",
+        max_retries_down: int = 3,
+        http_method: str = "GET",
+        url_path: str = "/",
+        expected_codes: str = "200",
+        admin_state_up: bool = True,
+        tags: list[str] | None = None,
+    ) -> HealthMonitor | None:
+        """Create a new health monitor."""
+        with self._lock:
+            pool = self._pools.get(pool_id)
+            if not pool:
+                return None
+
+            # Check if pool already has a health monitor
+            if pool.healthmonitor_id:
+                return None
+
+            monitor_id = str(uuid4())
+            monitor = HealthMonitor(
+                id=monitor_id,
+                name=name,
+                type=HealthMonitorType(type),
+                delay=delay,
+                timeout=timeout,
+                max_retries=max_retries,
+                max_retries_down=max_retries_down,
+                http_method=http_method,
+                url_path=url_path,
+                expected_codes=expected_codes,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                pool_id=pool_id,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._health_monitors[monitor_id] = monitor
+            pool.healthmonitor_id = monitor_id
+            return monitor
+
+    def get_health_monitor(self, monitor_id: str) -> HealthMonitor | None:
+        """Get a health monitor by ID."""
+        with self._lock:
+            return self._health_monitors.get(monitor_id)
+
+    def list_health_monitors(
+        self,
+        project_id: str | None = None,
+        pool_id: str | None = None,
+        type: str | None = None,
+    ) -> list[HealthMonitor]:
+        """List health monitors with optional filtering."""
+        with self._lock:
+            monitors = list(self._health_monitors.values())
+
+            if project_id:
+                monitors = [m for m in monitors if m.project_id == project_id]
+            if pool_id:
+                monitors = [m for m in monitors if m.pool_id == pool_id]
+            if type:
+                monitors = [m for m in monitors if m.type.value == type]
+
+            return monitors
+
+    def update_health_monitor(
+        self,
+        monitor_id: str,
+        name: str | None = None,
+        delay: int | None = None,
+        timeout: int | None = None,
+        max_retries: int | None = None,
+        max_retries_down: int | None = None,
+        http_method: str | None = None,
+        url_path: str | None = None,
+        expected_codes: str | None = None,
+        admin_state_up: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> HealthMonitor | None:
+        """Update a health monitor."""
+        with self._lock:
+            monitor = self._health_monitors.get(monitor_id)
+            if not monitor:
+                return None
+
+            if name is not None:
+                monitor.name = name
+            if delay is not None:
+                monitor.delay = delay
+            if timeout is not None:
+                monitor.timeout = timeout
+            if max_retries is not None:
+                monitor.max_retries = max_retries
+            if max_retries_down is not None:
+                monitor.max_retries_down = max_retries_down
+            if http_method is not None:
+                monitor.http_method = http_method
+            if url_path is not None:
+                monitor.url_path = url_path
+            if expected_codes is not None:
+                monitor.expected_codes = expected_codes
+            if admin_state_up is not None:
+                monitor.admin_state_up = admin_state_up
+            if tags is not None:
+                monitor.tags = tags
+
+            return monitor
+
+    def delete_health_monitor(self, monitor_id: str) -> bool:
+        """Delete a health monitor."""
+        with self._lock:
+            monitor = self._health_monitors.get(monitor_id)
+            if not monitor:
+                return False
+
+            # Remove from pool
+            pool = self._pools.get(monitor.pool_id)
+            if pool:
+                pool.healthmonitor_id = None
+
+            del self._health_monitors[monitor_id]
+            return True
+
+    # L7 Policy operations
+
+    def create_l7policy(
+        self,
+        listener_id: str,
+        action: str,
+        project_id: str,
+        name: str = "",
+        description: str = "",
+        position: int = 1,
+        redirect_pool_id: str | None = None,
+        redirect_url: str | None = None,
+        redirect_prefix: str | None = None,
+        redirect_http_code: int | None = None,
+        admin_state_up: bool = True,
+        tags: list[str] | None = None,
+    ) -> L7Policy | None:
+        """Create a new L7 policy."""
+        with self._lock:
+            listener = self._listeners.get(listener_id)
+            if not listener:
+                return None
+
+            policy_id = str(uuid4())
+            policy = L7Policy(
+                id=policy_id,
+                name=name,
+                description=description,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                listener_id=listener_id,
+                action=L7PolicyAction(action),
+                position=position,
+                redirect_pool_id=redirect_pool_id,
+                redirect_url=redirect_url,
+                redirect_prefix=redirect_prefix,
+                redirect_http_code=redirect_http_code,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._l7policies[policy_id] = policy
+            listener.l7policies.append(policy)
+            return policy
+
+    def get_l7policy(self, policy_id: str) -> L7Policy | None:
+        """Get an L7 policy by ID."""
+        with self._lock:
+            return self._l7policies.get(policy_id)
+
+    def list_l7policies(
+        self,
+        project_id: str | None = None,
+        listener_id: str | None = None,
+        action: str | None = None,
+    ) -> list[L7Policy]:
+        """List L7 policies with optional filtering."""
+        with self._lock:
+            policies = list(self._l7policies.values())
+
+            if project_id:
+                policies = [p for p in policies if p.project_id == project_id]
+            if listener_id:
+                policies = [p for p in policies if p.listener_id == listener_id]
+            if action:
+                policies = [p for p in policies if p.action.value == action]
+
+            return policies
+
+    def update_l7policy(
+        self,
+        policy_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        action: str | None = None,
+        position: int | None = None,
+        redirect_pool_id: str | None = None,
+        redirect_url: str | None = None,
+        redirect_prefix: str | None = None,
+        redirect_http_code: int | None = None,
+        tags: list[str] | None = None,
+    ) -> L7Policy | None:
+        """Update an L7 policy."""
+        with self._lock:
+            policy = self._l7policies.get(policy_id)
+            if not policy:
+                return None
+
+            if name is not None:
+                policy.name = name
+            if description is not None:
+                policy.description = description
+            if admin_state_up is not None:
+                policy.admin_state_up = admin_state_up
+            if action is not None:
+                policy.action = L7PolicyAction(action)
+            if position is not None:
+                policy.position = position
+            if redirect_pool_id is not None:
+                policy.redirect_pool_id = redirect_pool_id
+            if redirect_url is not None:
+                policy.redirect_url = redirect_url
+            if redirect_prefix is not None:
+                policy.redirect_prefix = redirect_prefix
+            if redirect_http_code is not None:
+                policy.redirect_http_code = redirect_http_code
+            if tags is not None:
+                policy.tags = tags
+
+            return policy
+
+    def delete_l7policy(self, policy_id: str) -> bool:
+        """Delete an L7 policy."""
+        with self._lock:
+            policy = self._l7policies.get(policy_id)
+            if not policy:
+                return False
+
+            # Remove from listener
+            listener = self._listeners.get(policy.listener_id)
+            if listener:
+                listener.l7policies = [p for p in listener.l7policies if p.id != policy_id]
+
+            # Delete associated rules
+            rule_keys = [k for k in self._l7rules.keys() if k.startswith(f"{policy_id}:")]
+            for key in rule_keys:
+                del self._l7rules[key]
+
+            del self._l7policies[policy_id]
+            return True
+
+    # L7 Rule operations
+
+    def create_l7rule(
+        self,
+        l7policy_id: str,
+        type: str,
+        compare_type: str,
+        value: str,
+        project_id: str,
+        key: str | None = None,
+        invert: bool = False,
+        admin_state_up: bool = True,
+        tags: list[str] | None = None,
+    ) -> L7Rule | None:
+        """Create a new L7 rule."""
+        with self._lock:
+            policy = self._l7policies.get(l7policy_id)
+            if not policy:
+                return None
+
+            rule_id = str(uuid4())
+            rule = L7Rule(
+                id=rule_id,
+                type=L7RuleType(type),
+                compare_type=L7RuleCompareType(compare_type),
+                value=value,
+                key=key,
+                invert=invert,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
+                tags=tags or [],
+            )
+            self._l7rules[f"{l7policy_id}:{rule_id}"] = rule
+            policy.rules.append(rule)
+            return rule
+
+    def get_l7rule(self, l7policy_id: str, rule_id: str) -> L7Rule | None:
+        """Get an L7 rule by ID."""
+        with self._lock:
+            return self._l7rules.get(f"{l7policy_id}:{rule_id}")
+
+    def list_l7rules(
+        self,
+        l7policy_id: str,
+        project_id: str | None = None,
+        type: str | None = None,
+    ) -> list[L7Rule]:
+        """List rules for an L7 policy."""
+        with self._lock:
+            policy = self._l7policies.get(l7policy_id)
+            if not policy:
+                return []
+            rules = list(policy.rules)
+            if project_id:
+                rules = [r for r in rules if r.project_id == project_id]
+            if type:
+                rules = [r for r in rules if r.type.value == type]
+            return rules
+
+    def update_l7rule(
+        self,
+        l7policy_id: str,
+        rule_id: str,
+        type: str | None = None,
+        compare_type: str | None = None,
+        value: str | None = None,
+        key: str | None = None,
+        invert: bool | None = None,
+        admin_state_up: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> L7Rule | None:
+        """Update an L7 rule."""
+        with self._lock:
+            rule = self._l7rules.get(f"{l7policy_id}:{rule_id}")
+            if not rule:
+                return None
+
+            if type is not None:
+                rule.type = L7RuleType(type)
+            if compare_type is not None:
+                rule.compare_type = L7RuleCompareType(compare_type)
+            if value is not None:
+                rule.value = value
+            if key is not None:
+                rule.key = key
+            if invert is not None:
+                rule.invert = invert
+            if admin_state_up is not None:
+                rule.admin_state_up = admin_state_up
+            if tags is not None:
+                rule.tags = tags
+
+            return rule
+
+    def delete_l7rule(self, l7policy_id: str, rule_id: str) -> bool:
+        """Delete an L7 rule."""
+        with self._lock:
+            key = f"{l7policy_id}:{rule_id}"
+            rule = self._l7rules.get(key)
+            if not rule:
+                return False
+
+            policy = self._l7policies.get(l7policy_id)
+            if policy:
+                policy.rules = [r for r in policy.rules if r.id != rule_id]
+
+            del self._l7rules[key]
+            return True
+
+    def reset_octavia(self) -> None:
+        """Reset all Octavia data to defaults."""
+        with self._lock:
+            self._load_balancers.clear()
+            self._listeners.clear()
+            self._pools.clear()
+            self._pool_members.clear()
+            self._health_monitors.clear()
+            self._l7policies.clear()
+            self._l7rules.clear()
+            self._next_lb_vip = 1
 
 
 # Global database instance

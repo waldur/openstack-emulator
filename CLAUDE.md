@@ -222,9 +222,9 @@ pytest tests/test_<service>.py -v
 
 ## Pre-commit Requirements
 
-**IMPORTANT: You MUST run the black linter and ensure it passes before committing any code.**
+**IMPORTANT: You MUST run all linters and ensure they pass before committing any code.**
 
-### Black Linter
+### Black Formatter
 
 All Python code must be formatted with black before committing. This is a strict requirement - commits with unformatted code are not acceptable.
 
@@ -239,17 +239,43 @@ black .
 black emulator/ tests/
 ```
 
+### Ruff Linter
+
+All Python code must pass ruff linting checks. Ruff catches common errors and enforces code quality standards.
+
+```bash
+# Check for linting errors
+ruff check emulator tests
+
+# Auto-fix some issues (where possible)
+ruff check --fix emulator tests
+```
+
+Common ruff issues to avoid:
+- **E741**: Ambiguous variable names (e.g., use `listener` instead of `l`)
+- **F841**: Unused variables (remove or use them)
+
+### Mypy Type Checker
+
+All Python code must pass mypy type checking.
+
+```bash
+# Run mypy type checker
+mypy emulator --ignore-missing-imports
+```
+
 ### Pre-commit Checklist
 
-Before every commit, you MUST:
+Before every commit, you MUST run these commands in order:
 
-1. **Run black formatter**: `black .`
-2. **Verify formatting passes**: `black --check .`
-3. **Run tests**: `pytest`
+1. **Run black formatter**: `black emulator tests`
+2. **Run ruff linter**: `ruff check emulator tests`
+3. **Run mypy type checker**: `mypy emulator --ignore-missing-imports`
+4. **Run tests**: `pytest`
 
-If `black --check .` reports any formatting issues, run `black .` to fix them before committing.
+All four checks must pass before committing. Fix any errors before proceeding.
 
-**DO NOT commit code that fails black formatting checks. This is mandatory.**
+**DO NOT commit code that fails any of these checks. This is mandatory.**
 
 ## Patterns and Best Practices
 
