@@ -1358,3 +1358,481 @@ class SecurityGroup:
             "tags": self.tags,
             "revision_number": 1,
         }
+
+
+# Octavia Load Balancer Models
+
+
+class LoadBalancerProvisioningStatus(str, Enum):
+    """Load balancer provisioning status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    DELETED = "DELETED"
+    ERROR = "ERROR"
+    PENDING_CREATE = "PENDING_CREATE"
+    PENDING_UPDATE = "PENDING_UPDATE"
+    PENDING_DELETE = "PENDING_DELETE"
+
+
+class LoadBalancerOperatingStatus(str, Enum):
+    """Load balancer operating status enumeration."""
+
+    ONLINE = "ONLINE"
+    DRAINING = "DRAINING"
+    OFFLINE = "OFFLINE"
+    DEGRADED = "DEGRADED"
+    ERROR = "ERROR"
+    NO_MONITOR = "NO_MONITOR"
+
+
+class ListenerProtocol(str, Enum):
+    """Listener protocol enumeration."""
+
+    HTTP = "HTTP"
+    HTTPS = "HTTPS"
+    TCP = "TCP"
+    TERMINATED_HTTPS = "TERMINATED_HTTPS"
+    UDP = "UDP"
+    SCTP = "SCTP"
+    PROMETHEUS = "PROMETHEUS"
+
+
+class PoolProtocol(str, Enum):
+    """Pool protocol enumeration."""
+
+    HTTP = "HTTP"
+    HTTPS = "HTTPS"
+    PROXY = "PROXY"
+    PROXYV2 = "PROXYV2"
+    TCP = "TCP"
+    UDP = "UDP"
+    SCTP = "SCTP"
+
+
+class PoolLBAlgorithm(str, Enum):
+    """Pool load balancing algorithm enumeration."""
+
+    ROUND_ROBIN = "ROUND_ROBIN"
+    LEAST_CONNECTIONS = "LEAST_CONNECTIONS"
+    SOURCE_IP = "SOURCE_IP"
+    SOURCE_IP_PORT = "SOURCE_IP_PORT"
+
+
+class HealthMonitorType(str, Enum):
+    """Health monitor type enumeration."""
+
+    HTTP = "HTTP"
+    HTTPS = "HTTPS"
+    PING = "PING"
+    TCP = "TCP"
+    TLS_HELLO = "TLS-HELLO"
+    UDP_CONNECT = "UDP-CONNECT"
+    SCTP = "SCTP"
+
+
+class L7PolicyAction(str, Enum):
+    """L7 policy action enumeration."""
+
+    REJECT = "REJECT"
+    REDIRECT_TO_POOL = "REDIRECT_TO_POOL"
+    REDIRECT_TO_URL = "REDIRECT_TO_URL"
+    REDIRECT_PREFIX = "REDIRECT_PREFIX"
+
+
+class L7RuleType(str, Enum):
+    """L7 rule type enumeration."""
+
+    COOKIE = "COOKIE"
+    FILE_TYPE = "FILE_TYPE"
+    HEADER = "HEADER"
+    HOST_NAME = "HOST_NAME"
+    PATH = "PATH"
+    SSL_CONN_HAS_CERT = "SSL_CONN_HAS_CERT"
+    SSL_VERIFY_RESULT = "SSL_VERIFY_RESULT"
+    SSL_DN_FIELD = "SSL_DN_FIELD"
+
+
+class L7RuleCompareType(str, Enum):
+    """L7 rule compare type enumeration."""
+
+    CONTAINS = "CONTAINS"
+    ENDS_WITH = "ENDS_WITH"
+    EQUAL_TO = "EQUAL_TO"
+    REGEX = "REGEX"
+    STARTS_WITH = "STARTS_WITH"
+
+
+@dataclass
+class HealthMonitor:
+    """Represents an Octavia health monitor."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    type: HealthMonitorType = HealthMonitorType.HTTP
+    delay: int = 5  # seconds between health checks
+    timeout: int = 5  # seconds to wait for response
+    max_retries: int = 3
+    max_retries_down: int = 3
+    http_method: str = "GET"
+    url_path: str = "/"
+    expected_codes: str = "200"
+    admin_state_up: bool = True
+    pool_id: str = ""
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type.value,
+            "delay": self.delay,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+            "max_retries_down": self.max_retries_down,
+            "http_method": self.http_method,
+            "url_path": self.url_path,
+            "expected_codes": self.expected_codes,
+            "admin_state_up": self.admin_state_up,
+            "pool_id": self.pool_id,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+
+
+@dataclass
+class PoolMember:
+    """Represents an Octavia pool member."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    address: str = ""
+    protocol_port: int = 80
+    weight: int = 1
+    subnet_id: str | None = None
+    admin_state_up: bool = True
+    pool_id: str = ""
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    backup: bool = False
+    monitor_address: str | None = None
+    monitor_port: int | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "address": self.address,
+            "protocol_port": self.protocol_port,
+            "weight": self.weight,
+            "subnet_id": self.subnet_id,
+            "admin_state_up": self.admin_state_up,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "backup": self.backup,
+            "monitor_address": self.monitor_address,
+            "monitor_port": self.monitor_port,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+
+
+@dataclass
+class Pool:
+    """Represents an Octavia pool."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    protocol: PoolProtocol = PoolProtocol.HTTP
+    lb_algorithm: PoolLBAlgorithm = PoolLBAlgorithm.ROUND_ROBIN
+    admin_state_up: bool = True
+    loadbalancer_id: str | None = None
+    listener_id: str | None = None
+    healthmonitor_id: str | None = None
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    members: list[PoolMember] = field(default_factory=list)
+    session_persistence: dict[str, Any] | None = None
+    tls_container_ref: str | None = None
+    ca_tls_container_ref: str | None = None
+    crl_container_ref: str | None = None
+    tls_enabled: bool = False
+    tls_ciphers: str | None = None
+    tls_versions: list[str] | None = None
+    alpn_protocols: list[str] | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "protocol": self.protocol.value,
+            "lb_algorithm": self.lb_algorithm.value,
+            "admin_state_up": self.admin_state_up,
+            "loadbalancers": (
+                [{"id": self.loadbalancer_id}] if self.loadbalancer_id else []
+            ),
+            "listeners": [{"id": self.listener_id}] if self.listener_id else [],
+            "healthmonitor_id": self.healthmonitor_id,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "members": [m.to_dict() for m in self.members],
+            "session_persistence": self.session_persistence,
+            "tls_container_ref": self.tls_container_ref,
+            "ca_tls_container_ref": self.ca_tls_container_ref,
+            "crl_container_ref": self.crl_container_ref,
+            "tls_enabled": self.tls_enabled,
+            "tls_ciphers": self.tls_ciphers,
+            "tls_versions": self.tls_versions,
+            "alpn_protocols": self.alpn_protocols,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+        return result
+
+
+@dataclass
+class L7Rule:
+    """Represents an Octavia L7 rule."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    type: L7RuleType = L7RuleType.PATH
+    compare_type: L7RuleCompareType = L7RuleCompareType.EQUAL_TO
+    key: str | None = None
+    value: str = ""
+    invert: bool = False
+    admin_state_up: bool = True
+    l7policy_id: str = ""
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "type": self.type.value,
+            "compare_type": self.compare_type.value,
+            "key": self.key,
+            "value": self.value,
+            "invert": self.invert,
+            "admin_state_up": self.admin_state_up,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+
+
+@dataclass
+class L7Policy:
+    """Represents an Octavia L7 policy."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    action: L7PolicyAction = L7PolicyAction.REJECT
+    redirect_pool_id: str | None = None
+    redirect_url: str | None = None
+    redirect_prefix: str | None = None
+    redirect_http_code: int | None = None
+    position: int = 1
+    admin_state_up: bool = True
+    listener_id: str = ""
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    rules: list[L7Rule] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "action": self.action.value,
+            "redirect_pool_id": self.redirect_pool_id,
+            "redirect_url": self.redirect_url,
+            "redirect_prefix": self.redirect_prefix,
+            "redirect_http_code": self.redirect_http_code,
+            "position": self.position,
+            "admin_state_up": self.admin_state_up,
+            "listener_id": self.listener_id,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "rules": [r.to_dict() for r in self.rules],
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+
+
+@dataclass
+class Listener:
+    """Represents an Octavia listener."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    protocol: ListenerProtocol = ListenerProtocol.HTTP
+    protocol_port: int = 80
+    connection_limit: int = -1  # -1 means unlimited
+    default_pool_id: str | None = None
+    admin_state_up: bool = True
+    loadbalancer_id: str = ""
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    default_tls_container_ref: str | None = None
+    sni_container_refs: list[str] = field(default_factory=list)
+    client_authentication: str = "NONE"  # NONE, OPTIONAL, MANDATORY
+    client_ca_tls_container_ref: str | None = None
+    client_crl_container_ref: str | None = None
+    insert_headers: dict[str, str] = field(default_factory=dict)
+    timeout_client_data: int | None = None
+    timeout_member_connect: int | None = None
+    timeout_member_data: int | None = None
+    timeout_tcp_inspect: int | None = None
+    allowed_cidrs: list[str] | None = None
+    tls_ciphers: str | None = None
+    tls_versions: list[str] | None = None
+    alpn_protocols: list[str] | None = None
+    l7policies: list[L7Policy] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "protocol": self.protocol.value,
+            "protocol_port": self.protocol_port,
+            "connection_limit": self.connection_limit,
+            "default_pool_id": self.default_pool_id,
+            "admin_state_up": self.admin_state_up,
+            "loadbalancers": [{"id": self.loadbalancer_id}],
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "default_tls_container_ref": self.default_tls_container_ref,
+            "sni_container_refs": self.sni_container_refs,
+            "client_authentication": self.client_authentication,
+            "client_ca_tls_container_ref": self.client_ca_tls_container_ref,
+            "client_crl_container_ref": self.client_crl_container_ref,
+            "insert_headers": self.insert_headers,
+            "timeout_client_data": self.timeout_client_data,
+            "timeout_member_connect": self.timeout_member_connect,
+            "timeout_member_data": self.timeout_member_data,
+            "timeout_tcp_inspect": self.timeout_tcp_inspect,
+            "allowed_cidrs": self.allowed_cidrs,
+            "tls_ciphers": self.tls_ciphers,
+            "tls_versions": self.tls_versions,
+            "alpn_protocols": self.alpn_protocols,
+            "l7policies": [p.to_dict() for p in self.l7policies],
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
+
+
+@dataclass
+class LoadBalancer:
+    """Represents an Octavia load balancer."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    admin_state_up: bool = True
+    vip_subnet_id: str | None = None
+    vip_network_id: str | None = None
+    vip_port_id: str | None = None
+    vip_address: str = ""
+    vip_qos_policy_id: str | None = None
+    flavor_id: str | None = None
+    availability_zone: str | None = None
+    provider: str = "amphora"
+    project_id: str = ""
+    provisioning_status: LoadBalancerProvisioningStatus = (
+        LoadBalancerProvisioningStatus.ACTIVE
+    )
+    operating_status: LoadBalancerOperatingStatus = LoadBalancerOperatingStatus.ONLINE
+    listeners: list[Listener] = field(default_factory=list)
+    pools: list[Pool] = field(default_factory=list)
+    additional_vips: list[dict[str, str]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "admin_state_up": self.admin_state_up,
+            "vip_subnet_id": self.vip_subnet_id,
+            "vip_network_id": self.vip_network_id,
+            "vip_port_id": self.vip_port_id,
+            "vip_address": self.vip_address,
+            "vip_qos_policy_id": self.vip_qos_policy_id,
+            "flavor_id": self.flavor_id,
+            "availability_zone": self.availability_zone,
+            "provider": self.provider,
+            "project_id": self.project_id,
+            "provisioning_status": self.provisioning_status.value,
+            "operating_status": self.operating_status.value,
+            "listeners": [{"id": listener.id} for listener in self.listeners],
+            "pools": [{"id": pool.id} for pool in self.pools],
+            "additional_vips": self.additional_vips,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+        }
