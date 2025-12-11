@@ -124,6 +124,59 @@ class SnapshotCreateRequest(BaseModel):
     description: str | None = None
 
 
+# Octavia (Load Balancer) models
+class LoadBalancerCreateRequest(BaseModel):
+    name: str
+    vip_subnet_id: str | None = None
+    vip_network_id: str | None = None
+    description: str | None = None
+    admin_state_up: bool = True
+    provider: str = "amphora"
+
+
+class ListenerCreateRequest(BaseModel):
+    name: str
+    loadbalancer_id: str
+    protocol: str = "HTTP"
+    protocol_port: int = 80
+    description: str | None = None
+    admin_state_up: bool = True
+    connection_limit: int = -1
+
+
+class PoolCreateRequest(BaseModel):
+    name: str
+    protocol: str = "HTTP"
+    lb_algorithm: str = "ROUND_ROBIN"
+    loadbalancer_id: str | None = None
+    listener_id: str | None = None
+    description: str | None = None
+    admin_state_up: bool = True
+
+
+class PoolMemberCreateRequest(BaseModel):
+    pool_id: str
+    name: str | None = None
+    address: str
+    protocol_port: int = 80
+    weight: int = 1
+    subnet_id: str | None = None
+    admin_state_up: bool = True
+
+
+class HealthMonitorCreateRequest(BaseModel):
+    pool_id: str
+    type: str = "HTTP"
+    delay: int = 5
+    timeout: int = 5
+    max_retries: int = 3
+    name: str | None = None
+    http_method: str = "GET"
+    url_path: str = "/"
+    expected_codes: str = "200"
+    admin_state_up: bool = True
+
+
 # CSS styles for the status page - Terminal/Geek aesthetic with Tailwind
 CSS_STYLES = """
 <script src="https://cdn.tailwindcss.com"></script>
@@ -2204,6 +2257,10 @@ def render_create_modals(
     networks: list,
     volumes: list,
     volume_types: list,
+    subnets: list,
+    load_balancers: list,
+    listeners: list,
+    pools: list,
 ) -> str:
     """Render all create modals for resources."""
 
@@ -2239,6 +2296,29 @@ def render_create_modals(
     ext_net_options = "".join(
         [f'<option value="{n.id}">{n.name}</option>' for n in external_networks]
     )
+
+    # Build subnet options for load balancers
+    subnet_options = '<option value="">Auto-select</option>'
+    subnet_options += "".join(
+        [f'<option value="{s.id}">{s.name or s.cidr} ({s.cidr})</option>' for s in subnets]
+    )
+
+    # Build load balancer options for listeners
+    lb_options = "".join(
+        [f'<option value="{lb.id}">{lb.name or lb.id[:8]}</option>' for lb in load_balancers]
+    )
+
+    # Build listener options for pools
+    listener_options = '<option value="">None (standalone pool)</option>'
+    listener_options += "".join(
+        [
+            f'<option value="{ls.id}">{ls.name or ls.id[:8]} (port {ls.protocol_port})</option>'
+            for ls in listeners
+        ]
+    )
+
+    # Build pool options for health monitors
+    pool_options = "".join([f'<option value="{p.id}">{p.name or p.id[:8]}</option>' for p in pools])
 
     return f"""
     <!-- Login Modal -->
@@ -2654,6 +2734,282 @@ def render_create_modals(
             </form>
         </div>
     </div>
+
+    <!-- Create Load Balancer Modal -->
+    <div id="create-loadbalancer-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Load Balancer</h3>
+                <button class="modal-close" onclick="closeModal('create-loadbalancer-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-loadbalancer-form">
+                <div class="form-group">
+                    <label for="lb-name">Name *</label>
+                    <input type="text" id="lb-name" name="name" required placeholder="my-loadbalancer">
+                </div>
+                <div class="form-group">
+                    <label for="lb-subnet">VIP Subnet</label>
+                    <select id="lb-subnet" name="vip_subnet_id">
+                        {subnet_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="lb-description">Description</label>
+                    <input type="text" id="lb-description" name="description" placeholder="Load balancer description">
+                </div>
+                <div class="form-group">
+                    <label for="lb-provider">Provider</label>
+                    <select id="lb-provider" name="provider">
+                        <option value="amphora">amphora</option>
+                        <option value="ovn">ovn</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="admin_state_up" checked>
+                        Admin State Up
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-loadbalancer-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('loadbalancers', 'create-loadbalancer-form', 'create-loadbalancer-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Listener Modal -->
+    <div id="create-listener-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Listener</h3>
+                <button class="modal-close" onclick="closeModal('create-listener-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-listener-form">
+                <div class="form-group">
+                    <label for="listener-name">Name *</label>
+                    <input type="text" id="listener-name" name="name" required placeholder="my-listener">
+                </div>
+                <div class="form-group">
+                    <label for="listener-lb">Load Balancer *</label>
+                    <select id="listener-lb" name="loadbalancer_id" required>
+                        {lb_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="listener-protocol">Protocol</label>
+                    <select id="listener-protocol" name="protocol">
+                        <option value="HTTP">HTTP</option>
+                        <option value="HTTPS">HTTPS</option>
+                        <option value="TCP">TCP</option>
+                        <option value="UDP">UDP</option>
+                        <option value="TERMINATED_HTTPS">TERMINATED_HTTPS</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="listener-port">Protocol Port *</label>
+                    <input type="number" id="listener-port" name="protocol_port" required min="1" max="65535" value="80">
+                </div>
+                <div class="form-group">
+                    <label for="listener-description">Description</label>
+                    <input type="text" id="listener-description" name="description" placeholder="Listener description">
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="admin_state_up" checked>
+                        Admin State Up
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-listener-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('listeners', 'create-listener-form', 'create-listener-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Pool Modal -->
+    <div id="create-pool-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Pool</h3>
+                <button class="modal-close" onclick="closeModal('create-pool-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-pool-form">
+                <div class="form-group">
+                    <label for="pool-name">Name *</label>
+                    <input type="text" id="pool-name" name="name" required placeholder="my-pool">
+                </div>
+                <div class="form-group">
+                    <label for="pool-listener">Listener</label>
+                    <select id="pool-listener" name="listener_id">
+                        {listener_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="pool-protocol">Protocol</label>
+                    <select id="pool-protocol" name="protocol">
+                        <option value="HTTP">HTTP</option>
+                        <option value="HTTPS">HTTPS</option>
+                        <option value="PROXY">PROXY</option>
+                        <option value="TCP">TCP</option>
+                        <option value="UDP">UDP</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="pool-algorithm">Load Balancing Algorithm</label>
+                    <select id="pool-algorithm" name="lb_algorithm">
+                        <option value="ROUND_ROBIN">Round Robin</option>
+                        <option value="LEAST_CONNECTIONS">Least Connections</option>
+                        <option value="SOURCE_IP">Source IP</option>
+                        <option value="SOURCE_IP_PORT">Source IP Port</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="pool-description">Description</label>
+                    <input type="text" id="pool-description" name="description" placeholder="Pool description">
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="admin_state_up" checked>
+                        Admin State Up
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-pool-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('pools', 'create-pool-form', 'create-pool-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Health Monitor Modal -->
+    <div id="create-healthmonitor-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Health Monitor</h3>
+                <button class="modal-close" onclick="closeModal('create-healthmonitor-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-healthmonitor-form">
+                <div class="form-group">
+                    <label for="hm-pool">Pool *</label>
+                    <select id="hm-pool" name="pool_id" required>
+                        {pool_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="hm-name">Name</label>
+                    <input type="text" id="hm-name" name="name" placeholder="my-healthmonitor">
+                </div>
+                <div class="form-group">
+                    <label for="hm-type">Type</label>
+                    <select id="hm-type" name="type">
+                        <option value="HTTP">HTTP</option>
+                        <option value="HTTPS">HTTPS</option>
+                        <option value="PING">PING</option>
+                        <option value="TCP">TCP</option>
+                        <option value="TLS-HELLO">TLS-HELLO</option>
+                        <option value="UDP-CONNECT">UDP-CONNECT</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="hm-delay">Delay (seconds)</label>
+                    <input type="number" id="hm-delay" name="delay" min="1" value="5">
+                </div>
+                <div class="form-group">
+                    <label for="hm-timeout">Timeout (seconds)</label>
+                    <input type="number" id="hm-timeout" name="timeout" min="1" value="5">
+                </div>
+                <div class="form-group">
+                    <label for="hm-max-retries">Max Retries</label>
+                    <input type="number" id="hm-max-retries" name="max_retries" min="1" max="10" value="3">
+                </div>
+                <div class="form-group">
+                    <label for="hm-http-method">HTTP Method</label>
+                    <select id="hm-http-method" name="http_method">
+                        <option value="GET">GET</option>
+                        <option value="HEAD">HEAD</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="DELETE">DELETE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="hm-url-path">URL Path</label>
+                    <input type="text" id="hm-url-path" name="url_path" value="/" placeholder="/">
+                </div>
+                <div class="form-group">
+                    <label for="hm-expected-codes">Expected Codes</label>
+                    <input type="text" id="hm-expected-codes" name="expected_codes" value="200" placeholder="200">
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="admin_state_up" checked>
+                        Admin State Up
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-healthmonitor-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('healthmonitors', 'create-healthmonitor-form', 'create-healthmonitor-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Pool Member Modal -->
+    <div id="create-member-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Pool Member</h3>
+                <button class="modal-close" onclick="closeModal('create-member-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-member-form">
+                <div class="form-group">
+                    <label for="member-pool">Pool *</label>
+                    <select id="member-pool" name="pool_id" required>
+                        {pool_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="member-name">Name</label>
+                    <input type="text" id="member-name" name="name" placeholder="my-member">
+                </div>
+                <div class="form-group">
+                    <label for="member-address">IP Address *</label>
+                    <input type="text" id="member-address" name="address" required placeholder="192.168.1.10">
+                </div>
+                <div class="form-group">
+                    <label for="member-port">Protocol Port *</label>
+                    <input type="number" id="member-port" name="protocol_port" required min="1" max="65535" value="80">
+                </div>
+                <div class="form-group">
+                    <label for="member-weight">Weight</label>
+                    <input type="number" id="member-weight" name="weight" min="1" max="256" value="1">
+                </div>
+                <div class="form-group">
+                    <label for="member-subnet">Subnet</label>
+                    <select id="member-subnet" name="subnet_id">
+                        {subnet_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="admin_state_up" checked>
+                        Admin State Up
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-member-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('members', 'create-member-form', 'create-member-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
     """
 
 
@@ -2781,7 +3137,9 @@ async def status_page(
         return ""
 
     # Build modals
-    modals = render_create_modals(flavors, images, networks, volumes, volume_types)
+    modals = render_create_modals(
+        flavors, images, networks, volumes, volume_types, subnets, load_balancers, listeners, pools
+    )
 
     # Get active scenario count for badge display in header
     active_scenarios = scenario_manager.get_active_scenarios()
@@ -2995,6 +3353,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Load Balancers
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(load_balancers)}</span>
                             </h3>
+                            {create_btn('create-loadbalancer-modal', '+ NEW')}
                         </div>
                         {render_load_balancers_table(load_balancers, authenticated)}
                     </div>
@@ -3004,6 +3363,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Listeners
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(listeners)}</span>
                             </h3>
+                            {create_btn('create-listener-modal', '+ NEW')}
                         </div>
                         {render_listeners_table(listeners, authenticated)}
                     </div>
@@ -3013,6 +3373,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Pools
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(pools)}</span>
                             </h3>
+                            {create_btn('create-pool-modal', '+ NEW')}
                         </div>
                         {render_pools_table(pools, authenticated)}
                     </div>
@@ -3022,6 +3383,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Health Monitors
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(health_monitors)}</span>
                             </h3>
+                            {create_btn('create-healthmonitor-modal', '+ NEW')}
                         </div>
                         {render_health_monitors_table(health_monitors, authenticated)}
                     </div>
@@ -3873,6 +4235,244 @@ async def api_delete_snapshot(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     return {"message": "Snapshot deleted"}
+
+
+# =============================================================================
+# Management API - Octavia (Load Balancers)
+# =============================================================================
+
+
+@router.post("/api/loadbalancers")
+async def api_create_load_balancer(
+    request: LoadBalancerCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new load balancer."""
+    user = require_auth(auth_token)
+
+    lb = db.create_load_balancer(
+        name=request.name,
+        project_id=user["project_id"],
+        vip_subnet_id=request.vip_subnet_id,
+        description=request.description or "",
+        admin_state_up=request.admin_state_up,
+        provider=request.provider,
+    )
+
+    return {
+        "loadbalancer": {
+            "id": lb.id,
+            "name": lb.name,
+            "provisioning_status": lb.provisioning_status.value,
+        }
+    }
+
+
+@router.delete("/api/loadbalancers/{loadbalancer_id}")
+async def api_delete_load_balancer(
+    loadbalancer_id: str,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Delete a load balancer."""
+    require_auth(auth_token)
+
+    if not db.delete_load_balancer(loadbalancer_id):
+        raise HTTPException(status_code=404, detail="Load balancer not found")
+
+    return {"message": "Load balancer deleted"}
+
+
+@router.post("/api/listeners")
+async def api_create_listener(
+    request: ListenerCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new listener."""
+    user = require_auth(auth_token)
+
+    # Validate load balancer exists
+    lb = db.get_load_balancer(request.loadbalancer_id)
+    if not lb:
+        raise HTTPException(status_code=400, detail="Load balancer not found")
+
+    listener = db.create_listener(
+        name=request.name,
+        loadbalancer_id=request.loadbalancer_id,
+        protocol=request.protocol,
+        protocol_port=request.protocol_port,
+        project_id=user["project_id"],
+        description=request.description or "",
+        admin_state_up=request.admin_state_up,
+        connection_limit=request.connection_limit,
+    )
+
+    if not listener:
+        raise HTTPException(status_code=500, detail="Failed to create listener")
+
+    return {
+        "listener": {
+            "id": listener.id,
+            "name": listener.name,
+            "provisioning_status": listener.provisioning_status.value,
+        }
+    }
+
+
+@router.delete("/api/listeners/{listener_id}")
+async def api_delete_listener(
+    listener_id: str,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Delete a listener."""
+    require_auth(auth_token)
+
+    if not db.delete_listener(listener_id):
+        raise HTTPException(status_code=404, detail="Listener not found")
+
+    return {"message": "Listener deleted"}
+
+
+@router.post("/api/pools")
+async def api_create_pool(
+    request: PoolCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new pool."""
+    user = require_auth(auth_token)
+
+    # Validate listener exists if provided
+    if request.listener_id:
+        listener = db.get_listener(request.listener_id)
+        if not listener:
+            raise HTTPException(status_code=400, detail="Listener not found")
+
+    pool = db.create_pool(
+        name=request.name,
+        protocol=request.protocol,
+        lb_algorithm=request.lb_algorithm,
+        project_id=user["project_id"],
+        loadbalancer_id=request.loadbalancer_id,
+        listener_id=request.listener_id,
+        description=request.description or "",
+        admin_state_up=request.admin_state_up,
+    )
+
+    if not pool:
+        raise HTTPException(status_code=500, detail="Failed to create pool")
+
+    return {
+        "pool": {
+            "id": pool.id,
+            "name": pool.name,
+            "provisioning_status": pool.provisioning_status.value,
+        }
+    }
+
+
+@router.delete("/api/pools/{pool_id}")
+async def api_delete_pool(
+    pool_id: str,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Delete a pool."""
+    require_auth(auth_token)
+
+    if not db.delete_pool(pool_id):
+        raise HTTPException(status_code=404, detail="Pool not found")
+
+    return {"message": "Pool deleted"}
+
+
+@router.post("/api/healthmonitors")
+async def api_create_health_monitor(
+    request: HealthMonitorCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new health monitor."""
+    user = require_auth(auth_token)
+
+    # Validate pool exists
+    pool = db.get_pool(request.pool_id)
+    if not pool:
+        raise HTTPException(status_code=400, detail="Pool not found")
+
+    monitor = db.create_health_monitor(
+        pool_id=request.pool_id,
+        type=request.type,
+        delay=request.delay,
+        timeout=request.timeout,
+        max_retries=request.max_retries,
+        project_id=user["project_id"],
+        name=request.name or "",
+        http_method=request.http_method,
+        url_path=request.url_path,
+        expected_codes=request.expected_codes,
+        admin_state_up=request.admin_state_up,
+    )
+
+    if not monitor:
+        raise HTTPException(
+            status_code=400, detail="Failed to create health monitor (pool may already have one)"
+        )
+
+    return {
+        "healthmonitor": {
+            "id": monitor.id,
+            "name": monitor.name,
+            "provisioning_status": monitor.provisioning_status.value,
+        }
+    }
+
+
+@router.delete("/api/healthmonitors/{healthmonitor_id}")
+async def api_delete_health_monitor(
+    healthmonitor_id: str,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Delete a health monitor."""
+    require_auth(auth_token)
+
+    if not db.delete_health_monitor(healthmonitor_id):
+        raise HTTPException(status_code=404, detail="Health monitor not found")
+
+    return {"message": "Health monitor deleted"}
+
+
+@router.post("/api/members")
+async def api_create_pool_member(
+    request: PoolMemberCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new pool member."""
+    user = require_auth(auth_token)
+
+    # Validate pool exists
+    pool = db.get_pool(request.pool_id)
+    if not pool:
+        raise HTTPException(status_code=400, detail="Pool not found")
+
+    member = db.create_pool_member(
+        pool_id=request.pool_id,
+        address=request.address,
+        protocol_port=request.protocol_port,
+        project_id=user["project_id"],
+        name=request.name or "",
+        weight=request.weight,
+        subnet_id=request.subnet_id,
+        admin_state_up=request.admin_state_up,
+    )
+
+    if not member:
+        raise HTTPException(status_code=500, detail="Failed to create pool member")
+
+    return {
+        "member": {
+            "id": member.id,
+            "name": member.name,
+            "address": member.address,
+            "provisioning_status": member.provisioning_status.value,
+        }
+    }
 
 
 # =============================================================================
