@@ -220,6 +220,37 @@ pytest tests/test_<service>.py -v
 - Use `response_model=None` for routes returning `Response` objects
 - Follow OpenStack API patterns for request/response formats
 
+## Pre-commit Requirements
+
+**IMPORTANT: You MUST run the black linter and ensure it passes before committing any code.**
+
+### Black Linter
+
+All Python code must be formatted with black before committing. This is a strict requirement - commits with unformatted code are not acceptable.
+
+```bash
+# Check if code passes black formatting (dry run)
+black --check .
+
+# Format all Python files
+black .
+
+# Format specific files
+black emulator/ tests/
+```
+
+### Pre-commit Checklist
+
+Before every commit, you MUST:
+
+1. **Run black formatter**: `black .`
+2. **Verify formatting passes**: `black --check .`
+3. **Run tests**: `pytest`
+
+If `black --check .` reports any formatting issues, run `black .` to fix them before committing.
+
+**DO NOT commit code that fails black formatting checks. This is mandatory.**
+
 ## Patterns and Best Practices
 
 ### Default Resource Initialization
