@@ -6,11 +6,10 @@ and other service processes read from it.
 """
 
 import asyncio
-from typing import Callable
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
 from emulator.core.scenario_manager import scenario_manager
@@ -92,7 +91,7 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self,
         request: Request,
-        call_next: Callable[[Request], Response],
+        call_next: RequestResponseEndpoint,
     ) -> Response:
         """Process request with scenario injection."""
         path = request.url.path
