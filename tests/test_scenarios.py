@@ -1,6 +1,7 @@
 """Tests for Scenario management and failure injection."""
 
 import time
+from typing import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,7 +19,7 @@ from emulator.core.scenarios import (
 
 
 @pytest.fixture(autouse=True)
-def reset_state():
+def reset_state() -> Generator[None, None, None]:
     """Reset scenario manager and database before each test."""
     scenario_manager.reset()
     db._servers.clear()
@@ -31,19 +32,19 @@ def reset_state():
 
 
 @pytest.fixture
-def scenarios_client():
+def scenarios_client() -> TestClient:
     """Create test client for scenarios API."""
     return TestClient(scenarios_app)
 
 
 @pytest.fixture
-def nova_client():
+def nova_client() -> TestClient:
     """Create test client for Nova API."""
     return TestClient(nova_app)
 
 
 @pytest.fixture
-def auth_token(nova_client):
+def auth_token(nova_client: TestClient) -> str:
     """Get an authentication token."""
     # Use a separate client for keystone
     from emulator.api.app_keystone import app as keystone_app
@@ -68,13 +69,13 @@ def auth_token(nova_client):
         },
     )
     assert response.status_code == 200
-    return response.headers["X-Subject-Token"]
+    return str(response.headers["X-Subject-Token"])
 
 
 class TestScenarioManager:
     """Test the scenario manager functionality."""
 
-    def test_list_builtin_scenarios(self):
+    def test_list_builtin_scenarios(self) -> None:
         """Test that builtin scenarios are registered."""
         scenarios = scenario_manager.list_scenarios()
         assert len(scenarios) > 0
@@ -85,7 +86,7 @@ class TestScenarioManager:
         assert "nova_oom_crash" in scenario_ids
         assert "cinder_disk_full" in scenario_ids
 
-    def test_enable_disable_scenario(self):
+    def test_enable_disable_scenario(self) -> None:
         """Test enabling and disabling scenarios."""
         # Initially no active scenarios
         active = scenario_manager.get_active_scenarios()
@@ -108,7 +109,7 @@ class TestScenarioManager:
         active = scenario_manager.get_active_scenarios()
         assert len(active) == 0
 
-    def test_reset_scenarios(self):
+    def test_reset_scenarios(self) -> None:
         """Test resetting all scenarios."""
         # Enable multiple scenarios
         scenario_manager.enable_scenario("light_load")
@@ -119,7 +120,7 @@ class TestScenarioManager:
         scenario_manager.reset()
         assert len(scenario_manager.get_active_scenarios()) == 0
 
-    def test_register_custom_scenario(self):
+    def test_register_custom_scenario(self) -> None:
         """Test registering a custom scenario."""
         custom = Scenario(
             id="custom_test",
@@ -145,7 +146,7 @@ class TestScenarioManager:
         # Cannot unregister builtin
         assert scenario_manager.unregister_scenario("light_load") is False
 
-    def test_filter_scenarios_by_category(self):
+    def test_filter_scenarios_by_category(self) -> None:
         """Test filtering scenarios by category."""
         performance = scenario_manager.list_scenarios(category=ScenarioCategory.PERFORMANCE)
         assert all(s.category == ScenarioCategory.PERFORMANCE for s in performance)
@@ -154,7 +155,7 @@ class TestScenarioManager:
         storage = scenario_manager.list_scenarios(category=ScenarioCategory.STORAGE)
         assert all(s.category == ScenarioCategory.STORAGE for s in storage)
 
-    def test_filter_scenarios_by_service(self):
+    def test_filter_scenarios_by_service(self) -> None:
         """Test getting active scenarios filtered by service."""
         # Enable a nova-specific scenario
         scenario_manager.enable_scenario("nova_slow")
@@ -175,7 +176,7 @@ class TestScenarioManager:
 class TestDelayCalculation:
     """Test delay calculation logic."""
 
-    def test_uniform_distribution(self):
+    def test_uniform_distribution(self) -> None:
         """Test uniform delay distribution."""
         scenario_manager.enable_scenario("light_load")
 
@@ -188,7 +189,7 @@ class TestDelayCalculation:
         assert min(delays) >= 100
         assert max(delays) <= 500
 
-    def test_stacking_delays(self):
+    def test_stacking_delays(self) -> None:
         """Test that delays from multiple scenarios stack."""
         # Enable two scenarios
         scenario_manager.enable_scenario("light_load")
@@ -201,7 +202,7 @@ class TestDelayCalculation:
         # light_load: 100-500ms, nova_slow: 1000-5000ms
         assert result.delay_ms >= 1100  # At least the minimums combined
 
-    def test_service_specific_delay(self):
+    def test_service_specific_delay(self) -> None:
         """Test that service-specific scenarios only affect that service."""
         scenario_manager.enable_scenario("nova_slow")
 
@@ -217,7 +218,7 @@ class TestDelayCalculation:
 class TestFailureInjection:
     """Test failure injection logic."""
 
-    def test_service_unavailable(self):
+    def test_service_unavailable(self) -> None:
         """Test service unavailable failure."""
         scenario_manager.enable_scenario("nova_oom_crash")
 
@@ -227,7 +228,7 @@ class TestFailureInjection:
         assert failure.status_code == 503
         assert failure.scenario_id == "nova_oom_crash"
 
-    def test_intermittent_failure(self):
+    def test_intermittent_failure(self) -> None:
         """Test intermittent failures with probability."""
         scenario_manager.enable_scenario("rabbitmq_unstable")
 
@@ -245,7 +246,7 @@ class TestFailureInjection:
         assert failures > 0
         assert passes > 0
 
-    def test_operation_filtering(self):
+    def test_operation_filtering(self) -> None:
         """Test that failures can be filtered by operation type."""
         scenario_manager.enable_scenario("cinder_disk_full")
 
@@ -262,7 +263,7 @@ class TestFailureInjection:
 class TestScenarioAPI:
     """Test the scenario management API."""
 
-    def test_list_scenarios(self, scenarios_client):
+    def test_list_scenarios(self, scenarios_client: TestClient) -> None:
         """Test listing scenarios."""
         response = scenarios_client.get("/scenarios")
         assert response.status_code == 200
@@ -273,7 +274,7 @@ class TestScenarioAPI:
         assert "categories" in data
         assert "failure_types" in data
 
-    def test_get_scenario(self, scenarios_client):
+    def test_get_scenario(self, scenarios_client: TestClient) -> None:
         """Test getting a specific scenario."""
         response = scenarios_client.get("/scenarios/light_load")
         assert response.status_code == 200
@@ -282,12 +283,12 @@ class TestScenarioAPI:
         assert data["scenario"]["id"] == "light_load"
         assert data["scenario"]["name"] == "Light Load"
 
-    def test_get_nonexistent_scenario(self, scenarios_client):
+    def test_get_nonexistent_scenario(self, scenarios_client: TestClient) -> None:
         """Test getting a scenario that doesn't exist."""
         response = scenarios_client.get("/scenarios/nonexistent")
         assert response.status_code == 404
 
-    def test_enable_scenario_api(self, scenarios_client):
+    def test_enable_scenario_api(self, scenarios_client: TestClient) -> None:
         """Test enabling a scenario via API."""
         response = scenarios_client.post("/scenarios/light_load/enable")
         assert response.status_code == 200
@@ -299,7 +300,7 @@ class TestScenarioAPI:
         active = scenarios_client.get("/scenarios/active")
         assert any(s["id"] == "light_load" for s in active.json()["active_scenarios"])
 
-    def test_disable_scenario_api(self, scenarios_client):
+    def test_disable_scenario_api(self, scenarios_client: TestClient) -> None:
         """Test disabling a scenario via API."""
         # First enable
         scenarios_client.post("/scenarios/light_load/enable")
@@ -312,7 +313,7 @@ class TestScenarioAPI:
         active = scenarios_client.get("/scenarios/active")
         assert not any(s["id"] == "light_load" for s in active.json()["active_scenarios"])
 
-    def test_reset_scenarios_api(self, scenarios_client):
+    def test_reset_scenarios_api(self, scenarios_client: TestClient) -> None:
         """Test resetting all scenarios via API."""
         # Enable some scenarios
         scenarios_client.post("/scenarios/light_load/enable")
@@ -326,7 +327,7 @@ class TestScenarioAPI:
         active = scenarios_client.get("/scenarios/active")
         assert len(active.json()["active_scenarios"]) == 0
 
-    def test_apply_preset(self, scenarios_client):
+    def test_apply_preset(self, scenarios_client: TestClient) -> None:
         """Test applying a preset."""
         response = scenarios_client.post("/scenarios/preset/overloaded")
         assert response.status_code == 200
@@ -338,7 +339,7 @@ class TestScenarioAPI:
         assert "rabbitmq_unstable" in active_ids
         assert "database_slow" in active_ids
 
-    def test_set_load_level(self, scenarios_client):
+    def test_set_load_level(self, scenarios_client: TestClient) -> None:
         """Test setting load level."""
         response = scenarios_client.post(
             "/scenarios/load",
@@ -352,7 +353,7 @@ class TestScenarioAPI:
         active_ids = [s["id"] for s in active.json()["active_scenarios"]]
         assert "load_level_all" in active_ids
 
-    def test_get_stats(self, scenarios_client):
+    def test_get_stats(self, scenarios_client: TestClient) -> None:
         """Test getting injection statistics."""
         response = scenarios_client.get("/scenarios/stats")
         assert response.status_code == 200
@@ -365,7 +366,7 @@ class TestScenarioAPI:
 class TestMiddlewareIntegration:
     """Test that middleware properly intercepts requests."""
 
-    def test_health_endpoint_bypasses_middleware(self, nova_client):
+    def test_health_endpoint_bypasses_middleware(self, nova_client: TestClient) -> None:
         """Test that health endpoint is not affected by scenarios."""
         scenario_manager.enable_scenario("nova_oom_crash")
 
@@ -373,7 +374,7 @@ class TestMiddlewareIntegration:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
-    def test_delay_injection(self, nova_client, auth_token):
+    def test_delay_injection(self, nova_client: TestClient, auth_token: str) -> None:
         """Test that delays are actually injected."""
         # Enable a scenario with known delay
         scenario_manager.enable_scenario("light_load")
@@ -390,7 +391,7 @@ class TestMiddlewareIntegration:
         assert elapsed >= 0.1
         assert response.status_code == 200
 
-    def test_failure_injection(self, nova_client, auth_token):
+    def test_failure_injection(self, nova_client: TestClient, auth_token: str) -> None:
         """Test that failures are injected."""
         scenario_manager.enable_scenario("nova_oom_crash")
 
