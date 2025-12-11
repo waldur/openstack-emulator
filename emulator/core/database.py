@@ -797,8 +797,8 @@ class Database:
             if is_public is not None:
                 flavors = [f for f in flavors if f.is_public == is_public]
 
-            # Sort by ID (numeric)
-            flavors.sort(key=lambda f: int(f.id) if f.id.isdigit() else f.id)
+            # Sort by ID (numeric IDs first, then alphabetically)
+            flavors.sort(key=lambda f: (0, int(f.id)) if f.id.isdigit() else (1, f.id))
 
             if limit:
                 flavors = flavors[:limit]

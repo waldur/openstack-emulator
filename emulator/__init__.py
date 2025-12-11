@@ -18,6 +18,7 @@ SERVICE_PORTS = {
     "cinder": 8776,
     "glance": 9292,
     "neutron": 9696,
+    "status": 8000,
 }
 
 SERVICE_APPS = {
@@ -26,6 +27,7 @@ SERVICE_APPS = {
     "cinder": "emulator.api.app_cinder:app",
     "glance": "emulator.api.app_glance:app",
     "neutron": "emulator.api.app_neutron:app",
+    "status": "emulator.api.app_status:app",
 }
 
 
@@ -64,6 +66,7 @@ def run_all_services(host: str) -> None:
     print(f"  - Cinder (Block Storage):  http://{host}:8776")
     print(f"  - Glance (Image):          http://{host}:9292")
     print(f"  - Neutron (Network):       http://{host}:9696")
+    print(f"  - Status (Web UI):         http://{host}:8000")
     print("\nPress Ctrl+C to stop all services.\n")
 
     try:
@@ -94,10 +97,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--service",
-        choices=["keystone", "nova", "cinder", "glance", "neutron", "all"],
+        choices=["keystone", "nova", "cinder", "glance", "neutron", "status", "all"],
         default="all",
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
-        "glance (9292), neutron (9696), or all (default: all)",
+        "glance (9292), neutron (9696), status (8000), or all (default: all)",
     )
 
     args = parser.parse_args()

@@ -59,6 +59,13 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - **Extensions**: List supported Neutron API extensions
   - **Default Resources**: Pre-configured external network, private network, and default security group
 
+- **Status Web UI**
+  - Real-time dashboard showing service status
+  - View all resources (servers, volumes, images, networks, etc.)
+  - Organized by service (Compute, Storage, Network, Identity)
+  - JSON API endpoint for programmatic access
+  - Auto-refresh capability
+
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
   - Reset endpoint for testing
@@ -95,6 +102,7 @@ The emulator runs services on their standard OpenStack ports:
 - **Cinder (Block Storage)**: port 8776
 - **Glance (Image)**: port 9292
 - **Neutron (Networking)**: port 9696
+- **Status (Web UI)**: port 8000
 
 ```bash
 # Run all services on standard ports
@@ -106,6 +114,7 @@ openstack-emulator --service=nova       # Port 8774
 openstack-emulator --service=cinder     # Port 8776
 openstack-emulator --service=glance     # Port 9292
 openstack-emulator --service=neutron    # Port 9696
+openstack-emulator --service=status     # Port 8000 (Web UI)
 
 # Or using uvicorn directly for individual services
 uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
@@ -113,6 +122,7 @@ uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
 uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
 uvicorn emulator.api.app_glance:app --host 0.0.0.0 --port 9292
 uvicorn emulator.api.app_neutron:app --host 0.0.0.0 --port 9696
+uvicorn emulator.api.app_status:app --host 0.0.0.0 --port 8000
 ```
 
 ### API Documentation
@@ -123,6 +133,24 @@ Once running, you can access Swagger UI for each service:
 - Cinder: http://localhost:8776/docs
 - Glance: http://localhost:9292/docs
 - Neutron: http://localhost:9696/docs
+- Status UI: http://localhost:8000/
+
+### Status Web UI
+
+The Status Web UI provides a real-time dashboard to view the state of the emulator:
+
+- **Dashboard URL**: http://localhost:8000/
+- **JSON API**: http://localhost:8000/api/status
+
+The dashboard displays:
+- Service health status (running/offline)
+- Resource counts and details organized by tabs:
+  - **Compute**: Servers, Flavors, Keypairs
+  - **Storage**: Images, Volumes, Snapshots
+  - **Network**: Networks, Subnets, Ports, Routers, Floating IPs, Security Groups
+  - **Identity**: Projects, Users
+
+The page auto-refreshes every 30 seconds. Use the JSON API endpoint for programmatic access to status information.
 
 ### Example Usage with OpenStack CLI
 
@@ -624,6 +652,7 @@ GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
 GET http://localhost:9292/health   # Glance
 GET http://localhost:9696/health   # Neutron
+GET http://localhost:8000/health   # Status UI
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
 
@@ -654,11 +683,13 @@ openstack-emulator/
 │   │   ├── app_cinder.py    # Cinder-only app (port 8776)
 │   │   ├── app_glance.py    # Glance-only app (port 9292)
 │   │   ├── app_neutron.py   # Neutron-only app (port 9696)
+│   │   ├── app_status.py    # Status Web UI app (port 8000)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── glance.py        # Glance Image API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
 │   │   ├── neutron.py       # Neutron Networking API endpoints
-│   │   └── nova.py          # Nova Compute API endpoints
+│   │   ├── nova.py          # Nova Compute API endpoints
+│   │   └── status_ui.py     # Status Web UI routes
 │   └── core/
 │       ├── __init__.py
 │       ├── database.py      # In-memory database
@@ -669,7 +700,8 @@ openstack-emulator/
 │   ├── test_glance.py       # Glance API tests
 │   ├── test_keystone.py     # Keystone API tests
 │   ├── test_neutron.py      # Neutron API tests
-│   └── test_nova.py         # Nova API tests
+│   ├── test_nova.py         # Nova API tests
+│   └── test_status.py       # Status UI tests
 ├── pyproject.toml           # Project configuration
 ├── CLAUDE.md                # Development guide
 └── README.md
