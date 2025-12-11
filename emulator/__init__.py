@@ -22,7 +22,6 @@ SERVICE_APPS = {
     "keystone": "emulator.api.app_keystone:app",
     "nova": "emulator.api.app_nova:app",
     "cinder": "emulator.api.app_cinder:app",
-    "all": "emulator.api.app:app",  # Combined app on single port
 }
 
 
@@ -85,31 +84,23 @@ def main() -> None:
         "--port",
         type=int,
         default=None,
-        help="Port to run on (default: service-specific or 8774 for combined)",
+        help="Port override for single service mode (ignored when running all)",
     )
     parser.add_argument(
         "--service",
-        choices=["keystone", "nova", "cinder", "all", "combined"],
+        choices=["keystone", "nova", "cinder", "all"],
         default="all",
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
-        "all (separate ports), or combined (single port, default: all)",
+        "or all (default: all)",
     )
 
     args = parser.parse_args()
 
-    if args.service == "combined":
-        # Run all services on a single port (legacy mode)
-        port = args.port or 8774
-        print(f"Running combined emulator on http://{args.host}:{port}")
-        print("Note: Use --service=all to run services on standard OpenStack ports")
-        run_service("all", args.host, port)
-    elif args.service == "all":
-        # Run each service on its standard port
+    if args.service == "all":
         if args.port:
             print("Warning: --port is ignored when running all services")
         run_all_services(args.host)
     else:
-        # Run a specific service
         port = args.port or SERVICE_PORTS[args.service]
         run_service(args.service, args.host, port)
 

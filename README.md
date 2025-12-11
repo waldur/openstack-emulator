@@ -74,19 +74,13 @@ The emulator runs services on their standard OpenStack ports:
 - **Cinder (Block Storage)**: port 8776
 
 ```bash
-# Run all services on standard ports (recommended)
+# Run all services on standard ports
 openstack-emulator
-
-# Run all services on standard ports (explicit)
-openstack-emulator --service=all
 
 # Run a specific service
 openstack-emulator --service=keystone   # Port 5000
 openstack-emulator --service=nova       # Port 8774
 openstack-emulator --service=cinder     # Port 8776
-
-# Run combined mode (all services on single port - legacy)
-openstack-emulator --service=combined --port=8774
 
 # Or using uvicorn directly for individual services
 uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
@@ -388,18 +382,6 @@ GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
-
-### Emulator Status (Combined mode only)
-```
-GET /emulator/status
-```
-Returns statistics about the emulator state (number of servers, flavors, images, volumes, etc.).
-
-### Reset Emulator (Combined mode only)
-```
-POST /emulator/reset
-```
-Resets the emulator to its initial state, clearing all servers, volumes, tokens, and keypairs while preserving default flavors, images, and volume types.
 
 ## Running Tests
 
