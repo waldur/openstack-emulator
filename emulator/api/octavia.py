@@ -544,7 +544,7 @@ async def list_listeners(
         protocol=protocol,
         protocol_port=protocol_port,
     )
-    return {"listeners": [l.to_dict() for l in listeners]}
+    return {"listeners": [listener.to_dict() for listener in listeners]}
 
 
 @router.post("/v2.0/lbaas/listeners", status_code=201)

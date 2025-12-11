@@ -1733,13 +1733,6 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
             </td>
             """
 
-        lb_id = pool.loadbalancer_id or "-"
-        lb_cell = (
-            f'<span class="uuid-value" data-full="{lb_id}" onclick="copyUuid(this)">{lb_id[:13]}...</span>'
-            if lb_id != "-"
-            else "-"
-        )
-
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{pool.id}" onclick="copyUuid(this)">{pool.id[:13]}...</span></td>

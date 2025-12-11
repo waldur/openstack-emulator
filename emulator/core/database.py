@@ -4430,15 +4430,15 @@ class Database:
             listeners = list(self._listeners.values())
 
             if project_id:
-                listeners = [l for l in listeners if l.project_id == project_id]
+                listeners = [lis for lis in listeners if lis.project_id == project_id]
             if loadbalancer_id:
-                listeners = [l for l in listeners if l.loadbalancer_id == loadbalancer_id]
+                listeners = [lis for lis in listeners if lis.loadbalancer_id == loadbalancer_id]
             if name:
-                listeners = [l for l in listeners if l.name == name]
+                listeners = [lis for lis in listeners if lis.name == name]
             if protocol:
-                listeners = [l for l in listeners if l.protocol.value == protocol]
+                listeners = [lis for lis in listeners if lis.protocol.value == protocol]
             if protocol_port:
-                listeners = [l for l in listeners if l.protocol_port == protocol_port]
+                listeners = [lis for lis in listeners if lis.protocol_port == protocol_port]
 
             return listeners
 
@@ -4507,7 +4507,7 @@ class Database:
             # Remove from load balancer
             lb = self._load_balancers.get(listener.loadbalancer_id)
             if lb:
-                lb.listeners = [l for l in lb.listeners if l.id != listener_id]
+                lb.listeners = [lis for lis in lb.listeners if lis.id != listener_id]
 
             # Delete L7 policies if cascade
             if cascade:
