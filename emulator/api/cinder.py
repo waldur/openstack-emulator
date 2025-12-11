@@ -942,3 +942,120 @@ async def get_default_type(
             }
         }
     raise HTTPException(status_code=404, detail="Default type not found")
+
+
+# ==================== Quotas ====================
+
+
+@router.get("/v3/{project_id}/os-quota-sets/{tenant_id}")
+async def get_quota_set(
+    project_id: str,
+    tenant_id: str,
+    usage: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get volume quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    quota = db.get_cinder_quota(tenant_id)
+
+    if usage:
+        quota_usage = db.get_cinder_quota_usage(tenant_id)
+        return {
+            "quota_set": {
+                "id": tenant_id,
+                "volumes": {
+                    "limit": quota.volumes,
+                    "in_use": quota_usage.get("volumes", 0),
+                    "reserved": 0,
+                },
+                "snapshots": {
+                    "limit": quota.snapshots,
+                    "in_use": quota_usage.get("snapshots", 0),
+                    "reserved": 0,
+                },
+                "gigabytes": {
+                    "limit": quota.gigabytes,
+                    "in_use": quota_usage.get("gigabytes", 0),
+                    "reserved": 0,
+                },
+                "per_volume_gigabytes": {
+                    "limit": quota.per_volume_gigabytes,
+                    "in_use": 0,
+                    "reserved": 0,
+                },
+                "backups": {
+                    "limit": quota.backups,
+                    "in_use": quota_usage.get("backups", 0),
+                    "reserved": 0,
+                },
+                "backup_gigabytes": {
+                    "limit": quota.backup_gigabytes,
+                    "in_use": quota_usage.get("backup_gigabytes", 0),
+                    "reserved": 0,
+                },
+                "groups": {
+                    "limit": quota.groups,
+                    "in_use": quota_usage.get("groups", 0),
+                    "reserved": 0,
+                },
+            }
+        }
+
+    return {"quota_set": quota.to_dict()}
+
+
+@router.put("/v3/{project_id}/os-quota-sets/{tenant_id}")
+async def update_quota_set(
+    project_id: str,
+    tenant_id: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update volume quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    body = await request.json()
+    quota_data = body.get("quota_set", {})
+
+    quota = db.update_cinder_quota(
+        project_id=tenant_id,
+        volumes=quota_data.get("volumes"),
+        snapshots=quota_data.get("snapshots"),
+        gigabytes=quota_data.get("gigabytes"),
+        per_volume_gigabytes=quota_data.get("per_volume_gigabytes"),
+        backups=quota_data.get("backups"),
+        backup_gigabytes=quota_data.get("backup_gigabytes"),
+        groups=quota_data.get("groups"),
+    )
+
+    return {"quota_set": quota.to_dict()}
+
+
+@router.delete("/v3/{project_id}/os-quota-sets/{tenant_id}", status_code=200)
+async def delete_quota_set(
+    project_id: str,
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete (reset) volume quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    db.delete_cinder_quota(tenant_id)
+    return Response(status_code=200)
+
+
+@router.get("/v3/{project_id}/os-quota-sets/{tenant_id}/defaults")
+async def get_quota_set_defaults(
+    project_id: str,
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get default volume quota set."""
+    get_token_or_raise(x_auth_token)
+
+    # Return default quota values
+    from emulator.core.models import CinderQuota
+
+    default_quota = CinderQuota(project_id=tenant_id)
+    return {"quota_set": default_quota.to_dict()}

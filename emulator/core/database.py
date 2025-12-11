@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from emulator.core.models import (
     AllocationPool,
+    CinderQuota,
     ContainerFormat,
     Credential,
     DiskFormat,
@@ -27,10 +28,13 @@ from emulator.core.models import (
     ImageVisibility,
     Keypair,
     Network,
+    NeutronQuota,
+    NovaQuota,
     Port,
     PowerState,
     Project,
     QosSpec,
+    RbacPolicy,
     Region,
     Role,
     RoleAssignment,
@@ -38,6 +42,7 @@ from emulator.core.models import (
     SecurityGroup,
     SecurityGroupRule,
     Server,
+    ServerGroup,
     ServerStatus,
     Service,
     Snapshot,
@@ -99,6 +104,17 @@ class Database:
         self._security_groups: dict[str, SecurityGroup] = {}
         self._security_group_rules: dict[str, SecurityGroupRule] = {}
         self._next_floating_ip: int = 1  # For generating sequential floating IPs
+
+        # Storage dictionaries - Nova Server Groups
+        self._server_groups: dict[str, ServerGroup] = {}
+
+        # Storage dictionaries - Quotas
+        self._nova_quotas: dict[str, NovaQuota] = {}
+        self._neutron_quotas: dict[str, NeutronQuota] = {}
+        self._cinder_quotas: dict[str, CinderQuota] = {}
+
+        # Storage dictionaries - RBAC Policies
+        self._rbac_policies: dict[str, RbacPolicy] = {}
 
         # Initialize with default data
         self._init_default_flavors()
@@ -3781,6 +3797,414 @@ class Database:
             self._security_group_rules.clear()
             self._next_floating_ip = 1
             self._init_default_neutron_data()
+
+    # ==================== Server Group Operations ====================
+
+    def create_server_group(
+        self,
+        name: str,
+        policies: list[str],
+        project_id: str,
+        user_id: str,
+        metadata: dict[str, str] | None = None,
+    ) -> ServerGroup:
+        """Create a new server group."""
+        with self._lock:
+            server_group = ServerGroup(
+                name=name,
+                policies=policies,
+                project_id=project_id,
+                user_id=user_id,
+                metadata=metadata or {},
+            )
+            self._server_groups[server_group.id] = server_group
+            return server_group
+
+    def get_server_group(self, server_group_id: str) -> ServerGroup | None:
+        """Get a server group by ID."""
+        with self._lock:
+            return self._server_groups.get(server_group_id)
+
+    def list_server_groups(
+        self,
+        project_id: str | None = None,
+        all_projects: bool = False,
+    ) -> list[ServerGroup]:
+        """List server groups with optional filtering."""
+        with self._lock:
+            groups = list(self._server_groups.values())
+            if not all_projects and project_id:
+                groups = [g for g in groups if g.project_id == project_id]
+            return groups
+
+    def delete_server_group(self, server_group_id: str) -> bool:
+        """Delete a server group."""
+        with self._lock:
+            if server_group_id in self._server_groups:
+                del self._server_groups[server_group_id]
+                return True
+            return False
+
+    def add_server_to_group(self, server_group_id: str, server_id: str) -> bool:
+        """Add a server to a server group."""
+        with self._lock:
+            group = self._server_groups.get(server_group_id)
+            if not group:
+                return False
+            if server_id not in group.members:
+                group.members.append(server_id)
+            return True
+
+    def remove_server_from_group(self, server_group_id: str, server_id: str) -> bool:
+        """Remove a server from a server group."""
+        with self._lock:
+            group = self._server_groups.get(server_group_id)
+            if not group:
+                return False
+            if server_id in group.members:
+                group.members.remove(server_id)
+            return True
+
+    # ==================== Nova Quota Operations ====================
+
+    def get_nova_quota(self, project_id: str) -> NovaQuota:
+        """Get Nova quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._nova_quotas:
+                self._nova_quotas[project_id] = NovaQuota(project_id=project_id)
+            return self._nova_quotas[project_id]
+
+    def update_nova_quota(
+        self,
+        project_id: str,
+        instances: int | None = None,
+        cores: int | None = None,
+        ram: int | None = None,
+        metadata_items: int | None = None,
+        injected_files: int | None = None,
+        injected_file_content_bytes: int | None = None,
+        injected_file_path_bytes: int | None = None,
+        key_pairs: int | None = None,
+        server_groups: int | None = None,
+        server_group_members: int | None = None,
+    ) -> NovaQuota:
+        """Update Nova quotas for a project."""
+        with self._lock:
+            quota = self.get_nova_quota(project_id)
+            if instances is not None:
+                quota.instances = instances
+            if cores is not None:
+                quota.cores = cores
+            if ram is not None:
+                quota.ram = ram
+            if metadata_items is not None:
+                quota.metadata_items = metadata_items
+            if injected_files is not None:
+                quota.injected_files = injected_files
+            if injected_file_content_bytes is not None:
+                quota.injected_file_content_bytes = injected_file_content_bytes
+            if injected_file_path_bytes is not None:
+                quota.injected_file_path_bytes = injected_file_path_bytes
+            if key_pairs is not None:
+                quota.key_pairs = key_pairs
+            if server_groups is not None:
+                quota.server_groups = server_groups
+            if server_group_members is not None:
+                quota.server_group_members = server_group_members
+            return quota
+
+    def delete_nova_quota(self, project_id: str) -> bool:
+        """Delete Nova quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._nova_quotas:
+                del self._nova_quotas[project_id]
+                return True
+            return False
+
+    def get_nova_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Nova quota usage for a project."""
+        with self._lock:
+            servers = [s for s in self._servers.values() if s.tenant_id == project_id]
+            total_cores = 0
+            total_ram = 0
+            for server in servers:
+                flavor = self._flavors.get(server.flavor_id)
+                if flavor:
+                    total_cores += flavor.vcpus
+                    total_ram += flavor.ram
+
+            keypairs = [k for k in self._keypairs.values() if k.user_id.startswith(project_id)]
+            server_groups = [g for g in self._server_groups.values() if g.project_id == project_id]
+
+            return {
+                "instances": len(servers),
+                "cores": total_cores,
+                "ram": total_ram,
+                "key_pairs": len(keypairs),
+                "server_groups": len(server_groups),
+            }
+
+    # ==================== Neutron Quota Operations ====================
+
+    def get_neutron_quota(self, project_id: str) -> NeutronQuota:
+        """Get Neutron quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._neutron_quotas:
+                self._neutron_quotas[project_id] = NeutronQuota(project_id=project_id)
+            return self._neutron_quotas[project_id]
+
+    def update_neutron_quota(
+        self,
+        project_id: str,
+        network: int | None = None,
+        subnet: int | None = None,
+        subnetpool: int | None = None,
+        port: int | None = None,
+        router: int | None = None,
+        floatingip: int | None = None,
+        security_group: int | None = None,
+        security_group_rule: int | None = None,
+        rbac_policy: int | None = None,
+    ) -> NeutronQuota:
+        """Update Neutron quotas for a project."""
+        with self._lock:
+            quota = self.get_neutron_quota(project_id)
+            if network is not None:
+                quota.network = network
+            if subnet is not None:
+                quota.subnet = subnet
+            if subnetpool is not None:
+                quota.subnetpool = subnetpool
+            if port is not None:
+                quota.port = port
+            if router is not None:
+                quota.router = router
+            if floatingip is not None:
+                quota.floatingip = floatingip
+            if security_group is not None:
+                quota.security_group = security_group
+            if security_group_rule is not None:
+                quota.security_group_rule = security_group_rule
+            if rbac_policy is not None:
+                quota.rbac_policy = rbac_policy
+            return quota
+
+    def delete_neutron_quota(self, project_id: str) -> bool:
+        """Delete Neutron quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._neutron_quotas:
+                del self._neutron_quotas[project_id]
+                return True
+            return False
+
+    def get_neutron_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Neutron quota usage for a project."""
+        with self._lock:
+            networks = [n for n in self._networks.values() if n.project_id == project_id]
+            subnets = [s for s in self._subnets.values() if s.project_id == project_id]
+            ports = [p for p in self._ports.values() if p.project_id == project_id]
+            routers = [r for r in self._routers.values() if r.project_id == project_id]
+            floating_ips = [f for f in self._floating_ips.values() if f.project_id == project_id]
+            security_groups = [
+                sg for sg in self._security_groups.values() if sg.project_id == project_id
+            ]
+            security_group_rules = [
+                r for r in self._security_group_rules.values() if r.project_id == project_id
+            ]
+
+            return {
+                "network": len(networks),
+                "subnet": len(subnets),
+                "subnetpool": 0,
+                "port": len(ports),
+                "router": len(routers),
+                "floatingip": len(floating_ips),
+                "security_group": len(security_groups),
+                "security_group_rule": len(security_group_rules),
+                "rbac_policy": 0,
+            }
+
+    # ==================== Cinder Quota Operations ====================
+
+    def get_cinder_quota(self, project_id: str) -> CinderQuota:
+        """Get Cinder quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._cinder_quotas:
+                self._cinder_quotas[project_id] = CinderQuota(project_id=project_id)
+            return self._cinder_quotas[project_id]
+
+    def update_cinder_quota(
+        self,
+        project_id: str,
+        volumes: int | None = None,
+        snapshots: int | None = None,
+        gigabytes: int | None = None,
+        per_volume_gigabytes: int | None = None,
+        backups: int | None = None,
+        backup_gigabytes: int | None = None,
+        groups: int | None = None,
+    ) -> CinderQuota:
+        """Update Cinder quotas for a project."""
+        with self._lock:
+            quota = self.get_cinder_quota(project_id)
+            if volumes is not None:
+                quota.volumes = volumes
+            if snapshots is not None:
+                quota.snapshots = snapshots
+            if gigabytes is not None:
+                quota.gigabytes = gigabytes
+            if per_volume_gigabytes is not None:
+                quota.per_volume_gigabytes = per_volume_gigabytes
+            if backups is not None:
+                quota.backups = backups
+            if backup_gigabytes is not None:
+                quota.backup_gigabytes = backup_gigabytes
+            if groups is not None:
+                quota.groups = groups
+            return quota
+
+    def delete_cinder_quota(self, project_id: str) -> bool:
+        """Delete Cinder quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._cinder_quotas:
+                del self._cinder_quotas[project_id]
+                return True
+            return False
+
+    def get_cinder_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Cinder quota usage for a project."""
+        with self._lock:
+            volumes = [v for v in self._volumes.values() if v.project_id == project_id]
+            snapshots = [s for s in self._snapshots.values() if s.project_id == project_id]
+            total_gigabytes = sum(v.size for v in volumes)
+
+            return {
+                "volumes": len(volumes),
+                "snapshots": len(snapshots),
+                "gigabytes": total_gigabytes,
+                "backups": 0,
+                "backup_gigabytes": 0,
+                "groups": 0,
+            }
+
+    # ==================== RBAC Policy Operations ====================
+
+    def create_rbac_policy(
+        self,
+        object_type: str,
+        object_id: str,
+        target_project: str,
+        project_id: str,
+        action: str = "access_as_shared",
+    ) -> RbacPolicy:
+        """Create a new RBAC policy."""
+        with self._lock:
+            policy = RbacPolicy(
+                object_type=object_type,
+                object_id=object_id,
+                target_project=target_project,
+                project_id=project_id,
+                action=action,
+            )
+            self._rbac_policies[policy.id] = policy
+
+            # If sharing a network, update the network's shared flag
+            if object_type == "network" and target_project == "*":
+                network = self._networks.get(object_id)
+                if network:
+                    network.shared = True
+
+            return policy
+
+    def get_rbac_policy(self, policy_id: str) -> RbacPolicy | None:
+        """Get an RBAC policy by ID."""
+        with self._lock:
+            return self._rbac_policies.get(policy_id)
+
+    def list_rbac_policies(
+        self,
+        project_id: str | None = None,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        target_project: str | None = None,
+        action: str | None = None,
+    ) -> list[RbacPolicy]:
+        """List RBAC policies with optional filtering."""
+        with self._lock:
+            policies = list(self._rbac_policies.values())
+            if project_id:
+                policies = [p for p in policies if p.project_id == project_id]
+            if object_type:
+                policies = [p for p in policies if p.object_type == object_type]
+            if object_id:
+                policies = [p for p in policies if p.object_id == object_id]
+            if target_project:
+                policies = [p for p in policies if p.target_project == target_project]
+            if action:
+                policies = [p for p in policies if p.action == action]
+            return policies
+
+    def update_rbac_policy(
+        self,
+        policy_id: str,
+        target_project: str | None = None,
+    ) -> RbacPolicy | None:
+        """Update an RBAC policy (only target_project can be updated)."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return None
+
+            old_target = policy.target_project
+
+            if target_project is not None:
+                policy.target_project = target_project
+                policy.updated_at = datetime.utcnow()
+
+                # Update network shared flag if applicable
+                if policy.object_type == "network":
+                    network = self._networks.get(policy.object_id)
+                    if network:
+                        if target_project == "*":
+                            network.shared = True
+                        elif old_target == "*":
+                            # Check if any other policy still shares this network
+                            other_policies = [
+                                p
+                                for p in self._rbac_policies.values()
+                                if p.object_id == policy.object_id
+                                and p.target_project == "*"
+                                and p.id != policy_id
+                            ]
+                            if not other_policies:
+                                network.shared = False
+
+            return policy
+
+    def delete_rbac_policy(self, policy_id: str) -> bool:
+        """Delete an RBAC policy."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return False
+
+            # Update network shared flag if applicable
+            if policy.object_type == "network" and policy.target_project == "*":
+                network = self._networks.get(policy.object_id)
+                if network:
+                    # Check if any other policy still shares this network
+                    other_policies = [
+                        p
+                        for p in self._rbac_policies.values()
+                        if p.object_id == policy.object_id
+                        and p.target_project == "*"
+                        and p.id != policy_id
+                    ]
+                    if not other_policies:
+                        network.shared = False
+
+            del self._rbac_policies[policy_id]
+            return True
 
 
 # Global database instance
