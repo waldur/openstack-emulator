@@ -58,9 +58,7 @@ class GradualDegradation:
             return self.initial_delay_ms
 
         elapsed_minutes = (datetime.utcnow() - self.started_at).total_seconds() / 60
-        current_delay = self.initial_delay_ms + int(
-            elapsed_minutes * self.increase_per_minute_ms
-        )
+        current_delay = self.initial_delay_ms + int(elapsed_minutes * self.increase_per_minute_ms)
         return min(current_delay, self.max_delay_ms)
 
 
@@ -77,9 +75,7 @@ class LoadProfile:
     affected_operations: list[str] = field(
         default_factory=lambda: ["all"]
     )  # ["read", "write", "all"]
-    gradual_degradation: GradualDegradation = field(
-        default_factory=GradualDegradation
-    )
+    gradual_degradation: GradualDegradation = field(default_factory=GradualDegradation)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -106,9 +102,7 @@ class LoadProfile:
         return cls(
             min_delay_ms=data.get("min_delay_ms", 0),
             max_delay_ms=data.get("max_delay_ms", 0),
-            distribution=DelayDistribution(
-                data.get("distribution", "uniform")
-            ),
+            distribution=DelayDistribution(data.get("distribution", "uniform")),
             spike_probability=data.get("spike_probability", 0.0),
             spike_multiplier=data.get("spike_multiplier", 3.0),
             timeout_probability=data.get("timeout_probability", 0.0),
@@ -175,9 +169,7 @@ class ScenarioStats:
             "total_delay_injected_ms": self.total_delay_injected_ms,
             "failures_injected": self.failures_injected,
             "timeouts_injected": self.timeouts_injected,
-            "last_triggered": (
-                self.last_triggered.isoformat() if self.last_triggered else None
-            ),
+            "last_triggered": (self.last_triggered.isoformat() if self.last_triggered else None),
         }
 
 

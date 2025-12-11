@@ -120,9 +120,9 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
                 },
                 headers={
                     "X-Scenario-Injection": failure.scenario_id,
-                    "X-Failure-Type": failure.failure_type.value
-                    if failure.failure_type
-                    else "unknown",
+                    "X-Failure-Type": (
+                        failure.failure_type.value if failure.failure_type else "unknown"
+                    ),
                 },
             )
 

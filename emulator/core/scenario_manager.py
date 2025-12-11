@@ -143,9 +143,7 @@ class ScenarioManager:
             # Apply config overrides if provided
             if config_override:
                 if "load_profile" in config_override:
-                    scenario.load_profile = LoadProfile.from_dict(
-                        config_override["load_profile"]
-                    )
+                    scenario.load_profile = LoadProfile.from_dict(config_override["load_profile"])
                 if "failure_config" in config_override:
                     scenario.failure_config = FailureConfig.from_dict(
                         config_override["failure_config"]
@@ -181,9 +179,7 @@ class ScenarioManager:
             if service:
                 # Include scenarios targeting this service OR all services (None)
                 active = [
-                    s
-                    for s in active
-                    if s.target_service is None or s.target_service == service
+                    s for s in active if s.target_service is None or s.target_service == service
                 ]
 
             return active
@@ -271,9 +267,7 @@ class ScenarioManager:
                             scenario_ids.append(scenario.id)
                     continue
 
-                delay = self._calculate_delay_for_profile(
-                    scenario.load_profile, operation
-                )
+                delay = self._calculate_delay_for_profile(scenario.load_profile, operation)
                 if delay > 0:
                     total_delay += delay
                     scenario_ids.append(scenario.id)
