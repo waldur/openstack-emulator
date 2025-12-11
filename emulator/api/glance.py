@@ -327,6 +327,7 @@ async def upload_image_data(
 
     # Calculate simulated checksum
     import hashlib
+
     checksum = hashlib.md5(body).hexdigest() if body else "simulated"
 
     result = db.upload_image_data(
@@ -453,8 +454,7 @@ async def add_image_member(
     # Image must be shared visibility
     if image.visibility != ImageVisibility.SHARED:
         raise HTTPException(
-            status_code=403,
-            detail="Image visibility must be 'shared' to add members"
+            status_code=403, detail="Image visibility must be 'shared' to add members"
         )
 
     member = db.add_image_member(image_id, request.member)

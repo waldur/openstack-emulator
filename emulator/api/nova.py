@@ -150,7 +150,10 @@ async def get_version_v21(request: Request) -> dict[str, Any]:
             "updated": "2013-07-23T11:33:21Z",
             "links": [{"rel": "self", "href": f"{base_url}/v2.1/"}],
             "media-types": [
-                {"base": "application/json", "type": "application/vnd.openstack.compute+json;version=2.1"}
+                {
+                    "base": "application/json",
+                    "type": "application/vnd.openstack.compute+json;version=2.1",
+                }
             ],
         }
     }
@@ -357,7 +360,7 @@ async def server_action(
         return Response(status_code=202)
 
     elif "reboot" in body:
-        reboot_type = body["reboot"].get("type", "SOFT")
+        body["reboot"].get("type", "SOFT")
         if not db.server_action(server_id, "reboot"):
             raise HTTPException(status_code=409, detail="Cannot reboot server in current state")
         return Response(status_code=202)
@@ -416,7 +419,7 @@ async def get_server_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get server metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
     if not server:
@@ -432,7 +435,7 @@ async def update_server_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update server metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
     if not server:
@@ -626,7 +629,9 @@ async def create_keypair(
     response = {"keypair": keypair.to_dict()}
     # If no public key was provided, we "generated" one
     if not req.public_key:
-        response["keypair"]["private_key"] = "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
+        response["keypair"][
+            "private_key"
+        ] = "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
 
     return response
 
@@ -671,14 +676,13 @@ async def get_limits(
     # Count current resources
     servers = db.list_servers(tenant_id=token.project_id)
     server_count = len(servers)
-    total_ram = sum(
-        db.get_flavor(s.flavor_id).ram if db.get_flavor(s.flavor_id) else 0
-        for s in servers
-    )
-    total_cores = sum(
-        db.get_flavor(s.flavor_id).vcpus if db.get_flavor(s.flavor_id) else 0
-        for s in servers
-    )
+    total_ram = 0
+    total_cores = 0
+    for s in servers:
+        flavor = db.get_flavor(s.flavor_id)
+        if flavor:
+            total_ram += flavor.ram
+            total_cores += flavor.vcpus
 
     return {
         "limits": {
