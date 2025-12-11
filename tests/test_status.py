@@ -60,16 +60,16 @@ class TestStatusPage:
     def test_status_page_contains_title(self, client):
         """Test that status page contains expected title."""
         response = client.get("/")
-        assert "OpenStack Emulator Status" in response.text
+        assert "OPENSTACK EMULATOR" in response.text
 
     def test_status_page_contains_services(self, client):
         """Test that status page shows service information."""
         response = client.get("/")
-        assert "Keystone" in response.text
-        assert "Nova" in response.text
-        assert "Cinder" in response.text
-        assert "Glance" in response.text
-        assert "Neutron" in response.text
+        assert "KEYSTONE" in response.text
+        assert "NOVA" in response.text
+        assert "CINDER" in response.text
+        assert "GLANCE" in response.text
+        assert "NEUTRON" in response.text
 
     def test_status_page_contains_resource_tabs(self, client):
         """Test that status page contains resource tabs."""
@@ -773,8 +773,8 @@ class TestStatusPageAuthentication:
     def test_status_page_shows_login_button_unauthenticated(self, client):
         """Test that status page shows login button when not authenticated."""
         response = client.get("/")
-        assert "Login" in response.text
-        assert "read-only mode" in response.text
+        assert "LOGIN" in response.text
+        assert "READ-ONLY MODE" in response.text
 
     def test_status_page_shows_user_info_authenticated(self, client):
         """Test that status page shows user info when authenticated."""
