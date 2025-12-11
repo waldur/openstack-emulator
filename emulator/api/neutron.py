@@ -5,7 +5,7 @@ Implements the OpenStack Neutron Networking Service API v2.0.
 
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
@@ -744,6 +744,77 @@ async def delete_security_group_rule(
     return Response(status_code=204)
 
 
+# ==================== Quotas ====================
+
+
+@router.get("/v2.0/quotas/{project_id}")
+async def get_quota(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get network quota for a project."""
+    quota = db.get_neutron_quota(project_id)
+    return {"quota": quota.to_dict()}
+
+
+@router.get("/v2.0/quotas/{project_id}/details")
+async def get_quota_details(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get detailed network quota with usage for a project."""
+    quota = db.get_neutron_quota(project_id)
+    usage = db.get_neutron_quota_usage(project_id)
+    return {"quota": quota.to_detail_dict(usage)}
+
+
+@router.put("/v2.0/quotas/{project_id}")
+async def update_quota(
+    project_id: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update network quota for a project."""
+    body = await request.json()
+    quota_data = body.get("quota", {})
+
+    quota = db.update_neutron_quota(
+        project_id=project_id,
+        network=quota_data.get("network"),
+        subnet=quota_data.get("subnet"),
+        subnetpool=quota_data.get("subnetpool"),
+        port=quota_data.get("port"),
+        router=quota_data.get("router"),
+        floatingip=quota_data.get("floatingip"),
+        security_group=quota_data.get("security_group"),
+        security_group_rule=quota_data.get("security_group_rule"),
+        rbac_policy=quota_data.get("rbac_policy"),
+    )
+
+    return {"quota": quota.to_dict()}
+
+
+@router.delete("/v2.0/quotas/{project_id}", status_code=204, response_model=None)
+async def delete_quota(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete (reset) network quota for a project."""
+    db.delete_neutron_quota(project_id)
+    return Response(status_code=204)
+
+
+@router.get("/v2.0/quotas")
+async def list_quotas(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List all quotas (returns default quota)."""
+    # Return default quota values
+    from emulator.core.models import NeutronQuota
+    default_quota = NeutronQuota()
+    return {"quotas": [default_quota.to_dict()]}
+
+
 # Extensions endpoint
 @router.get("/v2.0/extensions")
 async def list_extensions() -> dict[str, Any]:
@@ -766,6 +837,12 @@ async def list_extensions() -> dict[str, Any]:
                 "alias": "external-net",
                 "description": "External network support",
                 "name": "external-net",
+                "updated": "2023-01-01T00:00:00-00:00",
+            },
+            {
+                "alias": "quotas",
+                "description": "Quota management support",
+                "name": "quotas",
                 "updated": "2023-01-01T00:00:00-00:00",
             },
         ]
