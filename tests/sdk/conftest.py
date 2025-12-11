@@ -70,6 +70,7 @@ class EmulatorServers:
             "cinder": "emulator.api.app_cinder:app",
             "glance": "emulator.api.app_glance:app",
             "neutron": "emulator.api.app_neutron:app",
+            "octavia": "emulator.api.app_octavia:app",
         }
 
         for service, app_path in service_apps.items():
@@ -112,6 +113,7 @@ def reset_database() -> Generator[None, None, None]:
     db.reset_cinder()
     db.reset_glance()
     db.reset_neutron()
+    db.reset_octavia()
     # Clear Nova data (no reset method available)
     db._servers.clear()
     db._keypairs.clear()
@@ -164,6 +166,7 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         image_endpoint_override=emulator_servers.get_url("glance"),
         network_endpoint_override=emulator_servers.get_url("neutron"),
         block_storage_endpoint_override=emulator_servers.get_url("cinder") + f"/v3/{project_id}",
+        load_balancer_endpoint_override=emulator_servers.get_url("octavia"),
     )
 
     yield conn
