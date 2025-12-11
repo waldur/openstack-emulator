@@ -1,6 +1,6 @@
 # OpenStack Emulator
 
-A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute), Keystone (Identity), and Cinder (Block Storage) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
+A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute), Keystone (Identity), Cinder (Block Storage), and Glance (Image) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
 
 ## Features
 
@@ -38,6 +38,15 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - **Limits**: Get volume quotas and usage
   - **Availability Zones**: List storage availability zones
 
+- **Glance Image API (v2)**
+  - **Images**: Full CRUD operations for images
+  - **Image Data**: Upload and download image files
+  - **Image Actions**: Deactivate and reactivate images
+  - **Tags**: Add and remove image tags
+  - **Image Sharing**: Share images between projects (members)
+  - **Visibility**: Public, private, shared, and community images
+  - **Schemas**: Image and member schemas
+
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
   - Reset endpoint for testing
@@ -72,6 +81,7 @@ The emulator runs services on their standard OpenStack ports:
 - **Keystone (Identity)**: port 5000
 - **Nova (Compute)**: port 8774
 - **Cinder (Block Storage)**: port 8776
+- **Glance (Image)**: port 9292
 
 ```bash
 # Run all services on standard ports
@@ -81,11 +91,13 @@ openstack-emulator
 openstack-emulator --service=keystone   # Port 5000
 openstack-emulator --service=nova       # Port 8774
 openstack-emulator --service=cinder     # Port 8776
+openstack-emulator --service=glance     # Port 9292
 
 # Or using uvicorn directly for individual services
 uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
 uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
 uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
+uvicorn emulator.api.app_glance:app --host 0.0.0.0 --port 9292
 ```
 
 ### API Documentation
@@ -94,6 +106,7 @@ Once running, you can access Swagger UI for each service:
 - Keystone: http://localhost:5000/docs
 - Nova: http://localhost:8774/docs
 - Cinder: http://localhost:8776/docs
+- Glance: http://localhost:9292/docs
 
 ### Example Usage with OpenStack CLI
 
@@ -372,6 +385,72 @@ curl -s "http://localhost:8776/v3/$PROJECT_ID/limits" \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
+### Glance API Examples
+
+```bash
+# List images (Glance on port 9292)
+curl -s "http://localhost:9292/v2/images" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create an image
+curl -s -X POST "http://localhost:9292/v2/images" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-image", "container_format": "bare", "disk_format": "qcow2"}' | jq
+
+# Get image details
+curl -s "http://localhost:9292/v2/images/<image-id>" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Upload image data
+curl -s -X PUT "http://localhost:9292/v2/images/<image-id>/file" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/image.qcow2
+
+# Update image (using JSON Patch)
+curl -s -X PATCH "http://localhost:9292/v2/images/<image-id>" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/openstack-images-v2.1-json-patch" \
+  -d '[{"op": "replace", "path": "/name", "value": "new-name"}]' | jq
+
+# Add a tag to an image
+curl -s -X PUT "http://localhost:9292/v2/images/<image-id>/tags/my-tag" \
+  -H "X-Auth-Token: $TOKEN"
+
+# Delete a tag from an image
+curl -s -X DELETE "http://localhost:9292/v2/images/<image-id>/tags/my-tag" \
+  -H "X-Auth-Token: $TOKEN"
+
+# Deactivate an image
+curl -s -X POST "http://localhost:9292/v2/images/<image-id>/actions/deactivate" \
+  -H "X-Auth-Token: $TOKEN"
+
+# Reactivate an image
+curl -s -X POST "http://localhost:9292/v2/images/<image-id>/actions/reactivate" \
+  -H "X-Auth-Token: $TOKEN"
+
+# Share an image (first set visibility to shared)
+curl -s -X PATCH "http://localhost:9292/v2/images/<image-id>" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/openstack-images-v2.1-json-patch" \
+  -d '[{"op": "replace", "path": "/visibility", "value": "shared"}]'
+
+# Add a member (share with project)
+curl -s -X POST "http://localhost:9292/v2/images/<image-id>/members" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"member": "<project-id>"}' | jq
+
+# List image members
+curl -s "http://localhost:9292/v2/images/<image-id>/members" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Delete an image
+curl -s -X DELETE "http://localhost:9292/v2/images/<image-id>" \
+  -H "X-Auth-Token: $TOKEN"
+```
+
 ## Emulator-Specific Endpoints
 
 ### Health Check
@@ -380,6 +459,7 @@ Each service provides a health check endpoint:
 GET http://localhost:5000/health   # Keystone
 GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
+GET http://localhost:9292/health   # Glance
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
 
@@ -408,7 +488,9 @@ openstack-emulator/
 │   │   ├── app_keystone.py  # Keystone-only app (port 5000)
 │   │   ├── app_nova.py      # Nova-only app (port 8774)
 │   │   ├── app_cinder.py    # Cinder-only app (port 8776)
+│   │   ├── app_glance.py    # Glance-only app (port 9292)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
+│   │   ├── glance.py        # Glance Image API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
 │   │   └── nova.py          # Nova Compute API endpoints
 │   └── core/
@@ -418,9 +500,11 @@ openstack-emulator/
 ├── tests/
 │   ├── __init__.py
 │   ├── test_cinder.py       # Cinder API tests
+│   ├── test_glance.py       # Glance API tests
 │   ├── test_nova.py         # Nova API tests
 │   └── test_keystone.py     # Keystone API tests
 ├── pyproject.toml           # Project configuration
+├── CLAUDE.md                # Development guide
 └── README.md
 ```
 

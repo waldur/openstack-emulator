@@ -8,12 +8,18 @@ from typing import Any
 from uuid import uuid4
 
 from emulator.core.models import (
+    ContainerFormat,
     Credential,
+    DiskFormat,
     Domain,
     Endpoint,
     Flavor,
+    GlanceImage,
     Group,
     Image,
+    ImageMember,
+    ImageStatus,
+    ImageVisibility,
     Keypair,
     PowerState,
     Project,
@@ -69,9 +75,14 @@ class Database:
         self._volume_types: dict[str, VolumeType] = {}
         self._qos_specs: dict[str, QosSpec] = {}
 
+        # Storage dictionaries - Glance
+        self._glance_images: dict[str, GlanceImage] = {}
+        self._image_members: dict[str, list[ImageMember]] = {}  # image_id -> list of members
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
+        self._init_default_glance_images()
         self._init_default_keystone_data()
         self._init_default_volume_types()
 
@@ -88,35 +99,68 @@ class Database:
             self._flavors[flavor.id] = flavor
 
     def _init_default_images(self) -> None:
-        """Create default images for testing."""
+        """Create default images for testing (Nova-compatible)."""
+        # These will be populated from Glance images
+        pass
+
+    def _init_default_glance_images(self) -> None:
+        """Create default Glance images for testing."""
         default_images = [
-            Image(
+            GlanceImage(
                 id=str(uuid4()),
                 name="cirros-0.6.2-x86_64",
-                status="ACTIVE",
+                status=ImageStatus.ACTIVE,
+                visibility=ImageVisibility.PUBLIC,
+                owner="admin",
                 min_disk=1,
                 min_ram=128,
                 size=21430272,
+                container_format=ContainerFormat.BARE,
+                disk_format=DiskFormat.QCOW2,
+                checksum="b40b105be95580a32679a71d0f44e325",
+                os_hash_algo="sha512",
+                os_hash_value="6b813aa46bb90b4da216a4d19376593fa3f4fc7e617f03a92b7fe11e9a3981cbe8f0959dbebe36225e5f53dc4492341a4863cac4ed1ee0909f3fc78ef9c3e869",
+                architecture="x86_64",
+                os_distro="cirros",
+                os_version="0.6.2",
             ),
-            Image(
+            GlanceImage(
                 id=str(uuid4()),
                 name="ubuntu-22.04-server",
-                status="ACTIVE",
+                status=ImageStatus.ACTIVE,
+                visibility=ImageVisibility.PUBLIC,
+                owner="admin",
                 min_disk=8,
                 min_ram=512,
                 size=2361393152,
+                container_format=ContainerFormat.BARE,
+                disk_format=DiskFormat.QCOW2,
+                checksum="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+                architecture="x86_64",
+                os_distro="ubuntu",
+                os_version="22.04",
             ),
-            Image(
+            GlanceImage(
                 id=str(uuid4()),
                 name="debian-12-genericcloud",
-                status="ACTIVE",
+                status=ImageStatus.ACTIVE,
+                visibility=ImageVisibility.PUBLIC,
+                owner="admin",
                 min_disk=2,
                 min_ram=512,
                 size=261816320,
+                container_format=ContainerFormat.BARE,
+                disk_format=DiskFormat.QCOW2,
+                checksum="d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+                architecture="x86_64",
+                os_distro="debian",
+                os_version="12",
             ),
         ]
         for image in default_images:
-            self._images[image.id] = image
+            self._glance_images[image.id] = image
+            # Also populate Nova-compatible images
+            self._images[image.id] = image.to_nova_image()
 
     def _init_default_keystone_data(self) -> None:
         """Initialize default Keystone resources (domain, project, user, roles, services)."""
@@ -341,6 +385,7 @@ class Database:
         - Keystone (Identity): 5000
         - Nova (Compute): 8774
         - Cinder (Block Storage): 8776
+        - Glance (Image): 9292
         """
         from urllib.parse import urlparse
 
@@ -353,6 +398,7 @@ class Database:
         keystone_url = f"{scheme}://{host}:5000"
         nova_url = f"{scheme}://{host}:8774"
         cinder_url = f"{scheme}://{host}:8776"
+        glance_url = f"{scheme}://{host}:9292"
 
         return [
             {
@@ -394,6 +440,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{keystone_url}/v3",
+                    },
+                ],
+            },
+            {
+                "type": "image",
+                "name": "glance",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{glance_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{glance_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{glance_url}",
                     },
                 ],
             },
@@ -2432,6 +2499,355 @@ class Database:
                     },
                 }
             }
+
+    # Glance Image operations
+    def create_glance_image(
+        self,
+        name: str,
+        owner: str,
+        visibility: ImageVisibility = ImageVisibility.PRIVATE,
+        min_disk: int = 0,
+        min_ram: int = 0,
+        protected: bool = False,
+        container_format: ContainerFormat | None = None,
+        disk_format: DiskFormat | None = None,
+        tags: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        architecture: str | None = None,
+        os_distro: str | None = None,
+        os_version: str | None = None,
+    ) -> GlanceImage:
+        """Create a new Glance image."""
+        with self._lock:
+            image = GlanceImage(
+                id=str(uuid4()),
+                name=name,
+                status=ImageStatus.QUEUED,
+                visibility=visibility,
+                protected=protected,
+                owner=owner,
+                min_disk=min_disk,
+                min_ram=min_ram,
+                container_format=container_format,
+                disk_format=disk_format,
+                tags=tags or [],
+                properties=properties or {},
+                architecture=architecture,
+                os_distro=os_distro,
+                os_version=os_version,
+            )
+            self._glance_images[image.id] = image
+            self._image_members[image.id] = []
+            return image
+
+    def get_glance_image(self, image_id: str) -> GlanceImage | None:
+        """Get a Glance image by ID."""
+        with self._lock:
+            return self._glance_images.get(image_id)
+
+    def list_glance_images(
+        self,
+        owner: str | None = None,
+        visibility: str | None = None,
+        status: str | None = None,
+        name: str | None = None,
+        tag: str | None = None,
+        member_status: str | None = None,
+        limit: int | None = None,
+        marker: str | None = None,
+        sort_key: str = "created_at",
+        sort_dir: str = "desc",
+    ) -> list[GlanceImage]:
+        """List Glance images with optional filtering."""
+        with self._lock:
+            images = list(self._glance_images.values())
+
+            # Filter out deleted images
+            images = [i for i in images if i.status != ImageStatus.DELETED]
+
+            # Apply filters
+            if owner:
+                images = [i for i in images if i.owner == owner]
+            if visibility:
+                images = [i for i in images if i.visibility.value == visibility]
+            if status:
+                images = [i for i in images if i.status.value == status]
+            if name:
+                images = [i for i in images if name in i.name]
+            if tag:
+                images = [i for i in images if tag in i.tags]
+
+            # Sort
+            reverse = sort_dir == "desc"
+            if sort_key == "created_at":
+                images.sort(key=lambda i: i.created_at, reverse=reverse)
+            elif sort_key == "updated_at":
+                images.sort(key=lambda i: i.updated_at, reverse=reverse)
+            elif sort_key == "name":
+                images.sort(key=lambda i: i.name, reverse=reverse)
+            elif sort_key == "size":
+                images.sort(key=lambda i: i.size or 0, reverse=reverse)
+
+            # Apply pagination
+            if marker:
+                marker_found = False
+                filtered = []
+                for image in images:
+                    if marker_found:
+                        filtered.append(image)
+                    elif image.id == marker:
+                        marker_found = True
+                images = filtered
+
+            if limit:
+                images = images[:limit]
+
+            return images
+
+    def update_glance_image(
+        self,
+        image_id: str,
+        name: str | None = None,
+        visibility: ImageVisibility | None = None,
+        min_disk: int | None = None,
+        min_ram: int | None = None,
+        protected: bool | None = None,
+        container_format: ContainerFormat | None = None,
+        disk_format: DiskFormat | None = None,
+        tags: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        architecture: str | None = None,
+        os_distro: str | None = None,
+        os_version: str | None = None,
+    ) -> GlanceImage | None:
+        """Update a Glance image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return None
+
+            if name is not None:
+                image.name = name
+            if visibility is not None:
+                image.visibility = visibility
+            if min_disk is not None:
+                image.min_disk = min_disk
+            if min_ram is not None:
+                image.min_ram = min_ram
+            if protected is not None:
+                image.protected = protected
+            if container_format is not None:
+                image.container_format = container_format
+            if disk_format is not None:
+                image.disk_format = disk_format
+            if tags is not None:
+                image.tags = tags
+            if properties is not None:
+                image.properties.update(properties)
+            if architecture is not None:
+                image.architecture = architecture
+            if os_distro is not None:
+                image.os_distro = os_distro
+            if os_version is not None:
+                image.os_version = os_version
+
+            image.updated_at = datetime.utcnow()
+
+            # Update Nova image if active
+            if image.status == ImageStatus.ACTIVE:
+                self._images[image.id] = image.to_nova_image()
+
+            return image
+
+    def delete_glance_image(self, image_id: str) -> bool:
+        """Delete a Glance image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return False
+
+            if image.protected:
+                return False
+
+            image.status = ImageStatus.DELETED
+            image.updated_at = datetime.utcnow()
+            del self._glance_images[image_id]
+
+            # Remove from Nova images
+            if image_id in self._images:
+                del self._images[image_id]
+
+            # Remove image members
+            if image_id in self._image_members:
+                del self._image_members[image_id]
+
+            return True
+
+    def upload_image_data(
+        self,
+        image_id: str,
+        size: int,
+        checksum: str | None = None,
+        os_hash_algo: str | None = None,
+        os_hash_value: str | None = None,
+    ) -> GlanceImage | None:
+        """Simulate uploading image data."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return None
+
+            if image.status != ImageStatus.QUEUED:
+                return None
+
+            # Simulate upload
+            image.status = ImageStatus.ACTIVE
+            image.size = size
+            image.checksum = checksum or f"simulated-{image_id[:8]}"
+            image.os_hash_algo = os_hash_algo or "sha512"
+            image.os_hash_value = os_hash_value or f"simulated-hash-{image_id}"
+            image.updated_at = datetime.utcnow()
+
+            # Update Nova image
+            self._images[image.id] = image.to_nova_image()
+
+            return image
+
+    def deactivate_glance_image(self, image_id: str) -> bool:
+        """Deactivate a Glance image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return False
+
+            if image.status != ImageStatus.ACTIVE:
+                return False
+
+            image.status = ImageStatus.DEACTIVATED
+            image.updated_at = datetime.utcnow()
+
+            # Remove from Nova images
+            if image_id in self._images:
+                del self._images[image_id]
+
+            return True
+
+    def reactivate_glance_image(self, image_id: str) -> bool:
+        """Reactivate a Glance image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return False
+
+            if image.status != ImageStatus.DEACTIVATED:
+                return False
+
+            image.status = ImageStatus.ACTIVE
+            image.updated_at = datetime.utcnow()
+
+            # Add back to Nova images
+            self._images[image.id] = image.to_nova_image()
+
+            return True
+
+    # Image tags
+    def add_image_tag(self, image_id: str, tag: str) -> bool:
+        """Add a tag to an image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return False
+
+            if tag not in image.tags:
+                image.tags.append(tag)
+                image.updated_at = datetime.utcnow()
+            return True
+
+    def delete_image_tag(self, image_id: str, tag: str) -> bool:
+        """Delete a tag from an image."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return False
+
+            if tag in image.tags:
+                image.tags.remove(tag)
+                image.updated_at = datetime.utcnow()
+                return True
+            return False
+
+    # Image members (for image sharing)
+    def add_image_member(self, image_id: str, member_id: str) -> ImageMember | None:
+        """Add a member to an image (share image with a project)."""
+        with self._lock:
+            image = self._glance_images.get(image_id)
+            if not image:
+                return None
+
+            if image.visibility != ImageVisibility.SHARED:
+                # Need to set visibility to shared first
+                return None
+
+            # Check if member already exists
+            members = self._image_members.get(image_id, [])
+            for member in members:
+                if member.member_id == member_id:
+                    return member
+
+            member = ImageMember(
+                image_id=image_id,
+                member_id=member_id,
+                status="pending",
+            )
+            if image_id not in self._image_members:
+                self._image_members[image_id] = []
+            self._image_members[image_id].append(member)
+            return member
+
+    def get_image_member(self, image_id: str, member_id: str) -> ImageMember | None:
+        """Get an image member."""
+        with self._lock:
+            members = self._image_members.get(image_id, [])
+            for member in members:
+                if member.member_id == member_id:
+                    return member
+            return None
+
+    def list_image_members(self, image_id: str) -> list[ImageMember]:
+        """List members of an image."""
+        with self._lock:
+            return self._image_members.get(image_id, []).copy()
+
+    def update_image_member(
+        self, image_id: str, member_id: str, status: str
+    ) -> ImageMember | None:
+        """Update image member status."""
+        with self._lock:
+            members = self._image_members.get(image_id, [])
+            for member in members:
+                if member.member_id == member_id:
+                    member.status = status
+                    member.updated_at = datetime.utcnow()
+                    return member
+            return None
+
+    def delete_image_member(self, image_id: str, member_id: str) -> bool:
+        """Remove a member from an image."""
+        with self._lock:
+            members = self._image_members.get(image_id, [])
+            for i, member in enumerate(members):
+                if member.member_id == member_id:
+                    del members[i]
+                    return True
+            return False
+
+    def reset_glance(self) -> None:
+        """Reset all Glance data to defaults."""
+        with self._lock:
+            self._glance_images.clear()
+            self._image_members.clear()
+            self._images.clear()
+            self._init_default_glance_images()
 
 
 # Global database instance

@@ -144,6 +144,57 @@ class Flavor:
         return result
 
 
+class ImageStatus(str, Enum):
+    """Image status enumeration matching OpenStack Glance states."""
+
+    QUEUED = "queued"
+    SAVING = "saving"
+    ACTIVE = "active"
+    KILLED = "killed"
+    DELETED = "deleted"
+    PENDING_DELETE = "pending_delete"
+    DEACTIVATED = "deactivated"
+    IMPORTING = "importing"
+    UPLOADING = "uploading"
+
+
+class ImageVisibility(str, Enum):
+    """Image visibility enumeration."""
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+    SHARED = "shared"
+    COMMUNITY = "community"
+
+
+class ContainerFormat(str, Enum):
+    """Container format enumeration."""
+
+    AMI = "ami"
+    ARI = "ari"
+    AKI = "aki"
+    BARE = "bare"
+    OVF = "ovf"
+    OVA = "ova"
+    DOCKER = "docker"
+
+
+class DiskFormat(str, Enum):
+    """Disk format enumeration."""
+
+    AMI = "ami"
+    ARI = "ari"
+    AKI = "aki"
+    VHD = "vhd"
+    VHDX = "vhdx"
+    VMDK = "vmdk"
+    RAW = "raw"
+    QCOW2 = "qcow2"
+    VDI = "vdi"
+    ISO = "iso"
+    PLOOP = "ploop"
+
+
 @dataclass
 class Image:
     """Represents a Glance image (simplified for Nova)."""
@@ -181,6 +232,133 @@ class Image:
                 }
             )
         return result
+
+
+@dataclass
+class GlanceImage:
+    """Represents a Glance image with full API v2 properties."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    status: ImageStatus = ImageStatus.QUEUED
+    visibility: ImageVisibility = ImageVisibility.PRIVATE
+    protected: bool = False
+    owner: str = ""  # project_id
+    min_disk: int = 0  # GB
+    min_ram: int = 0  # MB
+    size: int | None = None  # bytes (None until image data uploaded)
+    virtual_size: int | None = None
+    checksum: str | None = None
+    os_hash_algo: str | None = None
+    os_hash_value: str | None = None
+    os_hidden: bool = False
+    container_format: ContainerFormat | None = None
+    disk_format: DiskFormat | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+    direct_url: str | None = None
+    locations: list[dict[str, Any]] = field(default_factory=list)
+    # Custom properties (user-defined metadata)
+    properties: dict[str, Any] = field(default_factory=dict)
+    # Architecture, OS info
+    architecture: str | None = None
+    os_distro: str | None = None
+    os_version: str | None = None
+    hw_disk_bus: str | None = None
+    hw_vif_model: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to Glance API v2 response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status.value,
+            "visibility": self.visibility.value,
+            "protected": self.protected,
+            "owner": self.owner,
+            "min_disk": self.min_disk,
+            "min_ram": self.min_ram,
+            "os_hidden": self.os_hidden,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "self": f"/v2/images/{self.id}",
+            "file": f"/v2/images/{self.id}/file",
+            "schema": "/v2/schemas/image",
+        }
+
+        # Add optional fields only if set
+        if self.size is not None:
+            result["size"] = self.size
+        if self.virtual_size is not None:
+            result["virtual_size"] = self.virtual_size
+        if self.checksum is not None:
+            result["checksum"] = self.checksum
+        if self.os_hash_algo is not None:
+            result["os_hash_algo"] = self.os_hash_algo
+        if self.os_hash_value is not None:
+            result["os_hash_value"] = self.os_hash_value
+        if self.container_format is not None:
+            result["container_format"] = self.container_format.value
+        if self.disk_format is not None:
+            result["disk_format"] = self.disk_format.value
+        if self.direct_url is not None:
+            result["direct_url"] = self.direct_url
+        if self.locations:
+            result["locations"] = self.locations
+        if self.architecture:
+            result["architecture"] = self.architecture
+        if self.os_distro:
+            result["os_distro"] = self.os_distro
+        if self.os_version:
+            result["os_version"] = self.os_version
+        if self.hw_disk_bus:
+            result["hw_disk_bus"] = self.hw_disk_bus
+        if self.hw_vif_model:
+            result["hw_vif_model"] = self.hw_vif_model
+
+        # Add custom properties
+        result.update(self.properties)
+
+        return result
+
+    def to_nova_image(self) -> Image:
+        """Convert to Nova-compatible Image for compute API."""
+        return Image(
+            id=self.id,
+            name=self.name,
+            status=self.status.value.upper(),
+            min_disk=self.min_disk,
+            min_ram=self.min_ram,
+            size=self.size or 0,
+            created=self.created_at,
+            updated=self.updated_at,
+            metadata=dict(self.properties),
+        )
+
+
+@dataclass
+class ImageMember:
+    """Represents an image member (for image sharing)."""
+
+    image_id: str = ""
+    member_id: str = ""  # project_id that image is shared with
+    status: str = "pending"  # pending, accepted, rejected
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    schema: str = "/v2/schemas/member"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "image_id": self.image_id,
+            "member_id": self.member_id,
+            "status": self.status,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "schema": self.schema,
+        }
 
 
 @dataclass
