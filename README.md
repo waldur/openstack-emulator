@@ -59,10 +59,15 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - **Extensions**: List supported Neutron API extensions
   - **Default Resources**: Pre-configured external network, private network, and default security group
 
-- **Status Web UI**
+- **Status Web UI with Authentication**
   - Real-time dashboard showing service status
   - View all resources (servers, volumes, images, networks, etc.)
   - Organized by service (Compute, Storage, Network, Identity)
+  - **Authentication**: Login/logout with Keystone credentials
+  - **Resource Management**: Create and delete resources from the web UI
+    - Servers, Volumes, Images, Snapshots
+    - Networks, Subnets, Routers, Floating IPs, Security Groups
+    - Projects, Users
   - JSON API endpoint for programmatic access
   - Auto-refresh capability
 
@@ -137,18 +142,65 @@ Once running, you can access Swagger UI for each service:
 
 ### Status Web UI
 
-The Status Web UI provides a real-time dashboard to view the state of the emulator:
+The Status Web UI provides a real-time dashboard to view and manage the state of the emulator:
 
 - **Dashboard URL**: http://localhost:8000/
 - **JSON API**: http://localhost:8000/api/status
 
-The dashboard displays:
+**Features:**
 - Service health status (running/offline)
 - Resource counts and details organized by tabs:
   - **Compute**: Servers, Flavors, Keypairs
   - **Storage**: Images, Volumes, Snapshots
   - **Network**: Networks, Subnets, Ports, Routers, Floating IPs, Security Groups
   - **Identity**: Projects, Users
+
+**Authentication:**
+- Click **Login** to authenticate with Keystone credentials
+- Default credentials: `admin` / any password (emulator accepts any password)
+- Once logged in, you can create and delete resources directly from the web interface
+
+**Management API Endpoints:**
+When authenticated, the following REST APIs are available:
+```
+POST   /api/login          - Login with username/password
+POST   /api/logout         - Logout and revoke session
+GET    /api/session        - Get current session info
+
+POST   /api/servers        - Create a server
+DELETE /api/servers/{id}   - Delete a server
+POST   /api/servers/{id}/action - Server actions (start/stop)
+
+POST   /api/volumes        - Create a volume
+DELETE /api/volumes/{id}   - Delete a volume
+
+POST   /api/networks       - Create a network
+DELETE /api/networks/{id}  - Delete a network
+
+POST   /api/subnets        - Create a subnet
+DELETE /api/subnets/{id}   - Delete a subnet
+
+POST   /api/routers        - Create a router
+DELETE /api/routers/{id}   - Delete a router
+
+POST   /api/floating_ips   - Allocate a floating IP
+DELETE /api/floating_ips/{id} - Release a floating IP
+
+POST   /api/security_groups - Create a security group
+DELETE /api/security_groups/{id} - Delete a security group
+
+POST   /api/projects       - Create a project
+DELETE /api/projects/{id}  - Delete a project
+
+POST   /api/users          - Create a user
+DELETE /api/users/{id}     - Delete a user
+
+POST   /api/images         - Create an image
+DELETE /api/images/{id}    - Delete an image
+
+POST   /api/snapshots      - Create a snapshot
+DELETE /api/snapshots/{id} - Delete a snapshot
+```
 
 The page auto-refreshes every 30 seconds. Use the JSON API endpoint for programmatic access to status information.
 
