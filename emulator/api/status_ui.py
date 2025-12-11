@@ -1598,20 +1598,19 @@ def render_create_modals(
 
     # Build flavor options
     flavor_options = "".join(
-        [f'<option value="{f.id}">{f.name} ({f.vcpus} vCPU, {f.ram}MB RAM)</option>' for f in flavors]
+        [
+            f'<option value="{f.id}">{f.name} ({f.vcpus} vCPU, {f.ram}MB RAM)</option>'
+            for f in flavors
+        ]
     )
 
     # Build image options
     image_options = '<option value="">No image (boot from volume)</option>'
-    image_options += "".join(
-        [f'<option value="{i.id}">{i.name}</option>' for i in images]
-    )
+    image_options += "".join([f'<option value="{i.id}">{i.name}</option>' for i in images])
 
     # Build network options
     network_options = '<option value="">Auto-select</option>'
-    network_options += "".join(
-        [f'<option value="{n.id}">{n.name}</option>' for n in networks]
-    )
+    network_options += "".join([f'<option value="{n.id}">{n.name}</option>' for n in networks])
 
     # Build volume options
     volume_options = "".join(
@@ -2761,7 +2760,9 @@ async def api_create_router(
         external_gateway_info=external_gateway_info,
     )
 
-    return {"router": {"id": router_obj.id, "name": router_obj.name, "status": router_obj.status.value}}
+    return {
+        "router": {"id": router_obj.id, "name": router_obj.name, "status": router_obj.status.value}
+    }
 
 
 @router.delete("/api/routers/{router_id}")
