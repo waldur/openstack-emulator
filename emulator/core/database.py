@@ -4005,8 +4005,12 @@ class Database:
             ports = [p for p in self._ports.values() if p.project_id == project_id]
             routers = [r for r in self._routers.values() if r.project_id == project_id]
             floating_ips = [f for f in self._floating_ips.values() if f.project_id == project_id]
-            security_groups = [sg for sg in self._security_groups.values() if sg.project_id == project_id]
-            security_group_rules = [r for r in self._security_group_rules.values() if r.project_id == project_id]
+            security_groups = [
+                sg for sg in self._security_groups.values() if sg.project_id == project_id
+            ]
+            security_group_rules = [
+                r for r in self._security_group_rules.values() if r.project_id == project_id
+            ]
 
             return {
                 "network": len(networks),
@@ -4166,7 +4170,8 @@ class Database:
                         elif old_target == "*":
                             # Check if any other policy still shares this network
                             other_policies = [
-                                p for p in self._rbac_policies.values()
+                                p
+                                for p in self._rbac_policies.values()
                                 if p.object_id == policy.object_id
                                 and p.target_project == "*"
                                 and p.id != policy_id
@@ -4189,7 +4194,8 @@ class Database:
                 if network:
                     # Check if any other policy still shares this network
                     other_policies = [
-                        p for p in self._rbac_policies.values()
+                        p
+                        for p in self._rbac_policies.values()
                         if p.object_id == policy.object_id
                         and p.target_project == "*"
                         and p.id != policy_id

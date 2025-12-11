@@ -1369,7 +1369,9 @@ class ServerGroup:
 
     id: str = field(default_factory=lambda: str(uuid4()))
     name: str = ""
-    policies: list[str] = field(default_factory=list)  # affinity, anti-affinity, soft-affinity, soft-anti-affinity
+    policies: list[str] = field(
+        default_factory=list
+    )  # affinity, anti-affinity, soft-affinity, soft-anti-affinity
     members: list[str] = field(default_factory=list)  # server IDs
     project_id: str = ""
     user_id: str = ""
@@ -1459,13 +1461,33 @@ class NeutronQuota:
         return {
             "network": {"limit": self.network, "used": usage.get("network", 0), "reserved": 0},
             "subnet": {"limit": self.subnet, "used": usage.get("subnet", 0), "reserved": 0},
-            "subnetpool": {"limit": self.subnetpool, "used": usage.get("subnetpool", 0), "reserved": 0},
+            "subnetpool": {
+                "limit": self.subnetpool,
+                "used": usage.get("subnetpool", 0),
+                "reserved": 0,
+            },
             "port": {"limit": self.port, "used": usage.get("port", 0), "reserved": 0},
             "router": {"limit": self.router, "used": usage.get("router", 0), "reserved": 0},
-            "floatingip": {"limit": self.floatingip, "used": usage.get("floatingip", 0), "reserved": 0},
-            "security_group": {"limit": self.security_group, "used": usage.get("security_group", 0), "reserved": 0},
-            "security_group_rule": {"limit": self.security_group_rule, "used": usage.get("security_group_rule", 0), "reserved": 0},
-            "rbac_policy": {"limit": self.rbac_policy, "used": usage.get("rbac_policy", 0), "reserved": 0},
+            "floatingip": {
+                "limit": self.floatingip,
+                "used": usage.get("floatingip", 0),
+                "reserved": 0,
+            },
+            "security_group": {
+                "limit": self.security_group,
+                "used": usage.get("security_group", 0),
+                "reserved": 0,
+            },
+            "security_group_rule": {
+                "limit": self.security_group_rule,
+                "used": usage.get("security_group_rule", 0),
+                "reserved": 0,
+            },
+            "rbac_policy": {
+                "limit": self.rbac_policy,
+                "used": usage.get("rbac_policy", 0),
+                "reserved": 0,
+            },
         }
 
 
@@ -1511,7 +1533,9 @@ class RbacPolicy:
     """Represents a Neutron RBAC policy for sharing resources between tenants."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
-    object_type: str = "network"  # network, qos_policy, security_group, address_scope, subnetpool, address_group
+    object_type: str = (
+        "network"  # network, qos_policy, security_group, address_scope, subnetpool, address_group
+    )
     object_id: str = ""
     target_project: str = ""  # '*' for all tenants or specific project_id
     project_id: str = ""  # owner of the policy

@@ -964,13 +964,41 @@ async def get_quota_set(
         return {
             "quota_set": {
                 "id": tenant_id,
-                "volumes": {"limit": quota.volumes, "in_use": quota_usage.get("volumes", 0), "reserved": 0},
-                "snapshots": {"limit": quota.snapshots, "in_use": quota_usage.get("snapshots", 0), "reserved": 0},
-                "gigabytes": {"limit": quota.gigabytes, "in_use": quota_usage.get("gigabytes", 0), "reserved": 0},
-                "per_volume_gigabytes": {"limit": quota.per_volume_gigabytes, "in_use": 0, "reserved": 0},
-                "backups": {"limit": quota.backups, "in_use": quota_usage.get("backups", 0), "reserved": 0},
-                "backup_gigabytes": {"limit": quota.backup_gigabytes, "in_use": quota_usage.get("backup_gigabytes", 0), "reserved": 0},
-                "groups": {"limit": quota.groups, "in_use": quota_usage.get("groups", 0), "reserved": 0},
+                "volumes": {
+                    "limit": quota.volumes,
+                    "in_use": quota_usage.get("volumes", 0),
+                    "reserved": 0,
+                },
+                "snapshots": {
+                    "limit": quota.snapshots,
+                    "in_use": quota_usage.get("snapshots", 0),
+                    "reserved": 0,
+                },
+                "gigabytes": {
+                    "limit": quota.gigabytes,
+                    "in_use": quota_usage.get("gigabytes", 0),
+                    "reserved": 0,
+                },
+                "per_volume_gigabytes": {
+                    "limit": quota.per_volume_gigabytes,
+                    "in_use": 0,
+                    "reserved": 0,
+                },
+                "backups": {
+                    "limit": quota.backups,
+                    "in_use": quota_usage.get("backups", 0),
+                    "reserved": 0,
+                },
+                "backup_gigabytes": {
+                    "limit": quota.backup_gigabytes,
+                    "in_use": quota_usage.get("backup_gigabytes", 0),
+                    "reserved": 0,
+                },
+                "groups": {
+                    "limit": quota.groups,
+                    "in_use": quota_usage.get("groups", 0),
+                    "reserved": 0,
+                },
             }
         }
 
@@ -1028,5 +1056,6 @@ async def get_quota_set_defaults(
 
     # Return default quota values
     from emulator.core.models import CinderQuota
+
     default_quota = CinderQuota(project_id=tenant_id)
     return {"quota_set": default_quota.to_dict()}

@@ -427,7 +427,9 @@ async def server_action(
         original_len = len(server.security_groups)
         server.security_groups = [sg for sg in server.security_groups if sg["name"] != sg_name]
         if len(server.security_groups) == original_len:
-            raise HTTPException(status_code=404, detail=f"Security group {sg_name} not found on server")
+            raise HTTPException(
+                status_code=404, detail=f"Security group {sg_name} not found on server"
+            )
         return Response(status_code=202)
 
     else:
@@ -959,10 +961,22 @@ async def get_quota_set_detail(
         "ram": {"limit": quota.ram, "in_use": usage.get("ram", 0), "reserved": 0},
         "metadata_items": {"limit": quota.metadata_items, "in_use": 0, "reserved": 0},
         "injected_files": {"limit": quota.injected_files, "in_use": 0, "reserved": 0},
-        "injected_file_content_bytes": {"limit": quota.injected_file_content_bytes, "in_use": 0, "reserved": 0},
-        "injected_file_path_bytes": {"limit": quota.injected_file_path_bytes, "in_use": 0, "reserved": 0},
+        "injected_file_content_bytes": {
+            "limit": quota.injected_file_content_bytes,
+            "in_use": 0,
+            "reserved": 0,
+        },
+        "injected_file_path_bytes": {
+            "limit": quota.injected_file_path_bytes,
+            "in_use": 0,
+            "reserved": 0,
+        },
         "key_pairs": {"limit": quota.key_pairs, "in_use": usage.get("key_pairs", 0), "reserved": 0},
-        "server_groups": {"limit": quota.server_groups, "in_use": usage.get("server_groups", 0), "reserved": 0},
+        "server_groups": {
+            "limit": quota.server_groups,
+            "in_use": usage.get("server_groups", 0),
+            "reserved": 0,
+        },
         "server_group_members": {"limit": quota.server_group_members, "in_use": 0, "reserved": 0},
     }
 
@@ -1020,5 +1034,6 @@ async def get_quota_set_defaults(
 
     # Return default quota values
     from emulator.core.models import NovaQuota
+
     default_quota = NovaQuota(project_id=tenant_id)
     return {"quota_set": default_quota.to_dict()}

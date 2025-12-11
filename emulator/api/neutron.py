@@ -811,6 +811,7 @@ async def list_quotas(
     """List all quotas (returns default quota)."""
     # Return default quota values
     from emulator.core.models import NeutronQuota
+
     default_quota = NeutronQuota()
     return {"quotas": [default_quota.to_dict()]}
 
@@ -874,14 +875,25 @@ async def create_rbac_policy(
         raise HTTPException(status_code=400, detail="Missing required fields")
 
     # Validate object_type
-    valid_types = ["network", "qos_policy", "security_group", "address_scope", "subnetpool", "address_group"]
+    valid_types = [
+        "network",
+        "qos_policy",
+        "security_group",
+        "address_scope",
+        "subnetpool",
+        "address_group",
+    ]
     if object_type not in valid_types:
-        raise HTTPException(status_code=400, detail=f"Invalid object_type. Must be one of: {valid_types}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid object_type. Must be one of: {valid_types}"
+        )
 
     # Validate action
     valid_actions = ["access_as_shared", "access_as_external"]
     if action not in valid_actions:
-        raise HTTPException(status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}"
+        )
 
     # Get project_id from token or use default
     project_id = "admin"
