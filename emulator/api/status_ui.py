@@ -683,36 +683,40 @@ tailwind.config = {
         50% { opacity: 0.85; }
     }
     .scenario-card {
-        background: white;
-        border-radius: 8px;
+        background: #161b22;
         padding: 15px;
         margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid #1e3a5f;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
+    .scenario-card:hover {
+        border-color: #2d4a6f;
+    }
     .scenario-card.active {
         border-color: #f97316;
-        background: #fff7ed;
+        background: rgba(249, 115, 22, 0.1);
     }
     .scenario-card .scenario-info h4 {
         margin: 0 0 5px 0;
         font-size: 0.95rem;
+        color: #e6edf3;
     }
     .scenario-card .scenario-info p {
         margin: 0;
         font-size: 0.85rem;
-        color: #666;
+        color: #8b949e;
     }
     .scenario-toggle {
         position: relative;
         width: 50px;
         height: 26px;
-        background: #e2e8f0;
+        background: #30363d;
         border-radius: 13px;
         cursor: pointer;
         transition: background 0.3s;
+        flex-shrink: 0;
     }
     .scenario-toggle.active {
         background: #f97316;
@@ -724,7 +728,7 @@ tailwind.config = {
         left: 3px;
         width: 20px;
         height: 20px;
-        background: white;
+        background: #e6edf3;
         border-radius: 50%;
         transition: transform 0.3s;
     }
@@ -732,31 +736,32 @@ tailwind.config = {
         transform: translateX(24px);
     }
     .scenario-category {
-        margin-bottom: 20px;
+        margin-bottom: 25px;
     }
     .scenario-category h4 {
-        color: #4a5568;
+        color: #f97316;
         font-size: 0.9rem;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        margin-bottom: 10px;
-        padding-bottom: 5px;
-        border-bottom: 1px solid #eee;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #1e3a5f;
     }
     .load-slider-container {
-        background: #f8f9fa;
+        background: #161b22;
         padding: 20px;
-        border-radius: 8px;
+        border: 1px solid #1e3a5f;
         margin-bottom: 20px;
     }
     .load-slider-container h4 {
         margin: 0 0 15px 0;
+        color: #00d4ff;
     }
     .load-slider {
         width: 100%;
         height: 8px;
         border-radius: 4px;
-        background: #e2e8f0;
+        background: #30363d;
         outline: none;
         -webkit-appearance: none;
     }
@@ -765,14 +770,14 @@ tailwind.config = {
         width: 20px;
         height: 20px;
         border-radius: 50%;
-        background: #667eea;
+        background: #f97316;
         cursor: pointer;
     }
     .load-value {
         text-align: center;
         font-size: 1.5rem;
         font-weight: bold;
-        color: #667eea;
+        color: #f97316;
         margin-top: 10px;
     }
     .scenario-stats {
@@ -782,19 +787,19 @@ tailwind.config = {
         margin-top: 20px;
     }
     .stat-card {
-        background: #f8f9fa;
+        background: #161b22;
         padding: 15px;
-        border-radius: 8px;
+        border: 1px solid #1e3a5f;
         text-align: center;
     }
     .stat-card .stat-value {
         font-size: 1.5rem;
         font-weight: bold;
-        color: #1a1a2e;
+        color: #00ff41;
     }
     .stat-card .stat-label {
         font-size: 0.8rem;
-        color: #666;
+        color: #8b949e;
         margin-top: 5px;
     }
 </style>
@@ -2052,7 +2057,7 @@ def build_scenarios_content(
     load_slider = """
     <div class="load-slider-container">
         <h4>System Load Level</h4>
-        <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">
+        <p style="font-size: 0.85rem; color: #8b949e; margin-bottom: 10px;">
             Drag the slider to apply global latency to all services
         </p>
         <input type="range" class="load-slider" min="0" max="100" value="0"
@@ -2064,7 +2069,7 @@ def build_scenarios_content(
     # Build preset buttons
     presets = """
     <div style="margin-bottom: 20px;">
-        <h4 style="margin-bottom: 10px;">Quick Presets</h4>
+        <h4 style="margin-bottom: 10px; color: #00d4ff;">Quick Presets</h4>
         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <button class="btn btn-sm" onclick="applyPreset('light')">Light Load</button>
             <button class="btn btn-sm" onclick="applyPreset('moderate')">Moderate Load</button>
@@ -2102,7 +2107,7 @@ def build_scenarios_content(
                 <div class="scenario-info">
                     <h4>{scenario.name}</h4>
                     <p>{scenario.description}</p>
-                    <p style="font-size: 0.75rem; color: #888;">Target: {target}</p>
+                    <p style="font-size: 0.75rem; color: #6e7681;">Target: {target}</p>
                 </div>
                 <div class="scenario-toggle {toggle_class}"
                      onclick="toggleScenario('{scenario.id}', {str(is_active).lower()})">
@@ -2122,7 +2127,7 @@ def build_scenarios_content(
     global_stats = stats.get("global", {})
     stats_html = f"""
     <div style="margin-top: 30px;">
-        <h4>Injection Statistics</h4>
+        <h4 style="color: #00d4ff; margin-bottom: 15px;">Injection Statistics</h4>
         <div class="scenario-stats">
             <div class="stat-card">
                 <div class="stat-value">{len(active_scenarios)}</div>
@@ -2150,7 +2155,7 @@ def build_scenarios_content(
 
     return f"""
     <div class="resource-group">
-        <p style="margin-bottom: 20px; color: #666;">
+        <p style="margin-bottom: 20px; color: #8b949e;">
             Enable scenarios to simulate various failure conditions and test your integration's resilience.
             Active scenarios will inject delays, errors, or timeouts into API responses.
         </p>
