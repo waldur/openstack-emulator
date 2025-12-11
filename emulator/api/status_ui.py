@@ -2760,9 +2760,6 @@ async def status_page(
         else ""
     )
 
-    # Build scenarios content HTML
-    scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
-
     # Build the full HTML page
     html = f"""
     <!DOCTYPE html>
@@ -2786,6 +2783,9 @@ async def status_page(
                         <p class="text-[#00d4ff] text-sm mt-1">Real-time monitoring &amp; resource management</p>
                     </div>
                     <div class="flex items-center gap-4">
+                        <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
+                            <span class="mr-2">⚡</span> SCENARIOS {scenarios_badge}
+                        </a>
                         <button class="btn btn-primary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
                         </button>
@@ -2824,7 +2824,6 @@ async def status_page(
                     <button class="tab" data-tab="network" onclick="switchTab('network')">[ NETWORK ]</button>
                     <button class="tab" data-tab="loadbalancer" onclick="switchTab('loadbalancer')">[ LOAD BALANCER ]</button>
                     <button class="tab" data-tab="identity" onclick="switchTab('identity')">[ IDENTITY ]</button>
-                    <button class="tab" data-tab="scenarios" onclick="switchTab('scenarios')">[ SCENARIOS ] {scenarios_badge}</button>
                 </div>
 
                 <!-- Compute Tab -->
@@ -3019,11 +3018,6 @@ async def status_page(
                         {render_users_table(users, authenticated)}
                     </div>
                 </div>
-
-                <!-- Scenarios Tab -->
-                <div id="tab-scenarios" class="tab-content">
-                    {scenarios_content}
-                </div>
             </div>
 
             <!-- Footer -->
@@ -3035,6 +3029,103 @@ async def status_page(
         </div>
 
         {modals}
+        {JS_SCRIPT}
+    </body>
+    </html>
+    """
+
+    return html
+
+
+@router.get("/scenarios", response_class=HTMLResponse)
+async def scenarios_page(
+    request: Request,
+    auth_token: str | None = Cookie(default=None),
+) -> str:
+    """Render the dedicated scenarios management page."""
+    # Get scenarios data
+    all_scenarios = scenario_manager.list_scenarios()
+    active_scenarios = scenario_manager.get_active_scenarios()
+    stats = scenario_manager.get_stats()
+
+    # Badge for active scenarios
+    active_count = len(active_scenarios)
+    scenarios_badge = (
+        f'<span class="count-badge" style="background: #f97316;">{active_count}</span>'
+        if active_count > 0
+        else ""
+    )
+
+    # Build scenarios content HTML
+    scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
+
+    # Build the full HTML page
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>OPENSTACK EMULATOR // SCENARIOS</title>
+        {CSS_STYLES}
+    </head>
+    <body class="min-h-screen">
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Header -->
+        <header class="bg-[#0d1117] border-b border-[#1e3a5f] py-6 mb-8">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <div class="text-[#4a5568] text-xs uppercase tracking-widest mb-1">// FAILURE INJECTION SYSTEM</div>
+                        <h1 class="text-2xl font-bold text-[#f97316] tracking-wide">SCENARIO MANAGER</h1>
+                        <p class="text-[#00d4ff] text-sm mt-1">Simulate failures, latency, and chaos conditions</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <a href="/" class="btn btn-primary">
+                            <span class="mr-2">←</span> BACK TO STATUS
+                        </a>
+                        <button class="btn btn-secondary" onclick="location.reload()">
+                            <span class="mr-2">↻</span> REFRESH
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto px-6 pb-12">
+            <!-- Active Scenarios Summary -->
+            <div class="mb-8 bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#f97316] text-lg">⚡</span>
+                    <h2 class="text-lg font-semibold text-[#f97316] uppercase tracking-wider">Active Scenarios</h2>
+                    <span class="bg-[#f97316] bg-opacity-20 text-[#f97316] px-3 py-1 text-sm border border-[#f97316]">{active_count} ACTIVE</span>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#f97316] to-transparent"></div>
+                </div>
+                <p class="text-[#4a5568] text-sm mb-4">
+                    Enable scenarios below to inject failures and latency into API responses.
+                    Use this to test how your applications handle degraded OpenStack conditions.
+                </p>
+            </div>
+
+            <!-- Scenarios Content -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#00ff41] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Scenario Configuration</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                {scenarios_content}
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 text-center text-[#4a5568] text-xs">
+                <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
+                <div>OPENSTACK EMULATOR // SCENARIO INJECTION SYSTEM</div>
+                <div class="text-[#1e3a5f] mt-1">Changes take effect immediately</div>
+            </div>
+        </div>
+
         {JS_SCRIPT}
     </body>
     </html>
