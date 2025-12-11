@@ -1,0 +1,320 @@
+"""Data models for OpenStack emulator."""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any
+from uuid import uuid4
+
+
+class ServerStatus(str, Enum):
+    """Server status enumeration matching OpenStack Nova states."""
+
+    ACTIVE = "ACTIVE"
+    BUILD = "BUILD"
+    DELETED = "DELETED"
+    ERROR = "ERROR"
+    HARD_REBOOT = "HARD_REBOOT"
+    MIGRATING = "MIGRATING"
+    PASSWORD = "PASSWORD"
+    PAUSED = "PAUSED"
+    REBOOT = "REBOOT"
+    REBUILD = "REBUILD"
+    RESCUE = "RESCUE"
+    RESIZE = "RESIZE"
+    REVERT_RESIZE = "REVERT_RESIZE"
+    SHELVED = "SHELVED"
+    SHELVED_OFFLOADED = "SHELVED_OFFLOADED"
+    SHUTOFF = "SHUTOFF"
+    SOFT_DELETED = "SOFT_DELETED"
+    SUSPENDED = "SUSPENDED"
+    UNKNOWN = "UNKNOWN"
+    VERIFY_RESIZE = "VERIFY_RESIZE"
+
+
+class TaskState(str, Enum):
+    """Server task state enumeration."""
+
+    NONE = None  # type: ignore
+    DELETING = "deleting"
+    SOFT_DELETING = "soft-deleting"
+    RESTORING = "restoring"
+    SHELVING = "shelving"
+    UNSHELVING = "unshelving"
+    SPAWNING = "spawning"
+    REBOOTING = "rebooting"
+    REBOOTING_HARD = "rebooting_hard"
+    POWERING_OFF = "powering-off"
+    POWERING_ON = "powering-on"
+    SUSPENDING = "suspending"
+    RESUMING = "resuming"
+    PAUSING = "pausing"
+    UNPAUSING = "unpausing"
+    REBUILDING = "rebuilding"
+    RESIZING = "resizing"
+    MIGRATING = "migrating"
+
+
+class PowerState(int, Enum):
+    """Server power state enumeration."""
+
+    NO_STATE = 0
+    RUNNING = 1
+    PAUSED = 3
+    SHUTDOWN = 4
+    CRASHED = 6
+    SUSPENDED = 7
+
+
+@dataclass
+class Flavor:
+    """Represents a Nova flavor (instance type)."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    vcpus: int = 1
+    ram: int = 512  # MB
+    disk: int = 10  # GB
+    ephemeral: int = 0  # GB
+    swap: int = 0  # MB
+    rxtx_factor: float = 1.0
+    is_public: bool = True
+    disabled: bool = False
+    description: str = ""
+    extra_specs: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self, detailed: bool = True) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "links": [
+                {"rel": "self", "href": f"/v2.1/flavors/{self.id}"},
+                {"rel": "bookmark", "href": f"/flavors/{self.id}"},
+            ],
+        }
+        if detailed:
+            result.update(
+                {
+                    "vcpus": self.vcpus,
+                    "ram": self.ram,
+                    "disk": self.disk,
+                    "OS-FLV-EXT-DATA:ephemeral": self.ephemeral,
+                    "swap": self.swap if self.swap else "",
+                    "rxtx_factor": self.rxtx_factor,
+                    "os-flavor-access:is_public": self.is_public,
+                    "OS-FLV-DISABLED:disabled": self.disabled,
+                    "description": self.description,
+                }
+            )
+        return result
+
+
+@dataclass
+class Image:
+    """Represents a Glance image (simplified for Nova)."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    status: str = "ACTIVE"
+    min_disk: int = 0  # GB
+    min_ram: int = 0  # MB
+    size: int = 0  # bytes
+    created: datetime = field(default_factory=datetime.utcnow)
+    updated: datetime = field(default_factory=datetime.utcnow)
+    metadata: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self, detailed: bool = True) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "links": [
+                {"rel": "self", "href": f"/v2.1/images/{self.id}"},
+                {"rel": "bookmark", "href": f"/images/{self.id}"},
+            ],
+        }
+        if detailed:
+            result.update(
+                {
+                    "status": self.status,
+                    "minDisk": self.min_disk,
+                    "minRam": self.min_ram,
+                    "OS-EXT-IMG-SIZE:size": self.size,
+                    "created": self.created.isoformat() + "Z",
+                    "updated": self.updated.isoformat() + "Z",
+                    "metadata": self.metadata,
+                }
+            )
+        return result
+
+
+@dataclass
+class Server:
+    """Represents a Nova server instance."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    status: ServerStatus = ServerStatus.BUILD
+    task_state: TaskState | None = None
+    power_state: PowerState = PowerState.NO_STATE
+    tenant_id: str = ""
+    user_id: str = ""
+    flavor_id: str = ""
+    image_id: str = ""
+    host: str = "compute-host-1"
+    availability_zone: str = "nova"
+    key_name: str | None = None
+    created: datetime = field(default_factory=datetime.utcnow)
+    updated: datetime = field(default_factory=datetime.utcnow)
+    launched_at: datetime | None = None
+    terminated_at: datetime | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    addresses: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    security_groups: list[dict[str, str]] = field(
+        default_factory=lambda: [{"name": "default"}]
+    )
+    admin_pass: str | None = None
+    access_ipv4: str = ""
+    access_ipv6: str = ""
+    config_drive: str = ""
+    progress: int = 0
+    fault: dict[str, Any] | None = None
+
+    def to_dict(self, detailed: bool = True) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "links": [
+                {"rel": "self", "href": f"/v2.1/servers/{self.id}"},
+                {"rel": "bookmark", "href": f"/servers/{self.id}"},
+            ],
+        }
+        if detailed:
+            result.update(
+                {
+                    "status": self.status.value,
+                    "tenant_id": self.tenant_id,
+                    "user_id": self.user_id,
+                    "hostId": hash(self.host) % (10**16) if self.host else "",
+                    "OS-EXT-SRV-ATTR:host": self.host,
+                    "OS-EXT-SRV-ATTR:hypervisor_hostname": self.host,
+                    "OS-EXT-SRV-ATTR:instance_name": f"instance-{self.id[:8]}",
+                    "OS-EXT-STS:task_state": (
+                        self.task_state.value if self.task_state else None
+                    ),
+                    "OS-EXT-STS:power_state": self.power_state.value,
+                    "OS-EXT-STS:vm_state": self.status.value.lower(),
+                    "OS-EXT-AZ:availability_zone": self.availability_zone,
+                    "flavor": {
+                        "id": self.flavor_id,
+                        "links": [
+                            {
+                                "rel": "bookmark",
+                                "href": f"/flavors/{self.flavor_id}",
+                            }
+                        ],
+                    },
+                    "image": (
+                        {
+                            "id": self.image_id,
+                            "links": [
+                                {
+                                    "rel": "bookmark",
+                                    "href": f"/images/{self.image_id}",
+                                }
+                            ],
+                        }
+                        if self.image_id
+                        else ""
+                    ),
+                    "key_name": self.key_name,
+                    "created": self.created.isoformat() + "Z",
+                    "updated": self.updated.isoformat() + "Z",
+                    "OS-SRV-USG:launched_at": (
+                        self.launched_at.isoformat() + "Z" if self.launched_at else None
+                    ),
+                    "OS-SRV-USG:terminated_at": (
+                        self.terminated_at.isoformat() + "Z"
+                        if self.terminated_at
+                        else None
+                    ),
+                    "metadata": self.metadata,
+                    "addresses": self.addresses,
+                    "security_groups": self.security_groups,
+                    "accessIPv4": self.access_ipv4,
+                    "accessIPv6": self.access_ipv6,
+                    "config_drive": self.config_drive,
+                    "progress": self.progress,
+                }
+            )
+            if self.fault:
+                result["fault"] = self.fault
+        return result
+
+
+@dataclass
+class Keypair:
+    """Represents an SSH keypair."""
+
+    name: str = ""
+    public_key: str = ""
+    fingerprint: str = ""
+    user_id: str = ""
+    type: str = "ssh"
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "name": self.name,
+            "public_key": self.public_key,
+            "fingerprint": self.fingerprint,
+            "user_id": self.user_id,
+            "type": self.type,
+            "created_at": self.created_at.isoformat() + "Z",
+        }
+
+
+@dataclass
+class Token:
+    """Represents a Keystone authentication token."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    user_id: str = ""
+    user_name: str = ""
+    project_id: str = ""
+    project_name: str = ""
+    domain_id: str = "default"
+    domain_name: str = "Default"
+    roles: list[dict[str, str]] = field(
+        default_factory=lambda: [{"id": "admin", "name": "admin"}]
+    )
+    issued_at: datetime = field(default_factory=datetime.utcnow)
+    expires_at: datetime | None = None
+    catalog: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "token": {
+                "methods": ["password"],
+                "user": {
+                    "id": self.user_id,
+                    "name": self.user_name,
+                    "domain": {"id": self.domain_id, "name": self.domain_name},
+                },
+                "project": {
+                    "id": self.project_id,
+                    "name": self.project_name,
+                    "domain": {"id": self.domain_id, "name": self.domain_name},
+                },
+                "roles": self.roles,
+                "issued_at": self.issued_at.isoformat() + "Z",
+                "expires_at": (
+                    self.expires_at.isoformat() + "Z" if self.expires_at else None
+                ),
+                "catalog": self.catalog,
+            }
+        }
