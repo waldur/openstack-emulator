@@ -219,3 +219,136 @@ pytest tests/test_<service>.py -v
 - Use Pydantic `ConfigDict` instead of nested `Config` class
 - Use `response_model=None` for routes returning `Response` objects
 - Follow OpenStack API patterns for request/response formats
+
+## Patterns and Best Practices
+
+### Default Resource Initialization
+
+Some services require default resources to exist on startup. Create an initialization method in `database.py`:
+
+```python
+def _init_default_<service>_data(self) -> None:
+    """Initialize default <service> resources."""
+    # Create default resources like default security groups, networks, etc.
+    pass
+```
+
+Call this from `Database.__init__()` after initializing storage.
+
+### Resource Relationships
+
+When resources reference other resources, store the ID and provide methods to resolve:
+
+```python
+@dataclass
+class Port:
+    network_id: str  # Reference to Network
+    subnet_id: str | None = None  # Optional reference to Subnet
+
+# In database.py, provide lookup methods:
+def get_ports_by_network(self, network_id: str) -> list[Port]:
+    return [p for p in self._ports.values() if p.network_id == network_id]
+```
+
+### MAC Address Generation
+
+OpenStack uses the `fa:16:3e` prefix for MAC addresses:
+
+```python
+import random
+
+def _generate_mac_address(self) -> str:
+    """Generate a MAC address with OpenStack's fa:16:3e prefix."""
+    return "fa:16:3e:{:02x}:{:02x}:{:02x}".format(
+        random.randint(0, 255),
+        random.randint(0, 255),
+        random.randint(0, 255),
+    )
+```
+
+### IP Allocation from Subnets
+
+Track allocated IPs and provide allocation methods:
+
+```python
+def _allocate_ip_from_subnet(self, subnet: Subnet) -> str | None:
+    """Allocate the next available IP from a subnet's allocation pools."""
+    # Parse CIDR, iterate through allocation pools, find unused IP
+    # Track used IPs in subnet.used_ips set
+    pass
+```
+
+### Security Group Default Rules
+
+When creating security groups, add default egress rules to allow all outbound traffic:
+
+```python
+# Default egress rules (IPv4 and IPv6)
+egress_v4 = SecurityGroupRule(
+    security_group_id=sg.id,
+    direction="egress",
+    ethertype="IPv4",
+)
+egress_v6 = SecurityGroupRule(
+    security_group_id=sg.id,
+    direction="egress",
+    ethertype="IPv6",
+)
+```
+
+### Test Database Reset
+
+Reset database state before each test to ensure isolation:
+
+```python
+import pytest
+from emulator.core.database import db
+
+@pytest.fixture(autouse=True)
+def reset_database():
+    """Reset database before each test."""
+    db.reset()
+    yield
+```
+
+### Cascade Deletes
+
+When deleting parent resources, handle child resources appropriately:
+
+```python
+def delete_network(self, network_id: str) -> bool:
+    # Check for dependent resources first
+    ports = self.get_ports_by_network(network_id)
+    if ports:
+        raise ConflictError("Network has ports attached")
+
+    subnets = self.get_subnets_by_network(network_id)
+    for subnet in subnets:
+        self.delete_subnet(subnet.id)
+
+    # Now safe to delete network
+    del self._networks[network_id]
+    return True
+```
+
+### External vs Internal Resources
+
+Some resources have special "external" variants (e.g., external networks for floating IPs):
+
+```python
+@dataclass
+class Network:
+    external: bool = False  # Maps to router:external in API
+
+# In API layer, handle the OpenStack naming convention:
+"router:external": network.external
+```
+
+## Common OpenStack API Conventions
+
+- Use `X-Auth-Token` header for authentication
+- Project ID often appears in URL path: `/v3/{project_id}/resources`
+- List responses wrap in plural key: `{"servers": [...]}`
+- Single item responses wrap in singular key: `{"server": {...}}`
+- Timestamps use ISO 8601 format: `2024-01-15T10:30:00Z`
+- UUIDs for all resource IDs
