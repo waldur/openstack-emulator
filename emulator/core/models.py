@@ -383,9 +383,7 @@ class Server:
     terminated_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     addresses: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-    security_groups: list[dict[str, str]] = field(
-        default_factory=lambda: [{"name": "default"}]
-    )
+    security_groups: list[dict[str, str]] = field(default_factory=lambda: [{"name": "default"}])
     admin_pass: str | None = None
     access_ipv4: str = ""
     access_ipv6: str = ""
@@ -413,9 +411,7 @@ class Server:
                     "OS-EXT-SRV-ATTR:host": self.host,
                     "OS-EXT-SRV-ATTR:hypervisor_hostname": self.host,
                     "OS-EXT-SRV-ATTR:instance_name": f"instance-{self.id[:8]}",
-                    "OS-EXT-STS:task_state": (
-                        self.task_state.value if self.task_state else None
-                    ),
+                    "OS-EXT-STS:task_state": (self.task_state.value if self.task_state else None),
                     "OS-EXT-STS:power_state": self.power_state.value,
                     "OS-EXT-STS:vm_state": self.status.value.lower(),
                     "OS-EXT-AZ:availability_zone": self.availability_zone,
@@ -448,9 +444,7 @@ class Server:
                         self.launched_at.isoformat() + "Z" if self.launched_at else None
                     ),
                     "OS-SRV-USG:terminated_at": (
-                        self.terminated_at.isoformat() + "Z"
-                        if self.terminated_at
-                        else None
+                        self.terminated_at.isoformat() + "Z" if self.terminated_at else None
                     ),
                     "metadata": self.metadata,
                     "addresses": self.addresses,
@@ -500,9 +494,7 @@ class Token:
     project_name: str = ""
     domain_id: str = "default"
     domain_name: str = "Default"
-    roles: list[dict[str, str]] = field(
-        default_factory=lambda: [{"id": "admin", "name": "admin"}]
-    )
+    roles: list[dict[str, str]] = field(default_factory=lambda: [{"id": "admin", "name": "admin"}])
     issued_at: datetime = field(default_factory=datetime.utcnow)
     expires_at: datetime | None = None
     catalog: list[dict[str, Any]] = field(default_factory=list)
@@ -524,9 +516,7 @@ class Token:
                 },
                 "roles": self.roles,
                 "issued_at": self.issued_at.isoformat() + "Z",
-                "expires_at": (
-                    self.expires_at.isoformat() + "Z" if self.expires_at else None
-                ),
+                "expires_at": (self.expires_at.isoformat() + "Z" if self.expires_at else None),
                 "catalog": self.catalog,
             }
         }

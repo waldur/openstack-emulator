@@ -4,6 +4,8 @@ Provides a web interface to view the status of all services and objects
 in the OpenStack emulator.
 """
 
+from typing import TypedDict
+
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -12,8 +14,14 @@ from emulator.core.database import db
 
 router = APIRouter()
 
+
+class ServiceInfo(TypedDict):
+    port: int
+    name: str
+
+
 # Service configuration (must match emulator/__init__.py)
-SERVICES = {
+SERVICES: dict[str, ServiceInfo] = {
     "keystone": {"port": 5000, "name": "Identity"},
     "nova": {"port": 8774, "name": "Compute"},
     "cinder": {"port": 8776, "name": "Block Storage"},
@@ -251,7 +259,7 @@ async def check_service_health(host: str, port: int) -> bool:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             response = await client.get(f"http://{host}:{port}/health")
-            return response.status_code == 200
+            return bool(response.status_code == 200)
     except Exception:
         return False
 
@@ -351,7 +359,9 @@ def render_images_table(images: list) -> str:
     for image in images:
         status = image.status.value if hasattr(image.status, "value") else str(image.status)
         status_class = get_status_class(status)
-        visibility = image.visibility.value if hasattr(image.visibility, "value") else str(image.visibility)
+        visibility = (
+            image.visibility.value if hasattr(image.visibility, "value") else str(image.visibility)
+        )
         size_mb = (image.size or 0) // (1024 * 1024)
         rows += f"""
         <tr>
@@ -721,7 +731,9 @@ def render_snapshots_table(snapshots: list) -> str:
 
     rows = ""
     for snapshot in snapshots:
-        status = snapshot.status.value if hasattr(snapshot.status, "value") else str(snapshot.status)
+        status = (
+            snapshot.status.value if hasattr(snapshot.status, "value") else str(snapshot.status)
+        )
         status_class = get_status_class(status)
         rows += f"""
         <tr>

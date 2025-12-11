@@ -436,7 +436,9 @@ class TestRoleAssignments:
         """Test assigning a role to a user on a project."""
         # Get user, project, and role
         users = client.get("/v3/users", headers={"X-Auth-Token": auth_token}).json()["users"]
-        projects = client.get("/v3/projects", headers={"X-Auth-Token": auth_token}).json()["projects"]
+        projects = client.get("/v3/projects", headers={"X-Auth-Token": auth_token}).json()[
+            "projects"
+        ]
         roles = client.get("/v3/roles", headers={"X-Auth-Token": auth_token}).json()["roles"]
 
         user_id = users[0]["id"]
@@ -463,7 +465,9 @@ class TestRoleAssignments:
         """Test revoking a role from a user on a project."""
         # Get user, project, and role
         users = client.get("/v3/users", headers={"X-Auth-Token": auth_token}).json()["users"]
-        projects = client.get("/v3/projects", headers={"X-Auth-Token": auth_token}).json()["projects"]
+        projects = client.get("/v3/projects", headers={"X-Auth-Token": auth_token}).json()[
+            "projects"
+        ]
         roles = client.get("/v3/roles", headers={"X-Auth-Token": auth_token}).json()["roles"]
 
         user_id = users[0]["id"]
@@ -632,7 +636,9 @@ class TestEndpoints:
     def test_create_endpoint(self, client, auth_token):
         """Test creating an endpoint."""
         # Get a service ID first
-        services = client.get("/v3/services", headers={"X-Auth-Token": auth_token}).json()["services"]
+        services = client.get("/v3/services", headers={"X-Auth-Token": auth_token}).json()[
+            "services"
+        ]
         service_id = services[0]["id"]
 
         response = client.post(

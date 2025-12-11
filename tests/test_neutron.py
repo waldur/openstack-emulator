@@ -202,9 +202,7 @@ class TestPorts:
         network_response = client.get("/v2.0/networks")
         networks = network_response.json()["networks"]
         # Find a network with subnets
-        network = next(
-            (n for n in networks if n.get("subnets")), networks[0]
-        )
+        network = next((n for n in networks if n.get("subnets")), networks[0])
 
         response = client.post(
             "/v2.0/ports",
@@ -361,7 +359,9 @@ class TestRouters:
         subnet_response = client.get("/v2.0/subnets")
         subnets = subnet_response.json()["subnets"]
         # Find a non-external subnet
-        subnet = next((s for s in subnets if "external" not in s.get("name", "").lower()), subnets[0])
+        subnet = next(
+            (s for s in subnets if "external" not in s.get("name", "").lower()), subnets[0]
+        )
 
         # Add interface
         response = client.put(
@@ -388,9 +388,7 @@ class TestFloatingIPs:
         # Get external network
         network_response = client.get("/v2.0/networks")
         networks = network_response.json()["networks"]
-        ext_network = next(
-            (n for n in networks if n.get("router:external")), None
-        )
+        ext_network = next((n for n in networks if n.get("router:external")), None)
         if not ext_network:
             pytest.skip("No external network available")
 
@@ -408,9 +406,7 @@ class TestFloatingIPs:
         # Get external network
         network_response = client.get("/v2.0/networks")
         networks = network_response.json()["networks"]
-        ext_network = next(
-            (n for n in networks if n.get("router:external")), None
-        )
+        ext_network = next((n for n in networks if n.get("router:external")), None)
         if not ext_network:
             pytest.skip("No external network available")
 
@@ -431,9 +427,7 @@ class TestFloatingIPs:
         # Get external network
         network_response = client.get("/v2.0/networks")
         networks = network_response.json()["networks"]
-        ext_network = next(
-            (n for n in networks if n.get("router:external")), None
-        )
+        ext_network = next((n for n in networks if n.get("router:external")), None)
         if not ext_network:
             pytest.skip("No external network available")
 

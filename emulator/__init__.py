@@ -60,7 +60,7 @@ def run_all_services(host: str) -> None:
         p.start()
         processes.append(p)
 
-    print(f"\nOpenStack Emulator running:")
+    print("\nOpenStack Emulator running:")
     print(f"  - Keystone (Identity):     http://{host}:5000")
     print(f"  - Nova (Compute):          http://{host}:8774")
     print(f"  - Cinder (Block Storage):  http://{host}:8776")

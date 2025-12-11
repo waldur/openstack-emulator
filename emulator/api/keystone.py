@@ -427,7 +427,9 @@ async def list_projects(
 ) -> dict[str, Any]:
     """List projects."""
     validate_token_header(x_auth_token)
-    projects = db.list_projects(domain_id=domain_id, enabled=enabled, name=name, parent_id=parent_id)
+    projects = db.list_projects(
+        domain_id=domain_id, enabled=enabled, name=name, parent_id=parent_id
+    )
     return {
         "projects": [p.to_dict() for p in projects],
         "links": {"self": "/v3/projects", "previous": None, "next": None},
@@ -779,8 +781,15 @@ async def list_user_roles_on_project(
 
     roles = db.get_user_roles_on_project(user_id, project_id)
     return {
-        "roles": [{"id": r["id"], "name": r["name"], "links": {"self": f"/v3/roles/{r['id']}"}} for r in roles],
-        "links": {"self": f"/v3/projects/{project_id}/users/{user_id}/roles", "previous": None, "next": None},
+        "roles": [
+            {"id": r["id"], "name": r["name"], "links": {"self": f"/v3/roles/{r['id']}"}}
+            for r in roles
+        ],
+        "links": {
+            "self": f"/v3/projects/{project_id}/users/{user_id}/roles",
+            "previous": None,
+            "next": None,
+        },
     }
 
 
@@ -854,7 +863,11 @@ async def list_user_roles_on_domain(
             roles.append(role.to_dict())
     return {
         "roles": roles,
-        "links": {"self": f"/v3/domains/{domain_id}/users/{user_id}/roles", "previous": None, "next": None},
+        "links": {
+            "self": f"/v3/domains/{domain_id}/users/{user_id}/roles",
+            "previous": None,
+            "next": None,
+        },
     }
 
 

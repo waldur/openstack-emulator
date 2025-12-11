@@ -27,9 +27,7 @@ from emulator.core.models import (
     ImageVisibility,
     Keypair,
     Network,
-    NetworkStatus,
     Port,
-    PortStatus,
     PowerState,
     Project,
     QosSpec,
@@ -37,7 +35,6 @@ from emulator.core.models import (
     Role,
     RoleAssignment,
     Router,
-    RouterStatus,
     SecurityGroup,
     SecurityGroupRule,
     Server,
@@ -787,9 +784,7 @@ class Database:
         with self._lock:
             return self._flavors.get(flavor_id)
 
-    def list_flavors(
-        self, is_public: bool | None = None, limit: int | None = None
-    ) -> list[Flavor]:
+    def list_flavors(self, is_public: bool | None = None, limit: int | None = None) -> list[Flavor]:
         """List flavors with optional filtering."""
         with self._lock:
             flavors = list(self._flavors.values())
@@ -956,16 +951,10 @@ class Database:
 
         with self._lock:
             data = {
-                "servers": {
-                    k: self._server_to_dict(v) for k, v in self._servers.items()
-                },
-                "flavors": {
-                    k: self._flavor_to_dict(v) for k, v in self._flavors.items()
-                },
+                "servers": {k: self._server_to_dict(v) for k, v in self._servers.items()},
+                "flavors": {k: self._flavor_to_dict(v) for k, v in self._flavors.items()},
                 "images": {k: self._image_to_dict(v) for k, v in self._images.items()},
-                "keypairs": {
-                    k: self._keypair_to_dict(v) for k, v in self._keypairs.items()
-                },
+                "keypairs": {k: self._keypair_to_dict(v) for k, v in self._keypairs.items()},
             }
 
             path = Path(self.persist_path)
@@ -984,7 +973,7 @@ class Database:
 
         with self._lock:
             with open(path) as f:
-                data = json.load(f)
+                json.load(f)
 
             # Restore state (simplified - would need proper deserialization)
             # This is a placeholder for full implementation
@@ -1045,7 +1034,6 @@ class Database:
             "user_id": keypair.user_id,
             "type": keypair.type,
         }
-
 
     # Domain operations
     def create_domain(
@@ -1448,7 +1436,11 @@ class Database:
         """Assign a role to a group on a project."""
         with self._lock:
             for ra in self._role_assignments:
-                if ra.role_id == role_id and ra.group_id == group_id and ra.project_id == project_id:
+                if (
+                    ra.role_id == role_id
+                    and ra.group_id == group_id
+                    and ra.project_id == project_id
+                ):
                     return ra
             assignment = RoleAssignment(
                 role_id=role_id,
@@ -1474,9 +1466,7 @@ class Database:
             self._role_assignments.append(assignment)
             return assignment
 
-    def revoke_role_from_user_on_project(
-        self, role_id: str, user_id: str, project_id: str
-    ) -> bool:
+    def revoke_role_from_user_on_project(self, role_id: str, user_id: str, project_id: str) -> bool:
         """Revoke a role from a user on a project."""
         with self._lock:
             for i, ra in enumerate(self._role_assignments):
@@ -1485,9 +1475,7 @@ class Database:
                     return True
             return False
 
-    def revoke_role_from_user_on_domain(
-        self, role_id: str, user_id: str, domain_id: str
-    ) -> bool:
+    def revoke_role_from_user_on_domain(self, role_id: str, user_id: str, domain_id: str) -> bool:
         """Revoke a role from a user on a domain."""
         with self._lock:
             for i, ra in enumerate(self._role_assignments):
@@ -1502,14 +1490,16 @@ class Database:
         """Revoke a role from a group on a project."""
         with self._lock:
             for i, ra in enumerate(self._role_assignments):
-                if ra.role_id == role_id and ra.group_id == group_id and ra.project_id == project_id:
+                if (
+                    ra.role_id == role_id
+                    and ra.group_id == group_id
+                    and ra.project_id == project_id
+                ):
                     del self._role_assignments[i]
                     return True
             return False
 
-    def revoke_role_from_group_on_domain(
-        self, role_id: str, group_id: str, domain_id: str
-    ) -> bool:
+    def revoke_role_from_group_on_domain(self, role_id: str, group_id: str, domain_id: str) -> bool:
         """Revoke a role from a group on a domain."""
         with self._lock:
             for i, ra in enumerate(self._role_assignments):
@@ -2438,9 +2428,7 @@ class Database:
                 vtype.extra_specs.update(extra_specs)
             return vtype
 
-    def delete_volume_type_extra_spec(
-        self, volume_type_id: str, key: str
-    ) -> bool:
+    def delete_volume_type_extra_spec(self, volume_type_id: str, key: str) -> bool:
         """Delete an extra spec from a volume type."""
         with self._lock:
             vtype = self._volume_types.get(volume_type_id)
@@ -2497,9 +2485,7 @@ class Database:
                 return True
             return False
 
-    def associate_qos_spec_with_type(
-        self, qos_id: str, volume_type_id: str
-    ) -> bool:
+    def associate_qos_spec_with_type(self, qos_id: str, volume_type_id: str) -> bool:
         """Associate a QoS spec with a volume type."""
         with self._lock:
             qos = self._qos_specs.get(qos_id)
@@ -2509,9 +2495,7 @@ class Database:
                 return True
             return False
 
-    def disassociate_qos_spec_from_type(
-        self, qos_id: str, volume_type_id: str
-    ) -> bool:
+    def disassociate_qos_spec_from_type(self, qos_id: str, volume_type_id: str) -> bool:
         """Disassociate a QoS spec from a volume type."""
         with self._lock:
             vtype = self._volume_types.get(volume_type_id)
@@ -2866,9 +2850,7 @@ class Database:
         with self._lock:
             return self._image_members.get(image_id, []).copy()
 
-    def update_image_member(
-        self, image_id: str, member_id: str, status: str
-    ) -> ImageMember | None:
+    def update_image_member(self, image_id: str, member_id: str, status: str) -> ImageMember | None:
         """Update image member status."""
         with self._lock:
             members = self._image_members.get(image_id, [])
@@ -2901,7 +2883,6 @@ class Database:
 
     def _init_default_neutron_data(self) -> None:
         """Initialize default Neutron resources."""
-        import random
 
         # Create default security group
         default_sg = SecurityGroup(
@@ -2974,11 +2955,16 @@ class Database:
     def _generate_mac_address(self) -> str:
         """Generate a random MAC address."""
         import random
-        mac = [0xfa, 0x16, 0x3e,
-               random.randint(0x00, 0x7f),
-               random.randint(0x00, 0xff),
-               random.randint(0x00, 0xff)]
-        return ':'.join(f'{x:02x}' for x in mac)
+
+        mac = [
+            0xFA,
+            0x16,
+            0x3E,
+            random.randint(0x00, 0x7F),
+            random.randint(0x00, 0xFF),
+            random.randint(0x00, 0xFF),
+        ]
+        return ":".join(f"{x:02x}" for x in mac)
 
     def _allocate_ip_from_subnet(self, subnet: Subnet) -> str | None:
         """Allocate an IP address from a subnet's allocation pool."""
@@ -2987,8 +2973,8 @@ class Database:
 
         pool = subnet.allocation_pools[0]
         # Simple IP allocation - just increment
-        start_parts = pool.start.split('.')
-        end_parts = pool.end.split('.')
+        start_parts = pool.start.split(".")
+        end_parts = pool.end.split(".")
 
         # Get all used IPs in this subnet
         used_ips = set()
@@ -2998,7 +2984,7 @@ class Database:
                     used_ips.add(fixed_ip.ip_address)
 
         # Find first available IP
-        base = '.'.join(start_parts[:3])
+        base = ".".join(start_parts[:3])
         start_host = int(start_parts[3])
         end_host = int(end_parts[3])
 
@@ -3143,7 +3129,7 @@ class Database:
 
             # Auto-generate gateway if not provided
             if gateway_ip is None:
-                parts = cidr.split('/')[0].split('.')
+                parts = cidr.split("/")[0].split(".")
                 gateway_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.1"
 
             subnet = Subnet(
@@ -3263,10 +3249,12 @@ class Database:
             port_fixed_ips = []
             if fixed_ips:
                 for fip in fixed_ips:
-                    port_fixed_ips.append(FixedIP(
-                        subnet_id=fip.get("subnet_id", ""),
-                        ip_address=fip.get("ip_address", ""),
-                    ))
+                    port_fixed_ips.append(
+                        FixedIP(
+                            subnet_id=fip.get("subnet_id", ""),
+                            ip_address=fip.get("ip_address", ""),
+                        )
+                    )
             else:
                 # Auto-allocate from first subnet
                 for subnet_id in network.subnets:
