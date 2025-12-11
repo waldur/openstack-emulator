@@ -34,6 +34,7 @@ from emulator.core.models import (
     PowerState,
     Project,
     QosSpec,
+    RbacPolicy,
     Region,
     Role,
     RoleAssignment,
@@ -111,6 +112,9 @@ class Database:
         self._nova_quotas: dict[str, NovaQuota] = {}
         self._neutron_quotas: dict[str, NeutronQuota] = {}
         self._cinder_quotas: dict[str, CinderQuota] = {}
+
+        # Storage dictionaries - RBAC Policies
+        self._rbac_policies: dict[str, RbacPolicy] = {}
 
         # Initialize with default data
         self._init_default_flavors()
@@ -4078,6 +4082,123 @@ class Database:
                 "backup_gigabytes": 0,
                 "groups": 0,
             }
+
+    # ==================== RBAC Policy Operations ====================
+
+    def create_rbac_policy(
+        self,
+        object_type: str,
+        object_id: str,
+        target_project: str,
+        project_id: str,
+        action: str = "access_as_shared",
+    ) -> RbacPolicy:
+        """Create a new RBAC policy."""
+        with self._lock:
+            policy = RbacPolicy(
+                object_type=object_type,
+                object_id=object_id,
+                target_project=target_project,
+                project_id=project_id,
+                action=action,
+            )
+            self._rbac_policies[policy.id] = policy
+
+            # If sharing a network, update the network's shared flag
+            if object_type == "network" and target_project == "*":
+                network = self._networks.get(object_id)
+                if network:
+                    network.shared = True
+
+            return policy
+
+    def get_rbac_policy(self, policy_id: str) -> RbacPolicy | None:
+        """Get an RBAC policy by ID."""
+        with self._lock:
+            return self._rbac_policies.get(policy_id)
+
+    def list_rbac_policies(
+        self,
+        project_id: str | None = None,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        target_project: str | None = None,
+        action: str | None = None,
+    ) -> list[RbacPolicy]:
+        """List RBAC policies with optional filtering."""
+        with self._lock:
+            policies = list(self._rbac_policies.values())
+            if project_id:
+                policies = [p for p in policies if p.project_id == project_id]
+            if object_type:
+                policies = [p for p in policies if p.object_type == object_type]
+            if object_id:
+                policies = [p for p in policies if p.object_id == object_id]
+            if target_project:
+                policies = [p for p in policies if p.target_project == target_project]
+            if action:
+                policies = [p for p in policies if p.action == action]
+            return policies
+
+    def update_rbac_policy(
+        self,
+        policy_id: str,
+        target_project: str | None = None,
+    ) -> RbacPolicy | None:
+        """Update an RBAC policy (only target_project can be updated)."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return None
+
+            old_target = policy.target_project
+
+            if target_project is not None:
+                policy.target_project = target_project
+                policy.updated_at = datetime.utcnow()
+
+                # Update network shared flag if applicable
+                if policy.object_type == "network":
+                    network = self._networks.get(policy.object_id)
+                    if network:
+                        if target_project == "*":
+                            network.shared = True
+                        elif old_target == "*":
+                            # Check if any other policy still shares this network
+                            other_policies = [
+                                p for p in self._rbac_policies.values()
+                                if p.object_id == policy.object_id
+                                and p.target_project == "*"
+                                and p.id != policy_id
+                            ]
+                            if not other_policies:
+                                network.shared = False
+
+            return policy
+
+    def delete_rbac_policy(self, policy_id: str) -> bool:
+        """Delete an RBAC policy."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return False
+
+            # Update network shared flag if applicable
+            if policy.object_type == "network" and policy.target_project == "*":
+                network = self._networks.get(policy.object_id)
+                if network:
+                    # Check if any other policy still shares this network
+                    other_policies = [
+                        p for p in self._rbac_policies.values()
+                        if p.object_id == policy.object_id
+                        and p.target_project == "*"
+                        and p.id != policy_id
+                    ]
+                    if not other_policies:
+                        network.shared = False
+
+            del self._rbac_policies[policy_id]
+            return True
 
 
 # Global database instance

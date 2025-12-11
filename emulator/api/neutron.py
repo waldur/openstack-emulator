@@ -815,6 +815,139 @@ async def list_quotas(
     return {"quotas": [default_quota.to_dict()]}
 
 
+# ==================== RBAC Policies ====================
+
+
+class RbacPolicyRequest(BaseModel):
+    """Request model for creating an RBAC policy."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    object_type: str
+    object_id: str
+    target_tenant: str = Field(alias="target_tenant")
+    action: str = "access_as_shared"
+
+
+class RbacPolicyUpdateRequest(BaseModel):
+    """Request model for updating an RBAC policy."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_tenant: str = Field(alias="target_tenant")
+
+
+@router.get("/v2.0/rbac-policies")
+async def list_rbac_policies(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+    object_type: str | None = Query(None),
+    object_id: str | None = Query(None),
+    target_tenant: str | None = Query(None),
+    action: str | None = Query(None),
+) -> dict[str, Any]:
+    """List RBAC policies."""
+    policies = db.list_rbac_policies(
+        object_type=object_type,
+        object_id=object_id,
+        target_project=target_tenant,
+        action=action,
+    )
+    return {"rbac_policies": [p.to_dict() for p in policies]}
+
+
+@router.post("/v2.0/rbac-policies", status_code=201)
+async def create_rbac_policy(
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create an RBAC policy."""
+    body = await request.json()
+    policy_data = body.get("rbac_policy", {})
+
+    # Validate required fields
+    object_type = policy_data.get("object_type")
+    object_id = policy_data.get("object_id")
+    target_tenant = policy_data.get("target_tenant")
+    action = policy_data.get("action", "access_as_shared")
+
+    if not object_type or not object_id or not target_tenant:
+        raise HTTPException(status_code=400, detail="Missing required fields")
+
+    # Validate object_type
+    valid_types = ["network", "qos_policy", "security_group", "address_scope", "subnetpool", "address_group"]
+    if object_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid object_type. Must be one of: {valid_types}")
+
+    # Validate action
+    valid_actions = ["access_as_shared", "access_as_external"]
+    if action not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}")
+
+    # Get project_id from token or use default
+    project_id = "admin"
+    if x_auth_token:
+        token = db.validate_token(x_auth_token)
+        if token:
+            project_id = token.project_id
+
+    policy = db.create_rbac_policy(
+        object_type=object_type,
+        object_id=object_id,
+        target_project=target_tenant,
+        project_id=project_id,
+        action=action,
+    )
+
+    return {"rbac_policy": policy.to_dict()}
+
+
+@router.get("/v2.0/rbac-policies/{policy_id}")
+async def get_rbac_policy(
+    policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get an RBAC policy by ID."""
+    policy = db.get_rbac_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="RBAC policy not found")
+    return {"rbac_policy": policy.to_dict()}
+
+
+@router.put("/v2.0/rbac-policies/{policy_id}")
+async def update_rbac_policy(
+    policy_id: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update an RBAC policy (only target_tenant can be updated)."""
+    body = await request.json()
+    policy_data = body.get("rbac_policy", {})
+
+    target_tenant = policy_data.get("target_tenant")
+
+    policy = db.update_rbac_policy(
+        policy_id=policy_id,
+        target_project=target_tenant,
+    )
+
+    if not policy:
+        raise HTTPException(status_code=404, detail="RBAC policy not found")
+
+    return {"rbac_policy": policy.to_dict()}
+
+
+@router.delete("/v2.0/rbac-policies/{policy_id}", status_code=204, response_model=None)
+async def delete_rbac_policy(
+    policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete an RBAC policy."""
+    success = db.delete_rbac_policy(policy_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="RBAC policy not found")
+    return Response(status_code=204)
+
+
 # Extensions endpoint
 @router.get("/v2.0/extensions")
 async def list_extensions() -> dict[str, Any]:
@@ -843,6 +976,12 @@ async def list_extensions() -> dict[str, Any]:
                 "alias": "quotas",
                 "description": "Quota management support",
                 "name": "quotas",
+                "updated": "2023-01-01T00:00:00-00:00",
+            },
+            {
+                "alias": "rbac-policies",
+                "description": "RBAC policy support for sharing resources",
+                "name": "rbac-policies",
                 "updated": "2023-01-01T00:00:00-00:00",
             },
         ]

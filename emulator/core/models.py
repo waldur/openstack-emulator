@@ -1494,3 +1494,40 @@ class CinderQuota:
             "backup_gigabytes": self.backup_gigabytes,
             "groups": self.groups,
         }
+
+
+# Neutron RBAC Policy Models
+
+
+class RbacAction(str, Enum):
+    """RBAC action types."""
+
+    ACCESS_AS_SHARED = "access_as_shared"
+    ACCESS_AS_EXTERNAL = "access_as_external"
+
+
+@dataclass
+class RbacPolicy:
+    """Represents a Neutron RBAC policy for sharing resources between tenants."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    object_type: str = "network"  # network, qos_policy, security_group, address_scope, subnetpool, address_group
+    object_id: str = ""
+    target_project: str = ""  # '*' for all tenants or specific project_id
+    project_id: str = ""  # owner of the policy
+    action: str = "access_as_shared"  # access_as_shared, access_as_external
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "object_type": self.object_type,
+            "object_id": self.object_id,
+            "target_tenant": self.target_project,  # Neutron API uses target_tenant
+            "target_project": self.target_project,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "action": self.action,
+        }
