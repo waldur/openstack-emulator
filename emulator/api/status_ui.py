@@ -4,7 +4,6 @@ Provides a web interface to view the status of all services and objects
 in the OpenStack emulator, with authentication support and CRUD operations.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
 
@@ -15,27 +14,8 @@ from pydantic import BaseModel
 
 from emulator.core.database import db
 from emulator.core.models import (
-    FloatingIP,
-    FloatingIPStatus,
-    GlanceImage,
-    ImageStatus,
     ImageVisibility,
-    Network,
-    NetworkStatus,
-    Port,
-    PortStatus,
-    Project,
-    Router,
-    RouterStatus,
-    SecurityGroup,
-    Server,
     ServerStatus,
-    Snapshot,
-    SnapshotStatus,
-    Subnet,
-    User,
-    Volume,
-    VolumeStatus,
 )
 
 router = APIRouter()
@@ -140,8 +120,56 @@ class SnapshotCreateRequest(BaseModel):
     description: str | None = None
 
 
-# CSS styles for the status page
+# CSS styles for the status page - Terminal/Geek aesthetic with Tailwind
 CSS_STYLES = """
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+    theme: {
+        extend: {
+            colors: {
+                terminal: {
+                    bg: '#0a0a0f',
+                    panel: '#0d1117',
+                    border: '#1e3a5f',
+                    green: '#00ff41',
+                    cyan: '#00d4ff',
+                    amber: '#ffb000',
+                    red: '#ff3366',
+                    purple: '#a855f7',
+                    dim: '#4a5568',
+                },
+            },
+            fontFamily: {
+                mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'monospace'],
+            },
+            animation: {
+                'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+                'scan': 'scan 8s linear infinite',
+                'flicker': 'flicker 0.15s infinite',
+                'typing': 'typing 3.5s steps(40, end)',
+            },
+            keyframes: {
+                'pulse-glow': {
+                    '0%, 100%': { opacity: '1', filter: 'brightness(1)' },
+                    '50%': { opacity: '0.8', filter: 'brightness(1.2)' },
+                },
+                'scan': {
+                    '0%': { transform: 'translateY(-100%)' },
+                    '100%': { transform: 'translateY(100vh)' },
+                },
+                'flicker': {
+                    '0%, 100%': { opacity: '1' },
+                    '50%': { opacity: '0.98' },
+                },
+            },
+        },
+    },
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
     * {
         box-sizing: border-box;
@@ -149,219 +177,153 @@ CSS_STYLES = """
         padding: 0;
     }
     body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #f5f5f5;
-        color: #333;
+        font-family: 'JetBrains Mono', monospace;
+        background: #0a0a0f;
+        color: #e2e8f0;
         line-height: 1.6;
+        position: relative;
+        min-height: 100vh;
     }
-    .container {
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: 20px;
+    /* CRT Scanline effect */
+    body::before {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: repeating-linear-gradient(
+            0deg,
+            rgba(0, 0, 0, 0.15),
+            rgba(0, 0, 0, 0.15) 1px,
+            transparent 1px,
+            transparent 2px
+        );
+        pointer-events: none;
+        z-index: 9999;
     }
-    header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        color: white;
-        padding: 30px 0;
-        margin-bottom: 30px;
+    /* Glow effects */
+    .glow-green { text-shadow: 0 0 10px #00ff41, 0 0 20px #00ff41, 0 0 30px #00ff41; }
+    .glow-cyan { text-shadow: 0 0 10px #00d4ff, 0 0 20px #00d4ff; }
+    .glow-amber { text-shadow: 0 0 10px #ffb000, 0 0 20px #ffb000; }
+    .glow-red { text-shadow: 0 0 10px #ff3366, 0 0 20px #ff3366; }
+    .box-glow-green { box-shadow: 0 0 15px rgba(0, 255, 65, 0.3), inset 0 0 15px rgba(0, 255, 65, 0.1); }
+    .box-glow-cyan { box-shadow: 0 0 15px rgba(0, 212, 255, 0.3), inset 0 0 15px rgba(0, 212, 255, 0.1); }
+    .box-glow-red { box-shadow: 0 0 15px rgba(255, 51, 102, 0.3), inset 0 0 15px rgba(255, 51, 102, 0.1); }
+    /* Terminal decorations */
+    .terminal-border {
+        border: 1px solid #1e3a5f;
+        position: relative;
     }
-    header h1 {
-        font-size: 2rem;
-        margin-bottom: 5px;
+    .terminal-border::before {
+        content: '';
+        position: absolute;
+        top: -1px;
+        left: 10px;
+        right: 10px;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #00ff41, transparent);
     }
-    header p {
-        opacity: 0.8;
+    /* ASCII-style corners */
+    .corner-decoration {
+        position: relative;
     }
-    .service-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 20px;
-        margin-bottom: 30px;
+    .corner-decoration::before,
+    .corner-decoration::after {
+        position: absolute;
+        color: #1e3a5f;
+        font-size: 12px;
     }
-    .service-card {
-        background: white;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-left: 4px solid #667eea;
+    .corner-decoration::before {
+        content: '╔';
+        top: -8px;
+        left: -8px;
     }
-    .service-card.offline {
-        border-left-color: #e53e3e;
-        opacity: 0.7;
+    .corner-decoration::after {
+        content: '╝';
+        bottom: -8px;
+        right: -8px;
     }
-    .service-card h3 {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 10px;
-    }
-    .status-dot {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: #48bb78;
-    }
-    .status-dot.offline {
-        background: #e53e3e;
-    }
-    .service-info {
-        font-size: 0.9rem;
-        color: #666;
-    }
-    .section {
-        background: white;
-        border-radius: 12px;
-        padding: 25px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .section h2 {
-        color: #1a1a2e;
-        margin-bottom: 20px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #eee;
-    }
-    .resource-group {
-        margin-bottom: 25px;
-    }
-    .resource-group h3 {
-        color: #4a5568;
-        font-size: 1.1rem;
-        margin-bottom: 15px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .resource-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
-    }
-    .resource-header h3 {
-        margin-bottom: 0;
-    }
-    .count-badge {
-        background: #667eea;
-        color: white;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-    }
+    /* Table styles */
     table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
     }
     th, td {
         text-align: left;
-        padding: 12px;
-        border-bottom: 1px solid #eee;
+        padding: 12px 16px;
+        border-bottom: 1px solid #1e3a5f;
     }
     th {
-        background: #f8f9fa;
+        background: rgba(0, 212, 255, 0.1);
+        color: #00d4ff;
         font-weight: 600;
-        color: #4a5568;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
     }
     tr:hover {
-        background: #f8f9fa;
+        background: rgba(0, 255, 65, 0.05);
     }
+    /* Status badges */
     .status-badge {
         padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 500;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
     }
     .status-active, .status-available, .status-healthy {
-        background: #c6f6d5;
-        color: #22543d;
+        background: rgba(0, 255, 65, 0.2);
+        color: #00ff41;
+        border: 1px solid #00ff41;
     }
     .status-build, .status-creating {
-        background: #fef3c7;
-        color: #92400e;
+        background: rgba(255, 176, 0, 0.2);
+        color: #ffb000;
+        border: 1px solid #ffb000;
     }
     .status-error, .status-failed {
-        background: #fed7d7;
-        color: #9b2c2c;
+        background: rgba(255, 51, 102, 0.2);
+        color: #ff3366;
+        border: 1px solid #ff3366;
     }
     .status-down, .status-shutoff {
-        background: #e2e8f0;
-        color: #4a5568;
-    }
-    .empty-state {
-        text-align: center;
-        padding: 40px;
+        background: rgba(74, 85, 104, 0.3);
         color: #718096;
+        border: 1px solid #4a5568;
     }
-    .uuid {
-        font-family: monospace;
-        font-size: 0.85rem;
-        color: #666;
-    }
-    .refresh-btn, .btn {
-        background: #667eea;
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 0.9rem;
-        text-decoration: none;
-        display: inline-block;
-    }
-    .refresh-btn:hover, .btn:hover {
-        background: #5a67d8;
-    }
-    .btn-sm {
-        padding: 6px 12px;
-        font-size: 0.8rem;
-    }
-    .btn-success {
-        background: #48bb78;
-    }
-    .btn-success:hover {
-        background: #38a169;
-    }
-    .btn-danger {
-        background: #e53e3e;
-    }
-    .btn-danger:hover {
-        background: #c53030;
-    }
-    .btn-secondary {
-        background: #718096;
-    }
-    .btn-secondary:hover {
-        background: #5a6775;
-    }
-    .header-actions {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
+    /* Tabs */
     .tabs {
         display: flex;
-        gap: 5px;
+        gap: 4px;
         margin-bottom: 20px;
-        border-bottom: 2px solid #eee;
-        padding-bottom: 5px;
+        border-bottom: 1px solid #1e3a5f;
+        padding-bottom: 0;
     }
     .tab {
-        padding: 10px 20px;
+        padding: 12px 24px;
         border: none;
-        background: none;
+        background: transparent;
         cursor: pointer;
-        font-size: 0.95rem;
-        color: #666;
+        font-size: 0.85rem;
+        color: #4a5568;
+        font-family: 'JetBrains Mono', monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
         border-bottom: 2px solid transparent;
-        margin-bottom: -7px;
+        transition: all 0.2s;
     }
     .tab:hover {
-        color: #333;
+        color: #00d4ff;
+        background: rgba(0, 212, 255, 0.1);
     }
     .tab.active {
-        color: #667eea;
-        border-bottom-color: #667eea;
+        color: #00ff41;
+        border-bottom-color: #00ff41;
+        background: rgba(0, 255, 65, 0.1);
     }
     .tab-content {
         display: none;
@@ -369,51 +331,81 @@ CSS_STYLES = """
     .tab-content.active {
         display: block;
     }
-    /* Authentication styles */
-    .auth-section {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    .user-info {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: white;
-    }
-    .user-info .user-icon {
-        width: 36px;
-        height: 36px;
-        background: #667eea;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-    }
-    .login-btn {
-        background: rgba(255,255,255,0.2);
-        color: white;
-        border: 1px solid rgba(255,255,255,0.3);
-        padding: 8px 16px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 0.9rem;
-    }
-    .login-btn:hover {
-        background: rgba(255,255,255,0.3);
-    }
-    .logout-btn {
-        background: transparent;
-        color: #fca5a5;
-        border: 1px solid #fca5a5;
-        padding: 6px 12px;
-        border-radius: 6px;
+    /* Buttons */
+    .btn {
+        font-family: 'JetBrains Mono', monospace;
+        padding: 10px 20px;
+        border: 1px solid;
         cursor: pointer;
         font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        transition: all 0.2s;
+        background: transparent;
     }
-    .logout-btn:hover {
-        background: rgba(252, 165, 165, 0.1);
+    .btn-primary {
+        color: #00d4ff;
+        border-color: #00d4ff;
+    }
+    .btn-primary:hover {
+        background: rgba(0, 212, 255, 0.2);
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+    }
+    .btn-success {
+        color: #00ff41;
+        border-color: #00ff41;
+    }
+    .btn-success:hover {
+        background: rgba(0, 255, 65, 0.2);
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.4);
+    }
+    .btn-danger {
+        color: #ff3366;
+        border-color: #ff3366;
+    }
+    .btn-danger:hover {
+        background: rgba(255, 51, 102, 0.2);
+        box-shadow: 0 0 15px rgba(255, 51, 102, 0.4);
+    }
+    .btn-secondary {
+        color: #718096;
+        border-color: #4a5568;
+    }
+    .btn-secondary:hover {
+        background: rgba(74, 85, 104, 0.3);
+    }
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+    }
+    /* Action buttons */
+    .action-btns {
+        display: flex;
+        gap: 6px;
+    }
+    .action-btn {
+        padding: 4px 10px;
+        font-size: 0.7rem;
+        cursor: pointer;
+        border: 1px solid;
+        background: transparent;
+        font-family: 'JetBrains Mono', monospace;
+        text-transform: uppercase;
+        transition: all 0.2s;
+    }
+    .action-btn.edit {
+        color: #00d4ff;
+        border-color: #00d4ff;
+    }
+    .action-btn.edit:hover {
+        background: rgba(0, 212, 255, 0.2);
+    }
+    .action-btn.delete {
+        color: #ff3366;
+        border-color: #ff3366;
+    }
+    .action-btn.delete:hover {
+        background: rgba(255, 51, 102, 0.2);
     }
     /* Modal styles */
     .modal {
@@ -423,23 +415,36 @@ CSS_STYLES = """
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0, 0, 0, 0.5);
+        background: rgba(0, 0, 0, 0.85);
         z-index: 1000;
         align-items: center;
         justify-content: center;
+        backdrop-filter: blur(4px);
     }
     .modal.active {
         display: flex;
     }
     .modal-content {
-        background: white;
-        border-radius: 12px;
+        background: #0d1117;
+        border: 1px solid #00d4ff;
         padding: 30px;
         width: 90%;
         max-width: 500px;
         max-height: 90vh;
         overflow-y: auto;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 30px rgba(0, 212, 255, 0.3), inset 0 0 30px rgba(0, 212, 255, 0.05);
+        position: relative;
+    }
+    .modal-content::before {
+        content: '[ TERMINAL INPUT ]';
+        position: absolute;
+        top: -12px;
+        left: 20px;
+        background: #0d1117;
+        padding: 0 10px;
+        color: #00d4ff;
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
     }
     .modal-header {
         display: flex;
@@ -447,100 +452,99 @@ CSS_STYLES = """
         align-items: center;
         margin-bottom: 20px;
         padding-bottom: 15px;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid #1e3a5f;
     }
     .modal-header h3 {
-        font-size: 1.25rem;
-        color: #1a1a2e;
+        font-size: 1rem;
+        color: #00ff41;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
     }
     .modal-close {
         background: none;
-        border: none;
-        font-size: 1.5rem;
+        border: 1px solid #ff3366;
+        font-size: 1.2rem;
         cursor: pointer;
-        color: #666;
-        padding: 0;
+        color: #ff3366;
+        padding: 2px 8px;
         line-height: 1;
+        transition: all 0.2s;
     }
     .modal-close:hover {
-        color: #333;
+        background: rgba(255, 51, 102, 0.2);
+        box-shadow: 0 0 10px rgba(255, 51, 102, 0.4);
     }
+    /* Form styles */
     .form-group {
         margin-bottom: 20px;
     }
     .form-group label {
         display: block;
-        margin-bottom: 6px;
-        font-weight: 500;
-        color: #4a5568;
+        margin-bottom: 8px;
+        color: #00d4ff;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
     }
     .form-group input, .form-group select, .form-group textarea {
         width: 100%;
-        padding: 10px 12px;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        font-size: 0.95rem;
-        transition: border-color 0.2s;
+        padding: 12px 14px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid #1e3a5f;
+        color: #e2e8f0;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.9rem;
+        transition: all 0.2s;
     }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
         outline: none;
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        border-color: #00ff41;
+        box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+    }
+    .form-group input::placeholder {
+        color: #4a5568;
     }
     .form-group input[type="checkbox"] {
         width: auto;
-        margin-right: 8px;
+        margin-right: 10px;
+        accent-color: #00ff41;
     }
     .form-group .checkbox-label {
         display: flex;
         align-items: center;
         cursor: pointer;
+        color: #e2e8f0;
+    }
+    .form-group select {
+        cursor: pointer;
+    }
+    .form-group select option {
+        background: #0d1117;
+        color: #e2e8f0;
     }
     .form-actions {
         display: flex;
-        gap: 10px;
+        gap: 12px;
         justify-content: flex-end;
         margin-top: 25px;
         padding-top: 20px;
-        border-top: 1px solid #eee;
+        border-top: 1px solid #1e3a5f;
     }
     .form-error {
-        background: #fed7d7;
-        color: #9b2c2c;
-        padding: 10px 15px;
-        border-radius: 6px;
+        background: rgba(255, 51, 102, 0.2);
+        color: #ff3366;
+        padding: 12px 15px;
+        border: 1px solid #ff3366;
         margin-bottom: 15px;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
     }
     .form-success {
-        background: #c6f6d5;
-        color: #22543d;
-        padding: 10px 15px;
-        border-radius: 6px;
+        background: rgba(0, 255, 65, 0.2);
+        color: #00ff41;
+        padding: 12px 15px;
+        border: 1px solid #00ff41;
         margin-bottom: 15px;
-        font-size: 0.9rem;
-    }
-    /* Action buttons in tables */
-    .action-btns {
-        display: flex;
-        gap: 5px;
-    }
-    .action-btn {
-        padding: 4px 8px;
-        font-size: 0.75rem;
-        border-radius: 4px;
-        cursor: pointer;
-        border: none;
-        color: white;
-    }
-    .action-btn.edit {
-        background: #667eea;
-    }
-    .action-btn.delete {
-        background: #e53e3e;
-    }
-    .action-btn:hover {
-        opacity: 0.9;
+        font-size: 0.85rem;
     }
     /* Toast notifications */
     .toast-container {
@@ -550,19 +554,23 @@ CSS_STYLES = """
         z-index: 2000;
     }
     .toast {
-        background: #1a1a2e;
-        color: white;
+        background: #0d1117;
+        color: #e2e8f0;
         padding: 15px 20px;
-        border-radius: 8px;
+        border: 1px solid #1e3a5f;
         margin-bottom: 10px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        font-size: 0.85rem;
         animation: slideIn 0.3s ease;
     }
     .toast.success {
-        background: #48bb78;
+        border-color: #00ff41;
+        color: #00ff41;
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
     }
     .toast.error {
-        background: #e53e3e;
+        border-color: #ff3366;
+        color: #ff3366;
+        box-shadow: 0 0 15px rgba(255, 51, 102, 0.3);
     }
     @keyframes slideIn {
         from {
@@ -574,19 +582,85 @@ CSS_STYLES = """
             opacity: 1;
         }
     }
-    /* Read-only notice */
-    .readonly-notice {
-        background: #fef3c7;
-        color: #92400e;
-        padding: 12px 20px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
     }
-    .readonly-notice svg {
-        flex-shrink: 0;
+    ::-webkit-scrollbar-track {
+        background: #0a0a0f;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #1e3a5f;
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #00d4ff;
+    }
+    /* Utility classes for terminal elements */
+    .terminal-prompt::before {
+        content: '>';
+        color: #00ff41;
+        margin-right: 8px;
+    }
+    .blinking-cursor::after {
+        content: '_';
+        animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+        50% { opacity: 0; }
+    }
+    /* UUID styling with tooltip */
+    .uuid {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        color: #a855f7;
+        cursor: pointer;
+        position: relative;
+    }
+    .uuid:hover {
+        color: #c084fc;
+    }
+    .uuid-value {
+        position: relative;
+        display: inline-block;
+    }
+    .uuid-value::after {
+        content: attr(data-full);
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        background: #0d1117;
+        border: 1px solid #00d4ff;
+        color: #00ff41;
+        padding: 8px 12px;
+        font-size: 0.75rem;
+        white-space: nowrap;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s, visibility 0.2s;
+        z-index: 1000;
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+        margin-bottom: 5px;
+    }
+    .uuid-value:hover::after {
+        opacity: 1;
+        visibility: visible;
+    }
+    /* Click to copy feedback */
+    .uuid-value.copied::after {
+        content: 'Copied!';
+        background: #00ff41;
+        color: #0a0a0f;
+        border-color: #00ff41;
+    }
+    /* Clickable service cards */
+    .service-card-link {
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .service-card-link:hover {
+        transform: translateY(-2px);
     }
 </style>
 """
@@ -594,7 +668,7 @@ CSS_STYLES = """
 # JavaScript for interactivity
 JS_SCRIPT = """
 <script>
-    // Tab switching
+    // Tab switching with persistence
     function switchTab(tabName) {
         document.querySelectorAll('.tab-content').forEach(el => {
             el.classList.remove('active');
@@ -604,6 +678,41 @@ JS_SCRIPT = """
         });
         document.getElementById('tab-' + tabName).classList.add('active');
         document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+        // Save current tab to localStorage
+        localStorage.setItem('openstack-emulator-tab', tabName);
+    }
+
+    // Restore saved tab on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedTab = localStorage.getItem('openstack-emulator-tab');
+        if (savedTab && document.getElementById('tab-' + savedTab)) {
+            switchTab(savedTab);
+        }
+    });
+
+    // Copy UUID to clipboard
+    function copyUuid(element) {
+        const uuid = element.getAttribute('data-full');
+        navigator.clipboard.writeText(uuid).then(() => {
+            element.classList.add('copied');
+            showToast('UUID copied to clipboard', 'success');
+            setTimeout(() => {
+                element.classList.remove('copied');
+            }, 1500);
+        }).catch(err => {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = uuid;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            element.classList.add('copied');
+            showToast('UUID copied to clipboard', 'success');
+            setTimeout(() => {
+                element.classList.remove('copied');
+            }, 1500);
+        });
     }
 
     // Modal functions
@@ -832,7 +941,7 @@ def get_current_user(auth_token: str | None) -> dict | None:
 def render_servers_table(servers: list, authenticated: bool) -> str:
     """Render the servers table HTML."""
     if not servers:
-        return '<div class="empty-state">No servers created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO SERVERS FOUND ]</div>'
 
     rows = ""
     for server in servers:
@@ -853,7 +962,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{server.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{server.id}" onclick="copyUuid(this)">{server.id[:13]}...</span></td>
             <td>{server.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{server.flavor_id}</td>
@@ -883,7 +992,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
 def render_volumes_table(volumes: list, authenticated: bool) -> str:
     """Render the volumes table HTML."""
     if not volumes:
-        return '<div class="empty-state">No volumes created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO VOLUMES FOUND ]</div>'
 
     rows = ""
     for volume in volumes:
@@ -900,7 +1009,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{volume.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{volume.id}" onclick="copyUuid(this)">{volume.id[:13]}...</span></td>
             <td>{volume.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
@@ -930,7 +1039,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
 def render_images_table(images: list, authenticated: bool) -> str:
     """Render the images table HTML."""
     if not images:
-        return '<div class="empty-state">No images available</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO IMAGES FOUND ]</div>'
 
     rows = ""
     for image in images:
@@ -951,7 +1060,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{image.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{image.id}" onclick="copyUuid(this)">{image.id[:13]}...</span></td>
             <td>{image.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{visibility}</td>
@@ -981,7 +1090,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
 def render_networks_table(networks: list, authenticated: bool) -> str:
     """Render the networks table HTML."""
     if not networks:
-        return '<div class="empty-state">No networks created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO NETWORKS FOUND ]</div>'
 
     rows = ""
     for network in networks:
@@ -999,7 +1108,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{network.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{network.id}" onclick="copyUuid(this)">{network.id[:13]}...</span></td>
             <td>{network.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
@@ -1029,7 +1138,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
 def render_subnets_table(subnets: list, authenticated: bool) -> str:
     """Render the subnets table HTML."""
     if not subnets:
-        return '<div class="empty-state">No subnets created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO SUBNETS FOUND ]</div>'
 
     rows = ""
     for subnet in subnets:
@@ -1043,7 +1152,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{subnet.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{subnet.id}" onclick="copyUuid(this)">{subnet.id[:13]}...</span></td>
             <td>{subnet.name or '-'}</td>
             <td>{subnet.cidr}</td>
             <td>{subnet.gateway_ip or '-'}</td>
@@ -1073,7 +1182,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
 def render_ports_table(ports: list, authenticated: bool) -> str:
     """Render the ports table HTML."""
     if not ports:
-        return '<div class="empty-state">No ports created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO PORTS FOUND ]</div>'
 
     rows = ""
     for port in ports:
@@ -1091,7 +1200,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{port.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{port.id}" onclick="copyUuid(this)">{port.id[:13]}...</span></td>
             <td>{port.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
@@ -1121,7 +1230,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
 def render_routers_table(routers: list, authenticated: bool) -> str:
     """Render the routers table HTML."""
     if not routers:
-        return '<div class="empty-state">No routers created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO ROUTERS FOUND ]</div>'
 
     rows = ""
     for router in routers:
@@ -1139,7 +1248,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{router.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{router.id}" onclick="copyUuid(this)">{router.id[:13]}...</span></td>
             <td>{router.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{'Yes' if router.admin_state_up else 'No'}</td>
@@ -1169,7 +1278,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
 def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
     """Render the floating IPs table HTML."""
     if not floating_ips:
-        return '<div class="empty-state">No floating IPs allocated yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO FLOATING IPS ALLOCATED ]</div>'
 
     rows = ""
     for fip in floating_ips:
@@ -1186,11 +1295,11 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{fip.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{fip.id}" onclick="copyUuid(this)">{fip.id[:13]}...</span></td>
             <td>{fip.floating_ip_address}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{fip.fixed_ip_address or '-'}</td>
-            <td class="uuid">{fip.port_id[:8] + '...' if fip.port_id else '-'}</td>
+            <td class="uuid">{f'<span class="uuid-value" data-full="{fip.port_id}" onclick="copyUuid(this)">{fip.port_id[:13]}...</span>' if fip.port_id else '-'}</td>
             {actions}
         </tr>
         """
@@ -1216,7 +1325,7 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
 def render_security_groups_table(security_groups: list, authenticated: bool) -> str:
     """Render the security groups table HTML."""
     if not security_groups:
-        return '<div class="empty-state">No security groups created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO SECURITY GROUPS FOUND ]</div>'
 
     rows = ""
     for sg in security_groups:
@@ -1232,7 +1341,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
 
         rows += f"""
         <tr>
-            <td class="uuid">{sg.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{sg.id}" onclick="copyUuid(this)">{sg.id[:13]}...</span></td>
             <td>{sg.name}</td>
             <td>{sg.description or '-'}</td>
             <td>{rule_count}</td>
@@ -1260,7 +1369,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
 def render_projects_table(projects: list, authenticated: bool) -> str:
     """Render the projects table HTML."""
     if not projects:
-        return '<div class="empty-state">No projects created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO PROJECTS FOUND ]</div>'
 
     rows = ""
     for project in projects:
@@ -1274,7 +1383,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{project.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{project.id}" onclick="copyUuid(this)">{project.id[:13]}...</span></td>
             <td>{project.name}</td>
             <td>{project.description or '-'}</td>
             <td>{'Yes' if project.enabled else 'No'}</td>
@@ -1302,7 +1411,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
 def render_users_table(users: list, authenticated: bool) -> str:
     """Render the users table HTML."""
     if not users:
-        return '<div class="empty-state">No users created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO USERS FOUND ]</div>'
 
     rows = ""
     for user in users:
@@ -1316,7 +1425,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{user.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{user.id}" onclick="copyUuid(this)">{user.id[:13]}...</span></td>
             <td>{user.name}</td>
             <td>{user.email or '-'}</td>
             <td>{'Yes' if user.enabled else 'No'}</td>
@@ -1344,7 +1453,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
 def render_flavors_table(flavors: list, authenticated: bool) -> str:
     """Render the flavors table HTML."""
     if not flavors:
-        return '<div class="empty-state">No flavors available</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO FLAVORS FOUND ]</div>'
 
     rows = ""
     for flavor in flavors:
@@ -1388,7 +1497,7 @@ def render_flavors_table(flavors: list, authenticated: bool) -> str:
 def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
     """Render the keypairs table HTML."""
     if not keypairs:
-        return '<div class="empty-state">No keypairs created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO KEYPAIRS FOUND ]</div>'
 
     rows = ""
     for keypair in keypairs:
@@ -1432,7 +1541,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
 def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
     """Render the snapshots table HTML."""
     if not snapshots:
-        return '<div class="empty-state">No snapshots created yet</div>'
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO SNAPSHOTS FOUND ]</div>'
 
     rows = ""
     for snapshot in snapshots:
@@ -1451,11 +1560,11 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{snapshot.id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{snapshot.id}" onclick="copyUuid(this)">{snapshot.id[:13]}...</span></td>
             <td>{snapshot.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
-            <td class="uuid">{snapshot.volume_id[:8]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{snapshot.volume_id}" onclick="copyUuid(this)">{snapshot.volume_id[:13]}...</span></td>
             {actions}
         </tr>
         """
@@ -1489,20 +1598,19 @@ def render_create_modals(
 
     # Build flavor options
     flavor_options = "".join(
-        [f'<option value="{f.id}">{f.name} ({f.vcpus} vCPU, {f.ram}MB RAM)</option>' for f in flavors]
+        [
+            f'<option value="{f.id}">{f.name} ({f.vcpus} vCPU, {f.ram}MB RAM)</option>'
+            for f in flavors
+        ]
     )
 
     # Build image options
     image_options = '<option value="">No image (boot from volume)</option>'
-    image_options += "".join(
-        [f'<option value="{i.id}">{i.name}</option>' for i in images]
-    )
+    image_options += "".join([f'<option value="{i.id}">{i.name}</option>' for i in images])
 
     # Build network options
     network_options = '<option value="">Auto-select</option>'
-    network_options += "".join(
-        [f'<option value="{n.id}">{n.name}</option>' for n in networks]
-    )
+    network_options += "".join([f'<option value="{n.id}">{n.name}</option>' for n in networks])
 
     # Build volume options
     volume_options = "".join(
@@ -1966,20 +2074,37 @@ async def status_page(
         }
 
     # Build service cards HTML
+    # Map services to resource tabs
+    service_to_tab = {
+        "keystone": "identity",
+        "nova": "compute",
+        "cinder": "storage",
+        "glance": "storage",
+        "neutron": "network",
+    }
     service_cards = ""
     for service, status in service_status.items():
-        status_class = "" if status["healthy"] else "offline"
-        dot_class = "" if status["healthy"] else "offline"
-        status_text = "Running" if status["healthy"] else "Offline"
+        if status["healthy"]:
+            glow_class = "box-glow-green"
+            border_color = "border-[#00ff41]"
+            status_color = "text-[#00ff41]"
+            status_text = "ONLINE"
+            indicator = "animate-pulse"
+        else:
+            glow_class = "box-glow-red"
+            border_color = "border-[#ff3366]"
+            status_color = "text-[#ff3366]"
+            status_text = "OFFLINE"
+            indicator = ""
+        target_tab = service_to_tab.get(service, "compute")
         service_cards += f"""
-        <div class="service-card {status_class}">
-            <h3>
-                <span class="status-dot {dot_class}"></span>
-                {service.capitalize()} ({status['name']})
-            </h3>
-            <div class="service-info">
-                <div>Port: {status['port']}</div>
-                <div>Status: {status_text}</div>
+        <div class="bg-[#0d1117] border {border_color} p-5 {glow_class} relative service-card-link" onclick="switchTab('{target_tab}')" title="Click to view {target_tab} resources">
+            <div class="absolute top-2 right-2 w-2 h-2 rounded-full bg-current {status_color} {indicator}"></div>
+            <div class="text-[#00d4ff] text-xs uppercase tracking-wider mb-1">{status['name']}</div>
+            <div class="text-lg font-semibold text-[#e2e8f0] mb-3">{service.upper()}</div>
+            <div class="text-xs text-[#4a5568] space-y-1">
+                <div>PORT: <span class="text-[#ffb000]">{status['port']}</span></div>
+                <div>STATUS: <span class="{status_color}">{status_text}</span></div>
             </div>
         </div>
         """
@@ -2002,23 +2127,23 @@ async def status_page(
     volume_types = db.list_volume_types()
 
     # Build authentication section
-    if authenticated:
+    if authenticated and current_user:
         auth_section = f"""
-        <div class="auth-section">
-            <div class="user-info">
-                <div class="user-icon">{current_user['name'][0].upper()}</div>
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-[#00ff41] bg-opacity-20 border border-[#00ff41] flex items-center justify-center text-[#00ff41] font-bold text-sm">{current_user['name'][0].upper()}</div>
                 <div>
-                    <div>{current_user['name']}</div>
-                    <div style="font-size: 0.8rem; opacity: 0.8;">{current_user['project_name'] or 'No project'}</div>
+                    <div class="text-[#00ff41] text-sm">{current_user['name']}</div>
+                    <div class="text-[#4a5568] text-xs">{current_user['project_name'] or 'No project'}</div>
                 </div>
             </div>
-            <button class="logout-btn" onclick="handleLogout()">Logout</button>
+            <button class="btn btn-danger btn-sm" onclick="handleLogout()">LOGOUT</button>
         </div>
         """
     else:
         auth_section = """
-        <div class="auth-section">
-            <button class="login-btn" onclick="openModal('login-modal')">Login</button>
+        <div class="flex items-center">
+            <button class="btn btn-success" onclick="openModal('login-modal')">LOGIN</button>
         </div>
         """
 
@@ -2026,13 +2151,9 @@ async def status_page(
     readonly_notice = ""
     if not authenticated:
         readonly_notice = """
-        <div class="readonly-notice">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-            <span>You are viewing in read-only mode. <a href="#" onclick="openModal('login-modal'); return false;">Login</a> to create and manage resources.</span>
+        <div class="bg-[#ffb000] bg-opacity-10 border border-[#ffb000] text-[#ffb000] px-5 py-3 mb-6 flex items-center gap-3 text-sm">
+            <span class="text-lg">!</span>
+            <span>READ-ONLY MODE // <a href="#" onclick="openModal('login-modal'); return false;" class="underline hover:text-white">AUTHENTICATE</a> to access system controls</span>
         </div>
         """
 
@@ -2052,67 +2173,88 @@ async def status_page(
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>OpenStack Emulator Status</title>
+        <title>OPENSTACK EMULATOR // SYSTEM STATUS</title>
         {CSS_STYLES}
     </head>
-    <body>
+    <body class="min-h-screen">
         <div id="toast-container" class="toast-container"></div>
 
-        <header>
-            <div class="container">
-                <div class="header-actions">
+        <!-- Header -->
+        <header class="bg-[#0d1117] border-b border-[#1e3a5f] py-6 mb-8">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex justify-between items-center">
                     <div>
-                        <h1>OpenStack Emulator Status</h1>
-                        <p>Real-time view of emulator services and resources</p>
+                        <div class="text-[#4a5568] text-xs uppercase tracking-widest mb-1">// SYSTEM INTERFACE v1.0</div>
+                        <h1 class="text-2xl font-bold text-[#00ff41] glow-green tracking-wide">OPENSTACK EMULATOR</h1>
+                        <p class="text-[#00d4ff] text-sm mt-1">Real-time monitoring &amp; resource management</p>
                     </div>
-                    <div style="display: flex; gap: 15px; align-items: center;">
-                        <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+                    <div class="flex items-center gap-4">
+                        <button class="btn btn-primary" onclick="location.reload()">
+                            <span class="mr-2">↻</span> REFRESH
+                        </button>
                         {auth_section}
                     </div>
                 </div>
             </div>
         </header>
 
-        <div class="container">
+        <div class="max-w-7xl mx-auto px-6 pb-12">
             {readonly_notice}
 
             <!-- Service Status Cards -->
-            <div class="section">
-                <h2>Services</h2>
-                <div class="service-grid">
+            <div class="mb-8">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#00d4ff] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00d4ff] uppercase tracking-wider">Service Status</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
                     {service_cards}
                 </div>
             </div>
 
             <!-- Tabbed Resources -->
-            <div class="section">
-                <h2>Resources</h2>
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#00ff41] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Resources</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
 
                 <div class="tabs">
-                    <button class="tab active" data-tab="compute" onclick="switchTab('compute')">Compute</button>
-                    <button class="tab" data-tab="storage" onclick="switchTab('storage')">Storage</button>
-                    <button class="tab" data-tab="network" onclick="switchTab('network')">Network</button>
-                    <button class="tab" data-tab="identity" onclick="switchTab('identity')">Identity</button>
+                    <button class="tab active" data-tab="compute" onclick="switchTab('compute')">[ COMPUTE ]</button>
+                    <button class="tab" data-tab="storage" onclick="switchTab('storage')">[ STORAGE ]</button>
+                    <button class="tab" data-tab="network" onclick="switchTab('network')">[ NETWORK ]</button>
+                    <button class="tab" data-tab="identity" onclick="switchTab('identity')">[ IDENTITY ]</button>
                 </div>
 
                 <!-- Compute Tab -->
                 <div id="tab-compute" class="tab-content active">
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Servers <span class="count-badge">{len(servers)}</span></h3>
-                            {create_btn('create-server-modal', '+ Create Server')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Servers
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(servers)}</span>
+                            </h3>
+                            {create_btn('create-server-modal', '+ NEW')}
                         </div>
                         {render_servers_table(servers, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Flavors <span class="count-badge">{len(flavors)}</span></h3>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Flavors
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(flavors)}</span>
+                            </h3>
                         </div>
                         {render_flavors_table(flavors, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Keypairs <span class="count-badge">{len(keypairs)}</span></h3>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Keypairs
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(keypairs)}</span>
+                            </h3>
                         </div>
                         {render_keypairs_table(keypairs, authenticated)}
                     </div>
@@ -2120,24 +2262,33 @@ async def status_page(
 
                 <!-- Storage Tab -->
                 <div id="tab-storage" class="tab-content">
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Images <span class="count-badge">{len(images)}</span></h3>
-                            {create_btn('create-image-modal', '+ Create Image')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Images
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(images)}</span>
+                            </h3>
+                            {create_btn('create-image-modal', '+ NEW')}
                         </div>
                         {render_images_table(images, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Volumes <span class="count-badge">{len(volumes)}</span></h3>
-                            {create_btn('create-volume-modal', '+ Create Volume')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Volumes
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(volumes)}</span>
+                            </h3>
+                            {create_btn('create-volume-modal', '+ NEW')}
                         </div>
                         {render_volumes_table(volumes, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Snapshots <span class="count-badge">{len(snapshots)}</span></h3>
-                            {create_btn('create-snapshot-modal', '+ Create Snapshot')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Snapshots
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(snapshots)}</span>
+                            </h3>
+                            {create_btn('create-snapshot-modal', '+ NEW')}
                         </div>
                         {render_snapshots_table(snapshots, authenticated)}
                     </div>
@@ -2145,44 +2296,62 @@ async def status_page(
 
                 <!-- Network Tab -->
                 <div id="tab-network" class="tab-content">
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Networks <span class="count-badge">{len(networks)}</span></h3>
-                            {create_btn('create-network-modal', '+ Create Network')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Networks
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(networks)}</span>
+                            </h3>
+                            {create_btn('create-network-modal', '+ NEW')}
                         </div>
                         {render_networks_table(networks, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Subnets <span class="count-badge">{len(subnets)}</span></h3>
-                            {create_btn('create-subnet-modal', '+ Create Subnet')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Subnets
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(subnets)}</span>
+                            </h3>
+                            {create_btn('create-subnet-modal', '+ NEW')}
                         </div>
                         {render_subnets_table(subnets, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Ports <span class="count-badge">{len(ports)}</span></h3>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Ports
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(ports)}</span>
+                            </h3>
                         </div>
                         {render_ports_table(ports, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Routers <span class="count-badge">{len(routers)}</span></h3>
-                            {create_btn('create-router-modal', '+ Create Router')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Routers
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(routers)}</span>
+                            </h3>
+                            {create_btn('create-router-modal', '+ NEW')}
                         </div>
                         {render_routers_table(routers, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Floating IPs <span class="count-badge">{len(floating_ips)}</span></h3>
-                            {create_btn('create-floating-ip-modal', '+ Allocate IP')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Floating IPs
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(floating_ips)}</span>
+                            </h3>
+                            {create_btn('create-floating-ip-modal', '+ ALLOCATE')}
                         </div>
                         {render_floating_ips_table(floating_ips, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Security Groups <span class="count-badge">{len(security_groups)}</span></h3>
-                            {create_btn('create-security-group-modal', '+ Create Group')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Security Groups
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(security_groups)}</span>
+                            </h3>
+                            {create_btn('create-security-group-modal', '+ NEW')}
                         </div>
                         {render_security_groups_table(security_groups, authenticated)}
                     </div>
@@ -2190,21 +2359,34 @@ async def status_page(
 
                 <!-- Identity Tab -->
                 <div id="tab-identity" class="tab-content">
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Projects <span class="count-badge">{len(projects)}</span></h3>
-                            {create_btn('create-project-modal', '+ Create Project')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Projects
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(projects)}</span>
+                            </h3>
+                            {create_btn('create-project-modal', '+ NEW')}
                         </div>
                         {render_projects_table(projects, authenticated)}
                     </div>
-                    <div class="resource-group">
-                        <div class="resource-header">
-                            <h3>Users <span class="count-badge">{len(users)}</span></h3>
-                            {create_btn('create-user-modal', '+ Create User')}
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Users
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(users)}</span>
+                            </h3>
+                            {create_btn('create-user-modal', '+ NEW')}
                         </div>
                         {render_users_table(users, authenticated)}
                     </div>
                 </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 text-center text-[#4a5568] text-xs">
+                <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
+                <div>OPENSTACK EMULATOR // DEVELOPMENT &amp; TESTING ENVIRONMENT</div>
+                <div class="text-[#1e3a5f] mt-1">Auto-refresh in 30 seconds</div>
             </div>
         </div>
 
@@ -2273,7 +2455,6 @@ async def api_login(request: LoginRequest) -> JSONResponse:
 
     # Find the project (optional)
     project = None
-    project_name = request.project_name or "admin"
     if request.project_name:
         project = db.get_project_by_name(request.project_name)
         if not project:
@@ -2512,6 +2693,9 @@ async def api_create_subnet(
         enable_dhcp=request.enable_dhcp,
     )
 
+    if not subnet:
+        raise HTTPException(status_code=500, detail="Failed to create subnet")
+
     return {"subnet": {"id": subnet.id, "name": subnet.name, "cidr": subnet.cidr}}
 
 
@@ -2576,7 +2760,9 @@ async def api_create_router(
         external_gateway_info=external_gateway_info,
     )
 
-    return {"router": {"id": router_obj.id, "name": router_obj.name, "status": router_obj.status.value}}
+    return {
+        "router": {"id": router_obj.id, "name": router_obj.name, "status": router_obj.status.value}
+    }
 
 
 @router.delete("/api/routers/{router_id}")
