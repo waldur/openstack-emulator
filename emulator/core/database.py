@@ -3690,10 +3690,64 @@ class Database:
             self._security_groups[sg.id] = sg
             return sg
 
-    def get_security_group(self, security_group_id: str) -> SecurityGroup | None:
-        """Get a security group by ID."""
+    def get_or_create_default_security_group(self, project_id: str) -> SecurityGroup:
+        """Get the default security group for a project, creating it if needed.
+
+        In OpenStack, each project has its own 'default' security group that is
+        created automatically when the project first accesses security groups.
+
+        Args:
+            project_id: The project ID to get/create the default security group for.
+
+        Returns:
+            The default security group for the project.
+        """
         with self._lock:
-            return self._security_groups.get(security_group_id)
+            # Look for existing default security group for this project
+            for sg in self._security_groups.values():
+                if sg.name == "default" and sg.project_id == project_id:
+                    return sg
+
+            # Create a new default security group for this project
+            sg = SecurityGroup(
+                id=str(uuid4()),
+                name="default",
+                description="Default security group",
+                project_id=project_id,
+            )
+            # Add default egress rules (allow all outbound traffic)
+            for ethertype in ["IPv4", "IPv6"]:
+                rule = SecurityGroupRule(
+                    id=str(uuid4()),
+                    security_group_id=sg.id,
+                    direction="egress",
+                    ethertype=ethertype,
+                    project_id=project_id,
+                )
+                sg.security_group_rules.append(rule)
+                self._security_group_rules[rule.id] = rule
+            self._security_groups[sg.id] = sg
+            return sg
+
+    def get_security_group(
+        self, security_group_id: str, project_id: str | None = None
+    ) -> SecurityGroup | None:
+        """Get a security group by ID.
+
+        Args:
+            security_group_id: The security group ID to look up.
+            project_id: If provided, verify the security group belongs to this project.
+
+        Returns:
+            The security group if found (and owned by project_id if specified), else None.
+        """
+        with self._lock:
+            sg = self._security_groups.get(security_group_id)
+            if sg is None:
+                return None
+            if project_id is not None and sg.project_id != project_id:
+                return None
+            return sg
 
     def list_security_groups(
         self,
@@ -3712,13 +3766,27 @@ class Database:
     def update_security_group(
         self,
         security_group_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
     ) -> SecurityGroup | None:
-        """Update a security group."""
+        """Update a security group.
+
+        Args:
+            security_group_id: The security group ID to update.
+            project_id: If provided, verify the security group belongs to this project.
+            name: New name for the security group.
+            description: New description for the security group.
+
+        Returns:
+            The updated security group if found (and owned by project_id if specified),
+            else None.
+        """
         with self._lock:
             sg = self._security_groups.get(security_group_id)
             if not sg:
+                return None
+            if project_id is not None and sg.project_id != project_id:
                 return None
             if name is not None:
                 sg.name = name
@@ -3727,11 +3795,21 @@ class Database:
             sg.updated_at = datetime.utcnow()
             return sg
 
-    def delete_security_group(self, security_group_id: str) -> bool:
-        """Delete a security group."""
+    def delete_security_group(self, security_group_id: str, project_id: str | None = None) -> bool:
+        """Delete a security group.
+
+        Args:
+            security_group_id: The security group ID to delete.
+            project_id: If provided, verify the security group belongs to this project.
+
+        Returns:
+            True if deleted, False if not found, not owned, or is the default group.
+        """
         with self._lock:
             sg = self._security_groups.get(security_group_id)
             if not sg:
+                return False
+            if project_id is not None and sg.project_id != project_id:
                 return False
             if sg.name == "default":
                 return False  # Cannot delete default security group
@@ -3756,10 +3834,30 @@ class Database:
         remote_group_id: str | None = None,
         description: str = "",
     ) -> SecurityGroupRule | None:
-        """Create a new security group rule."""
+        """Create a new security group rule.
+
+        Args:
+            security_group_id: The security group to add the rule to.
+            direction: 'ingress' or 'egress'.
+            project_id: The requesting project's ID (must own the security group).
+            ethertype: 'IPv4' or 'IPv6'.
+            protocol: Protocol (tcp, udp, icmp, etc.) or None for all.
+            port_range_min: Minimum port number.
+            port_range_max: Maximum port number.
+            remote_ip_prefix: CIDR for IP-based rules.
+            remote_group_id: Reference to another security group.
+            description: Rule description.
+
+        Returns:
+            The created rule if successful, None if security group not found
+            or not owned by the project.
+        """
         with self._lock:
             sg = self._security_groups.get(security_group_id)
             if not sg:
+                return None
+            # Verify the security group belongs to the requesting project
+            if sg.project_id != project_id:
                 return None
 
             rule = SecurityGroupRule(
@@ -3779,10 +3877,25 @@ class Database:
             self._security_group_rules[rule.id] = rule
             return rule
 
-    def get_security_group_rule(self, rule_id: str) -> SecurityGroupRule | None:
-        """Get a security group rule by ID."""
+    def get_security_group_rule(
+        self, rule_id: str, project_id: str | None = None
+    ) -> SecurityGroupRule | None:
+        """Get a security group rule by ID.
+
+        Args:
+            rule_id: The rule ID to look up.
+            project_id: If provided, verify the rule belongs to this project.
+
+        Returns:
+            The rule if found (and owned by project_id if specified), else None.
+        """
         with self._lock:
-            return self._security_group_rules.get(rule_id)
+            rule = self._security_group_rules.get(rule_id)
+            if rule is None:
+                return None
+            if project_id is not None and rule.project_id != project_id:
+                return None
+            return rule
 
     def list_security_group_rules(
         self,
@@ -3798,11 +3911,21 @@ class Database:
                 rules = [r for r in rules if r.security_group_id == security_group_id]
             return rules
 
-    def delete_security_group_rule(self, rule_id: str) -> bool:
-        """Delete a security group rule."""
+    def delete_security_group_rule(self, rule_id: str, project_id: str | None = None) -> bool:
+        """Delete a security group rule.
+
+        Args:
+            rule_id: The rule ID to delete.
+            project_id: If provided, verify the rule belongs to this project.
+
+        Returns:
+            True if deleted, False if not found or not owned by project.
+        """
         with self._lock:
             rule = self._security_group_rules.get(rule_id)
             if not rule:
+                return False
+            if project_id is not None and rule.project_id != project_id:
                 return False
             # Remove from parent security group
             sg = self._security_groups.get(rule.security_group_id)
