@@ -1,6 +1,6 @@
 # OpenStack Emulator
 
-A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute), Keystone (Identity), Cinder (Block Storage), and Glance (Image) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
+A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute), Keystone (Identity), Cinder (Block Storage), Glance (Image), and Neutron (Networking) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
 
 ## Features
 
@@ -47,6 +47,18 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - **Visibility**: Public, private, shared, and community images
   - **Schemas**: Image and member schemas
 
+- **Neutron Networking API (v2.0)**
+  - **Networks**: Full CRUD operations for virtual networks
+  - **Subnets**: Subnet management with CIDR, DHCP, and allocation pools
+  - **Ports**: Port management with fixed IPs and MAC addresses
+  - **Routers**: Router management with external gateways
+  - **Router Interfaces**: Add/remove router interfaces for subnet connectivity
+  - **Floating IPs**: Associate floating IPs with ports for external access
+  - **Security Groups**: Full CRUD for security groups
+  - **Security Group Rules**: Ingress/egress rules with protocol, port, and CIDR filtering
+  - **Extensions**: List supported Neutron API extensions
+  - **Default Resources**: Pre-configured external network, private network, and default security group
+
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
   - Reset endpoint for testing
@@ -82,6 +94,7 @@ The emulator runs services on their standard OpenStack ports:
 - **Nova (Compute)**: port 8774
 - **Cinder (Block Storage)**: port 8776
 - **Glance (Image)**: port 9292
+- **Neutron (Networking)**: port 9696
 
 ```bash
 # Run all services on standard ports
@@ -92,12 +105,14 @@ openstack-emulator --service=keystone   # Port 5000
 openstack-emulator --service=nova       # Port 8774
 openstack-emulator --service=cinder     # Port 8776
 openstack-emulator --service=glance     # Port 9292
+openstack-emulator --service=neutron    # Port 9696
 
 # Or using uvicorn directly for individual services
 uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
 uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
 uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
 uvicorn emulator.api.app_glance:app --host 0.0.0.0 --port 9292
+uvicorn emulator.api.app_neutron:app --host 0.0.0.0 --port 9696
 ```
 
 ### API Documentation
@@ -107,6 +122,7 @@ Once running, you can access Swagger UI for each service:
 - Nova: http://localhost:8774/docs
 - Cinder: http://localhost:8776/docs
 - Glance: http://localhost:9292/docs
+- Neutron: http://localhost:9696/docs
 
 ### Example Usage with OpenStack CLI
 
@@ -163,6 +179,33 @@ openstack volume type list
 
 # Delete volume
 openstack volume delete my-volume
+
+# List networks
+openstack network list
+
+# Create a network
+openstack network create my-network
+
+# Create a subnet
+openstack subnet create --network my-network --subnet-range 10.0.0.0/24 my-subnet
+
+# List routers
+openstack router list
+
+# Create a router with external gateway
+openstack router create --external-gateway external my-router
+
+# Add subnet to router
+openstack router add subnet my-router my-subnet
+
+# Create a floating IP
+openstack floating ip create external
+
+# List security groups
+openstack security group list
+
+# Create a security group rule
+openstack security group rule create --protocol tcp --dst-port 22 default
 ```
 
 ### Example Usage with Python SDK
@@ -451,6 +494,126 @@ curl -s -X DELETE "http://localhost:9292/v2/images/<image-id>" \
   -H "X-Auth-Token: $TOKEN"
 ```
 
+### Neutron API Examples
+
+```bash
+# List networks (Neutron on port 9696)
+curl -s "http://localhost:9696/v2.0/networks" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a network
+curl -s -X POST "http://localhost:9696/v2.0/networks" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"network": {"name": "my-network", "admin_state_up": true}}' | jq
+
+# Get network details
+curl -s "http://localhost:9696/v2.0/networks/<network-id>" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# List subnets
+curl -s "http://localhost:9696/v2.0/subnets" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a subnet
+curl -s -X POST "http://localhost:9696/v2.0/subnets" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subnet": {"name": "my-subnet", "network_id": "<network-id>", "ip_version": 4, "cidr": "10.0.0.0/24"}}' | jq
+
+# List ports
+curl -s "http://localhost:9696/v2.0/ports" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a port
+curl -s -X POST "http://localhost:9696/v2.0/ports" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"port": {"name": "my-port", "network_id": "<network-id>"}}' | jq
+
+# List routers
+curl -s "http://localhost:9696/v2.0/routers" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a router
+curl -s -X POST "http://localhost:9696/v2.0/routers" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"router": {"name": "my-router", "admin_state_up": true}}' | jq
+
+# Set external gateway on router
+curl -s -X PUT "http://localhost:9696/v2.0/routers/<router-id>" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"router": {"external_gateway_info": {"network_id": "<external-network-id>"}}}' | jq
+
+# Add router interface (connect subnet to router)
+curl -s -X PUT "http://localhost:9696/v2.0/routers/<router-id>/add_router_interface" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subnet_id": "<subnet-id>"}' | jq
+
+# Remove router interface
+curl -s -X PUT "http://localhost:9696/v2.0/routers/<router-id>/remove_router_interface" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subnet_id": "<subnet-id>"}' | jq
+
+# List floating IPs
+curl -s "http://localhost:9696/v2.0/floatingips" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a floating IP
+curl -s -X POST "http://localhost:9696/v2.0/floatingips" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"floatingip": {"floating_network_id": "<external-network-id>"}}' | jq
+
+# Associate floating IP with a port
+curl -s -X PUT "http://localhost:9696/v2.0/floatingips/<floatingip-id>" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"floatingip": {"port_id": "<port-id>"}}' | jq
+
+# List security groups
+curl -s "http://localhost:9696/v2.0/security-groups" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a security group
+curl -s -X POST "http://localhost:9696/v2.0/security-groups" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"security_group": {"name": "web-servers", "description": "Security group for web servers"}}' | jq
+
+# List security group rules
+curl -s "http://localhost:9696/v2.0/security-group-rules" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a security group rule (allow SSH)
+curl -s -X POST "http://localhost:9696/v2.0/security-group-rules" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"security_group_rule": {"security_group_id": "<security-group-id>", "direction": "ingress", "protocol": "tcp", "port_range_min": 22, "port_range_max": 22, "remote_ip_prefix": "0.0.0.0/0"}}' | jq
+
+# Create a security group rule (allow HTTP)
+curl -s -X POST "http://localhost:9696/v2.0/security-group-rules" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"security_group_rule": {"security_group_id": "<security-group-id>", "direction": "ingress", "protocol": "tcp", "port_range_min": 80, "port_range_max": 80, "remote_ip_prefix": "0.0.0.0/0"}}' | jq
+
+# Delete a security group rule
+curl -s -X DELETE "http://localhost:9696/v2.0/security-group-rules/<rule-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# Delete a security group
+curl -s -X DELETE "http://localhost:9696/v2.0/security-groups/<security-group-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# List Neutron extensions
+curl -s "http://localhost:9696/v2.0/extensions" \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
 ## Emulator-Specific Endpoints
 
 ### Health Check
@@ -460,6 +623,7 @@ GET http://localhost:5000/health   # Keystone
 GET http://localhost:8774/health   # Nova
 GET http://localhost:8776/health   # Cinder
 GET http://localhost:9292/health   # Glance
+GET http://localhost:9696/health   # Neutron
 ```
 Returns `{"status": "healthy", "service": "<service-name>"}`.
 
@@ -489,20 +653,23 @@ openstack-emulator/
 │   │   ├── app_nova.py      # Nova-only app (port 8774)
 │   │   ├── app_cinder.py    # Cinder-only app (port 8776)
 │   │   ├── app_glance.py    # Glance-only app (port 9292)
+│   │   ├── app_neutron.py   # Neutron-only app (port 9696)
 │   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── glance.py        # Glance Image API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
+│   │   ├── neutron.py       # Neutron Networking API endpoints
 │   │   └── nova.py          # Nova Compute API endpoints
 │   └── core/
 │       ├── __init__.py
 │       ├── database.py      # In-memory database
-│       └── models.py        # Data models (Server, Flavor, Image, Volume, etc.)
+│       └── models.py        # Data models (Server, Flavor, Image, Volume, Network, etc.)
 ├── tests/
 │   ├── __init__.py
 │   ├── test_cinder.py       # Cinder API tests
 │   ├── test_glance.py       # Glance API tests
-│   ├── test_nova.py         # Nova API tests
-│   └── test_keystone.py     # Keystone API tests
+│   ├── test_keystone.py     # Keystone API tests
+│   ├── test_neutron.py      # Neutron API tests
+│   └── test_nova.py         # Nova API tests
 ├── pyproject.toml           # Project configuration
 ├── CLAUDE.md                # Development guide
 └── README.md
@@ -516,7 +683,7 @@ This is an emulator for testing purposes. It has several limitations compared to
 - **Simplified authentication**: Accepts any credentials
 - **In-memory storage**: Data is lost when the emulator restarts
 - **Limited API coverage**: Only essential endpoints are implemented
-- **No networking**: Network operations are simulated
+- **Simulated networking**: Networks, ports, and routers are emulated but don't route traffic
 - **Simulated block storage**: Volumes are simulated, not actual block devices
 - **Single tenant**: Multi-tenancy is simplified
 

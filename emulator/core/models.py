@@ -963,3 +963,408 @@ class QosSpec:
             "consumer": self.consumer,
             "specs": self.specs,
         }
+
+
+# Neutron Networking Models
+
+
+class NetworkStatus(str, Enum):
+    """Network status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    DOWN = "DOWN"
+    BUILD = "BUILD"
+    ERROR = "ERROR"
+
+
+class PortStatus(str, Enum):
+    """Port status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    DOWN = "DOWN"
+    BUILD = "BUILD"
+    ERROR = "ERROR"
+
+
+class RouterStatus(str, Enum):
+    """Router status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    ALLOCATING = "ALLOCATING"
+    ERROR = "ERROR"
+
+
+class FloatingIPStatus(str, Enum):
+    """Floating IP status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    DOWN = "DOWN"
+    ERROR = "ERROR"
+
+
+@dataclass
+class Network:
+    """Represents a Neutron network."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: NetworkStatus = NetworkStatus.ACTIVE
+    admin_state_up: bool = True
+    shared: bool = False
+    external: bool = False  # router:external
+    project_id: str = ""
+    mtu: int = 1500
+    port_security_enabled: bool = True
+    provider_network_type: str | None = None  # flat, vlan, vxlan, gre
+    provider_physical_network: str | None = None
+    provider_segmentation_id: int | None = None
+    availability_zone_hints: list[str] = field(default_factory=list)
+    availability_zones: list[str] = field(default_factory=lambda: ["nova"])
+    dns_domain: str = ""
+    subnets: list[str] = field(default_factory=list)  # subnet IDs
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value,
+            "admin_state_up": self.admin_state_up,
+            "shared": self.shared,
+            "router:external": self.external,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "mtu": self.mtu,
+            "port_security_enabled": self.port_security_enabled,
+            "provider:network_type": self.provider_network_type,
+            "provider:physical_network": self.provider_physical_network,
+            "provider:segmentation_id": self.provider_segmentation_id,
+            "availability_zone_hints": self.availability_zone_hints,
+            "availability_zones": self.availability_zones,
+            "dns_domain": self.dns_domain,
+            "subnets": self.subnets,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class AllocationPool:
+    """Represents an IP allocation pool for a subnet."""
+
+    start: str = ""
+    end: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to API response format."""
+        return {"start": self.start, "end": self.end}
+
+
+@dataclass
+class Subnet:
+    """Represents a Neutron subnet."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    network_id: str = ""
+    ip_version: int = 4  # 4 or 6
+    cidr: str = ""
+    gateway_ip: str | None = None
+    allocation_pools: list[AllocationPool] = field(default_factory=list)
+    dns_nameservers: list[str] = field(default_factory=list)
+    host_routes: list[dict[str, str]] = field(default_factory=list)
+    enable_dhcp: bool = True
+    project_id: str = ""
+    ipv6_ra_mode: str | None = None  # slaac, dhcpv6-stateful, dhcpv6-stateless
+    ipv6_address_mode: str | None = None
+    subnetpool_id: str | None = None
+    service_types: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "network_id": self.network_id,
+            "ip_version": self.ip_version,
+            "cidr": self.cidr,
+            "gateway_ip": self.gateway_ip,
+            "allocation_pools": [p.to_dict() for p in self.allocation_pools],
+            "dns_nameservers": self.dns_nameservers,
+            "host_routes": self.host_routes,
+            "enable_dhcp": self.enable_dhcp,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "ipv6_ra_mode": self.ipv6_ra_mode,
+            "ipv6_address_mode": self.ipv6_address_mode,
+            "subnetpool_id": self.subnetpool_id,
+            "service_types": self.service_types,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class FixedIP:
+    """Represents a fixed IP address on a port."""
+
+    subnet_id: str = ""
+    ip_address: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to API response format."""
+        return {"subnet_id": self.subnet_id, "ip_address": self.ip_address}
+
+
+@dataclass
+class Port:
+    """Represents a Neutron port."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    network_id: str = ""
+    status: PortStatus = PortStatus.ACTIVE
+    admin_state_up: bool = True
+    mac_address: str = ""
+    fixed_ips: list[FixedIP] = field(default_factory=list)
+    device_id: str = ""  # server ID if attached
+    device_owner: str = ""  # compute:nova, network:router_interface, etc.
+    project_id: str = ""
+    security_groups: list[str] = field(default_factory=list)
+    port_security_enabled: bool = True
+    allowed_address_pairs: list[dict[str, str]] = field(default_factory=list)
+    extra_dhcp_opts: list[dict[str, str]] = field(default_factory=list)
+    binding_host_id: str = ""
+    binding_vnic_type: str = "normal"  # normal, direct, macvtap, etc.
+    binding_vif_type: str = ""
+    binding_profile: dict[str, Any] = field(default_factory=dict)
+    binding_vif_details: dict[str, Any] = field(default_factory=dict)
+    dns_name: str = ""
+    dns_assignment: list[dict[str, str]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "network_id": self.network_id,
+            "status": self.status.value,
+            "admin_state_up": self.admin_state_up,
+            "mac_address": self.mac_address,
+            "fixed_ips": [ip.to_dict() for ip in self.fixed_ips],
+            "device_id": self.device_id,
+            "device_owner": self.device_owner,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "security_groups": self.security_groups,
+            "port_security_enabled": self.port_security_enabled,
+            "allowed_address_pairs": self.allowed_address_pairs,
+            "extra_dhcp_opts": self.extra_dhcp_opts,
+            "binding:host_id": self.binding_host_id,
+            "binding:vnic_type": self.binding_vnic_type,
+            "binding:vif_type": self.binding_vif_type,
+            "binding:profile": self.binding_profile,
+            "binding:vif_details": self.binding_vif_details,
+            "dns_name": self.dns_name,
+            "dns_assignment": self.dns_assignment,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class ExternalGatewayInfo:
+    """Represents external gateway info for a router."""
+
+    network_id: str = ""
+    enable_snat: bool = True
+    external_fixed_ips: list[dict[str, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "network_id": self.network_id,
+            "enable_snat": self.enable_snat,
+            "external_fixed_ips": self.external_fixed_ips,
+        }
+
+
+@dataclass
+class Router:
+    """Represents a Neutron router."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: RouterStatus = RouterStatus.ACTIVE
+    admin_state_up: bool = True
+    project_id: str = ""
+    external_gateway_info: ExternalGatewayInfo | None = None
+    routes: list[dict[str, str]] = field(default_factory=list)  # static routes
+    availability_zone_hints: list[str] = field(default_factory=list)
+    availability_zones: list[str] = field(default_factory=list)
+    ha: bool = False
+    distributed: bool = False
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value,
+            "admin_state_up": self.admin_state_up,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "routes": self.routes,
+            "availability_zone_hints": self.availability_zone_hints,
+            "availability_zones": self.availability_zones,
+            "ha": self.ha,
+            "distributed": self.distributed,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+        if self.external_gateway_info:
+            result["external_gateway_info"] = self.external_gateway_info.to_dict()
+        else:
+            result["external_gateway_info"] = None
+        return result
+
+
+@dataclass
+class FloatingIP:
+    """Represents a Neutron floating IP."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    description: str = ""
+    status: FloatingIPStatus = FloatingIPStatus.DOWN
+    floating_network_id: str = ""
+    floating_ip_address: str = ""
+    fixed_ip_address: str | None = None
+    port_id: str | None = None
+    router_id: str | None = None
+    project_id: str = ""
+    dns_domain: str = ""
+    dns_name: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "status": self.status.value,
+            "floating_network_id": self.floating_network_id,
+            "floating_ip_address": self.floating_ip_address,
+            "fixed_ip_address": self.fixed_ip_address,
+            "port_id": self.port_id,
+            "router_id": self.router_id,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "dns_domain": self.dns_domain,
+            "dns_name": self.dns_name,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class SecurityGroupRule:
+    """Represents a Neutron security group rule."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    security_group_id: str = ""
+    direction: str = "ingress"  # ingress or egress
+    ethertype: str = "IPv4"  # IPv4 or IPv6
+    protocol: str | None = None  # tcp, udp, icmp, etc.
+    port_range_min: int | None = None
+    port_range_max: int | None = None
+    remote_ip_prefix: str | None = None
+    remote_group_id: str | None = None
+    remote_address_group_id: str | None = None
+    description: str = ""
+    project_id: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "security_group_id": self.security_group_id,
+            "direction": self.direction,
+            "ethertype": self.ethertype,
+            "protocol": self.protocol,
+            "port_range_min": self.port_range_min,
+            "port_range_max": self.port_range_max,
+            "remote_ip_prefix": self.remote_ip_prefix,
+            "remote_group_id": self.remote_group_id,
+            "remote_address_group_id": self.remote_address_group_id,
+            "description": self.description,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class SecurityGroup:
+    """Represents a Neutron security group."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    project_id: str = ""
+    security_group_rules: list[SecurityGroupRule] = field(default_factory=list)
+    stateful: bool = True
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "security_group_rules": [r.to_dict() for r in self.security_group_rules],
+            "stateful": self.stateful,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }

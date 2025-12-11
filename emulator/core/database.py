@@ -8,12 +8,17 @@ from typing import Any
 from uuid import uuid4
 
 from emulator.core.models import (
+    AllocationPool,
     ContainerFormat,
     Credential,
     DiskFormat,
     Domain,
     Endpoint,
+    ExternalGatewayInfo,
+    FixedIP,
     Flavor,
+    FloatingIP,
+    FloatingIPStatus,
     GlanceImage,
     Group,
     Image,
@@ -21,17 +26,26 @@ from emulator.core.models import (
     ImageStatus,
     ImageVisibility,
     Keypair,
+    Network,
+    NetworkStatus,
+    Port,
+    PortStatus,
     PowerState,
     Project,
     QosSpec,
     Region,
     Role,
     RoleAssignment,
+    Router,
+    RouterStatus,
+    SecurityGroup,
+    SecurityGroupRule,
     Server,
     ServerStatus,
     Service,
     Snapshot,
     SnapshotStatus,
+    Subnet,
     Token,
     User,
     Volume,
@@ -79,12 +93,23 @@ class Database:
         self._glance_images: dict[str, GlanceImage] = {}
         self._image_members: dict[str, list[ImageMember]] = {}  # image_id -> list of members
 
+        # Storage dictionaries - Neutron
+        self._networks: dict[str, Network] = {}
+        self._subnets: dict[str, Subnet] = {}
+        self._ports: dict[str, Port] = {}
+        self._routers: dict[str, Router] = {}
+        self._floating_ips: dict[str, FloatingIP] = {}
+        self._security_groups: dict[str, SecurityGroup] = {}
+        self._security_group_rules: dict[str, SecurityGroupRule] = {}
+        self._next_floating_ip: int = 1  # For generating sequential floating IPs
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
         self._init_default_glance_images()
         self._init_default_keystone_data()
         self._init_default_volume_types()
+        self._init_default_neutron_data()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -386,6 +411,7 @@ class Database:
         - Nova (Compute): 8774
         - Cinder (Block Storage): 8776
         - Glance (Image): 9292
+        - Neutron (Network): 9696
         """
         from urllib.parse import urlparse
 
@@ -399,6 +425,7 @@ class Database:
         nova_url = f"{scheme}://{host}:8774"
         cinder_url = f"{scheme}://{host}:8776"
         glance_url = f"{scheme}://{host}:9292"
+        neutron_url = f"{scheme}://{host}:9696"
 
         return [
             {
@@ -482,6 +509,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{cinder_url}/v3/%(project_id)s",
+                    },
+                ],
+            },
+            {
+                "type": "network",
+                "name": "neutron",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{neutron_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{neutron_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{neutron_url}",
                     },
                 ],
             },
@@ -2848,6 +2896,902 @@ class Database:
             self._image_members.clear()
             self._images.clear()
             self._init_default_glance_images()
+
+    # Neutron operations
+
+    def _init_default_neutron_data(self) -> None:
+        """Initialize default Neutron resources."""
+        import random
+
+        # Create default security group
+        default_sg = SecurityGroup(
+            id=str(uuid4()),
+            name="default",
+            description="Default security group",
+            project_id="admin",
+        )
+        # Add default egress rules
+        for ethertype in ["IPv4", "IPv6"]:
+            rule = SecurityGroupRule(
+                id=str(uuid4()),
+                security_group_id=default_sg.id,
+                direction="egress",
+                ethertype=ethertype,
+                project_id="admin",
+            )
+            default_sg.security_group_rules.append(rule)
+            self._security_group_rules[rule.id] = rule
+        self._security_groups[default_sg.id] = default_sg
+
+        # Create external network
+        ext_network = Network(
+            id=str(uuid4()),
+            name="external",
+            description="External network for floating IPs",
+            external=True,
+            shared=True,
+            project_id="admin",
+        )
+        self._networks[ext_network.id] = ext_network
+
+        # Create external subnet
+        ext_subnet = Subnet(
+            id=str(uuid4()),
+            name="external-subnet",
+            network_id=ext_network.id,
+            cidr="203.0.113.0/24",
+            gateway_ip="203.0.113.1",
+            allocation_pools=[AllocationPool(start="203.0.113.10", end="203.0.113.254")],
+            enable_dhcp=False,
+            project_id="admin",
+        )
+        self._subnets[ext_subnet.id] = ext_subnet
+        ext_network.subnets.append(ext_subnet.id)
+
+        # Create default private network
+        private_network = Network(
+            id=str(uuid4()),
+            name="private",
+            description="Default private network",
+            project_id="admin",
+        )
+        self._networks[private_network.id] = private_network
+
+        # Create private subnet
+        private_subnet = Subnet(
+            id=str(uuid4()),
+            name="private-subnet",
+            network_id=private_network.id,
+            cidr="192.168.1.0/24",
+            gateway_ip="192.168.1.1",
+            allocation_pools=[AllocationPool(start="192.168.1.10", end="192.168.1.254")],
+            dns_nameservers=["8.8.8.8", "8.8.4.4"],
+            project_id="admin",
+        )
+        self._subnets[private_subnet.id] = private_subnet
+        private_network.subnets.append(private_subnet.id)
+
+    def _generate_mac_address(self) -> str:
+        """Generate a random MAC address."""
+        import random
+        mac = [0xfa, 0x16, 0x3e,
+               random.randint(0x00, 0x7f),
+               random.randint(0x00, 0xff),
+               random.randint(0x00, 0xff)]
+        return ':'.join(f'{x:02x}' for x in mac)
+
+    def _allocate_ip_from_subnet(self, subnet: Subnet) -> str | None:
+        """Allocate an IP address from a subnet's allocation pool."""
+        if not subnet.allocation_pools:
+            return None
+
+        pool = subnet.allocation_pools[0]
+        # Simple IP allocation - just increment
+        start_parts = pool.start.split('.')
+        end_parts = pool.end.split('.')
+
+        # Get all used IPs in this subnet
+        used_ips = set()
+        for port in self._ports.values():
+            for fixed_ip in port.fixed_ips:
+                if fixed_ip.subnet_id == subnet.id:
+                    used_ips.add(fixed_ip.ip_address)
+
+        # Find first available IP
+        base = '.'.join(start_parts[:3])
+        start_host = int(start_parts[3])
+        end_host = int(end_parts[3])
+
+        for host in range(start_host, end_host + 1):
+            ip = f"{base}.{host}"
+            if ip not in used_ips:
+                return ip
+
+        return None
+
+    # Network operations
+    def create_network(
+        self,
+        name: str,
+        project_id: str,
+        description: str = "",
+        admin_state_up: bool = True,
+        shared: bool = False,
+        external: bool = False,
+        mtu: int = 1500,
+        port_security_enabled: bool = True,
+        provider_network_type: str | None = None,
+        provider_physical_network: str | None = None,
+        provider_segmentation_id: int | None = None,
+    ) -> Network:
+        """Create a new network."""
+        with self._lock:
+            network = Network(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                project_id=project_id,
+                admin_state_up=admin_state_up,
+                shared=shared,
+                external=external,
+                mtu=mtu,
+                port_security_enabled=port_security_enabled,
+                provider_network_type=provider_network_type,
+                provider_physical_network=provider_physical_network,
+                provider_segmentation_id=provider_segmentation_id,
+            )
+            self._networks[network.id] = network
+            return network
+
+    def get_network(self, network_id: str) -> Network | None:
+        """Get a network by ID."""
+        with self._lock:
+            return self._networks.get(network_id)
+
+    def list_networks(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+        shared: bool | None = None,
+        external: bool | None = None,
+        status: str | None = None,
+    ) -> list[Network]:
+        """List networks with optional filtering."""
+        with self._lock:
+            networks = list(self._networks.values())
+            if project_id:
+                networks = [n for n in networks if n.project_id == project_id or n.shared]
+            if name:
+                networks = [n for n in networks if n.name == name]
+            if shared is not None:
+                networks = [n for n in networks if n.shared == shared]
+            if external is not None:
+                networks = [n for n in networks if n.external == external]
+            if status:
+                networks = [n for n in networks if n.status.value == status]
+            return networks
+
+    def update_network(
+        self,
+        network_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        shared: bool | None = None,
+        port_security_enabled: bool | None = None,
+    ) -> Network | None:
+        """Update a network."""
+        with self._lock:
+            network = self._networks.get(network_id)
+            if not network:
+                return None
+            if name is not None:
+                network.name = name
+            if description is not None:
+                network.description = description
+            if admin_state_up is not None:
+                network.admin_state_up = admin_state_up
+            if shared is not None:
+                network.shared = shared
+            if port_security_enabled is not None:
+                network.port_security_enabled = port_security_enabled
+            network.updated_at = datetime.utcnow()
+            return network
+
+    def delete_network(self, network_id: str) -> bool:
+        """Delete a network."""
+        with self._lock:
+            if network_id not in self._networks:
+                return False
+            # Check for ports
+            for port in self._ports.values():
+                if port.network_id == network_id:
+                    return False  # Cannot delete network with ports
+            # Delete associated subnets
+            subnets_to_delete = [s.id for s in self._subnets.values() if s.network_id == network_id]
+            for subnet_id in subnets_to_delete:
+                del self._subnets[subnet_id]
+            del self._networks[network_id]
+            return True
+
+    # Subnet operations
+    def create_subnet(
+        self,
+        network_id: str,
+        cidr: str,
+        project_id: str,
+        name: str = "",
+        description: str = "",
+        ip_version: int = 4,
+        gateway_ip: str | None = None,
+        allocation_pools: list[dict[str, str]] | None = None,
+        dns_nameservers: list[str] | None = None,
+        host_routes: list[dict[str, str]] | None = None,
+        enable_dhcp: bool = True,
+    ) -> Subnet | None:
+        """Create a new subnet."""
+        with self._lock:
+            network = self._networks.get(network_id)
+            if not network:
+                return None
+
+            # Parse allocation pools
+            pools = []
+            if allocation_pools:
+                for pool in allocation_pools:
+                    pools.append(AllocationPool(start=pool["start"], end=pool["end"]))
+
+            # Auto-generate gateway if not provided
+            if gateway_ip is None:
+                parts = cidr.split('/')[0].split('.')
+                gateway_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.1"
+
+            subnet = Subnet(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                network_id=network_id,
+                ip_version=ip_version,
+                cidr=cidr,
+                gateway_ip=gateway_ip,
+                allocation_pools=pools,
+                dns_nameservers=dns_nameservers or [],
+                host_routes=host_routes or [],
+                enable_dhcp=enable_dhcp,
+                project_id=project_id,
+            )
+            self._subnets[subnet.id] = subnet
+            network.subnets.append(subnet.id)
+            return subnet
+
+    def get_subnet(self, subnet_id: str) -> Subnet | None:
+        """Get a subnet by ID."""
+        with self._lock:
+            return self._subnets.get(subnet_id)
+
+    def list_subnets(
+        self,
+        project_id: str | None = None,
+        network_id: str | None = None,
+        name: str | None = None,
+    ) -> list[Subnet]:
+        """List subnets with optional filtering."""
+        with self._lock:
+            subnets = list(self._subnets.values())
+            if project_id:
+                subnets = [s for s in subnets if s.project_id == project_id]
+            if network_id:
+                subnets = [s for s in subnets if s.network_id == network_id]
+            if name:
+                subnets = [s for s in subnets if s.name == name]
+            return subnets
+
+    def update_subnet(
+        self,
+        subnet_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        gateway_ip: str | None = None,
+        dns_nameservers: list[str] | None = None,
+        host_routes: list[dict[str, str]] | None = None,
+        enable_dhcp: bool | None = None,
+    ) -> Subnet | None:
+        """Update a subnet."""
+        with self._lock:
+            subnet = self._subnets.get(subnet_id)
+            if not subnet:
+                return None
+            if name is not None:
+                subnet.name = name
+            if description is not None:
+                subnet.description = description
+            if gateway_ip is not None:
+                subnet.gateway_ip = gateway_ip
+            if dns_nameservers is not None:
+                subnet.dns_nameservers = dns_nameservers
+            if host_routes is not None:
+                subnet.host_routes = host_routes
+            if enable_dhcp is not None:
+                subnet.enable_dhcp = enable_dhcp
+            subnet.updated_at = datetime.utcnow()
+            return subnet
+
+    def delete_subnet(self, subnet_id: str) -> bool:
+        """Delete a subnet."""
+        with self._lock:
+            subnet = self._subnets.get(subnet_id)
+            if not subnet:
+                return False
+            # Check for ports using this subnet
+            for port in self._ports.values():
+                for fixed_ip in port.fixed_ips:
+                    if fixed_ip.subnet_id == subnet_id:
+                        return False
+            # Remove from network
+            network = self._networks.get(subnet.network_id)
+            if network and subnet_id in network.subnets:
+                network.subnets.remove(subnet_id)
+            del self._subnets[subnet_id]
+            return True
+
+    # Port operations
+    def create_port(
+        self,
+        network_id: str,
+        project_id: str,
+        name: str = "",
+        description: str = "",
+        admin_state_up: bool = True,
+        mac_address: str | None = None,
+        fixed_ips: list[dict[str, str]] | None = None,
+        device_id: str = "",
+        device_owner: str = "",
+        security_groups: list[str] | None = None,
+        port_security_enabled: bool = True,
+    ) -> Port | None:
+        """Create a new port."""
+        with self._lock:
+            network = self._networks.get(network_id)
+            if not network:
+                return None
+
+            # Generate MAC address if not provided
+            if not mac_address:
+                mac_address = self._generate_mac_address()
+
+            # Allocate IPs if not provided
+            port_fixed_ips = []
+            if fixed_ips:
+                for fip in fixed_ips:
+                    port_fixed_ips.append(FixedIP(
+                        subnet_id=fip.get("subnet_id", ""),
+                        ip_address=fip.get("ip_address", ""),
+                    ))
+            else:
+                # Auto-allocate from first subnet
+                for subnet_id in network.subnets:
+                    subnet = self._subnets.get(subnet_id)
+                    if subnet:
+                        ip = self._allocate_ip_from_subnet(subnet)
+                        if ip:
+                            port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip))
+                            break
+
+            port = Port(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                network_id=network_id,
+                admin_state_up=admin_state_up,
+                mac_address=mac_address,
+                fixed_ips=port_fixed_ips,
+                device_id=device_id,
+                device_owner=device_owner,
+                project_id=project_id,
+                security_groups=security_groups or [],
+                port_security_enabled=port_security_enabled,
+            )
+            self._ports[port.id] = port
+            return port
+
+    def get_port(self, port_id: str) -> Port | None:
+        """Get a port by ID."""
+        with self._lock:
+            return self._ports.get(port_id)
+
+    def list_ports(
+        self,
+        project_id: str | None = None,
+        network_id: str | None = None,
+        device_id: str | None = None,
+        device_owner: str | None = None,
+        status: str | None = None,
+    ) -> list[Port]:
+        """List ports with optional filtering."""
+        with self._lock:
+            ports = list(self._ports.values())
+            if project_id:
+                ports = [p for p in ports if p.project_id == project_id]
+            if network_id:
+                ports = [p for p in ports if p.network_id == network_id]
+            if device_id:
+                ports = [p for p in ports if p.device_id == device_id]
+            if device_owner:
+                ports = [p for p in ports if p.device_owner == device_owner]
+            if status:
+                ports = [p for p in ports if p.status.value == status]
+            return ports
+
+    def update_port(
+        self,
+        port_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        device_id: str | None = None,
+        device_owner: str | None = None,
+        security_groups: list[str] | None = None,
+        port_security_enabled: bool | None = None,
+    ) -> Port | None:
+        """Update a port."""
+        with self._lock:
+            port = self._ports.get(port_id)
+            if not port:
+                return None
+            if name is not None:
+                port.name = name
+            if description is not None:
+                port.description = description
+            if admin_state_up is not None:
+                port.admin_state_up = admin_state_up
+            if device_id is not None:
+                port.device_id = device_id
+            if device_owner is not None:
+                port.device_owner = device_owner
+            if security_groups is not None:
+                port.security_groups = security_groups
+            if port_security_enabled is not None:
+                port.port_security_enabled = port_security_enabled
+            port.updated_at = datetime.utcnow()
+            return port
+
+    def delete_port(self, port_id: str) -> bool:
+        """Delete a port."""
+        with self._lock:
+            if port_id not in self._ports:
+                return False
+            del self._ports[port_id]
+            return True
+
+    # Router operations
+    def create_router(
+        self,
+        name: str,
+        project_id: str,
+        description: str = "",
+        admin_state_up: bool = True,
+        external_gateway_info: dict[str, Any] | None = None,
+    ) -> Router:
+        """Create a new router."""
+        with self._lock:
+            ext_gateway = None
+            if external_gateway_info:
+                ext_gateway = ExternalGatewayInfo(
+                    network_id=external_gateway_info.get("network_id", ""),
+                    enable_snat=external_gateway_info.get("enable_snat", True),
+                    external_fixed_ips=external_gateway_info.get("external_fixed_ips", []),
+                )
+
+            router = Router(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                project_id=project_id,
+                admin_state_up=admin_state_up,
+                external_gateway_info=ext_gateway,
+            )
+            self._routers[router.id] = router
+            return router
+
+    def get_router(self, router_id: str) -> Router | None:
+        """Get a router by ID."""
+        with self._lock:
+            return self._routers.get(router_id)
+
+    def list_routers(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+        status: str | None = None,
+    ) -> list[Router]:
+        """List routers with optional filtering."""
+        with self._lock:
+            routers = list(self._routers.values())
+            if project_id:
+                routers = [r for r in routers if r.project_id == project_id]
+            if name:
+                routers = [r for r in routers if r.name == name]
+            if status:
+                routers = [r for r in routers if r.status.value == status]
+            return routers
+
+    def update_router(
+        self,
+        router_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+        external_gateway_info: dict[str, Any] | None = None,
+        routes: list[dict[str, str]] | None = None,
+    ) -> Router | None:
+        """Update a router."""
+        with self._lock:
+            router = self._routers.get(router_id)
+            if not router:
+                return None
+            if name is not None:
+                router.name = name
+            if description is not None:
+                router.description = description
+            if admin_state_up is not None:
+                router.admin_state_up = admin_state_up
+            if external_gateway_info is not None:
+                if external_gateway_info:
+                    router.external_gateway_info = ExternalGatewayInfo(
+                        network_id=external_gateway_info.get("network_id", ""),
+                        enable_snat=external_gateway_info.get("enable_snat", True),
+                        external_fixed_ips=external_gateway_info.get("external_fixed_ips", []),
+                    )
+                else:
+                    router.external_gateway_info = None
+            if routes is not None:
+                router.routes = routes
+            router.updated_at = datetime.utcnow()
+            return router
+
+    def delete_router(self, router_id: str) -> bool:
+        """Delete a router."""
+        with self._lock:
+            if router_id not in self._routers:
+                return False
+            # Check for interfaces
+            for port in self._ports.values():
+                if port.device_id == router_id:
+                    return False
+            del self._routers[router_id]
+            return True
+
+    def add_router_interface(
+        self, router_id: str, subnet_id: str | None = None, port_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Add an interface to a router."""
+        with self._lock:
+            router = self._routers.get(router_id)
+            if not router:
+                return None
+
+            if port_id:
+                port = self._ports.get(port_id)
+                if not port:
+                    return None
+                port.device_id = router_id
+                port.device_owner = "network:router_interface"
+                subnet_id = port.fixed_ips[0].subnet_id if port.fixed_ips else ""
+            elif subnet_id:
+                subnet = self._subnets.get(subnet_id)
+                if not subnet:
+                    return None
+                # Create port for interface
+                port = self.create_port(
+                    network_id=subnet.network_id,
+                    project_id=router.project_id,
+                    device_id=router_id,
+                    device_owner="network:router_interface",
+                    fixed_ips=[{"subnet_id": subnet_id, "ip_address": subnet.gateway_ip or ""}],
+                )
+                if not port:
+                    return None
+                port_id = port.id
+
+            return {
+                "id": router_id,
+                "subnet_id": subnet_id,
+                "port_id": port_id,
+                "tenant_id": router.project_id,
+            }
+
+    def remove_router_interface(
+        self, router_id: str, subnet_id: str | None = None, port_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Remove an interface from a router."""
+        with self._lock:
+            router = self._routers.get(router_id)
+            if not router:
+                return None
+
+            if port_id:
+                port = self._ports.get(port_id)
+                if port and port.device_id == router_id:
+                    del self._ports[port_id]
+                    subnet_id = port.fixed_ips[0].subnet_id if port.fixed_ips else ""
+            elif subnet_id:
+                # Find and remove the port
+                for pid, port in list(self._ports.items()):
+                    if port.device_id == router_id:
+                        for fixed_ip in port.fixed_ips:
+                            if fixed_ip.subnet_id == subnet_id:
+                                port_id = pid
+                                del self._ports[pid]
+                                break
+
+            return {
+                "id": router_id,
+                "subnet_id": subnet_id,
+                "port_id": port_id,
+                "tenant_id": router.project_id,
+            }
+
+    # Floating IP operations
+    def create_floating_ip(
+        self,
+        floating_network_id: str,
+        project_id: str,
+        description: str = "",
+        port_id: str | None = None,
+        fixed_ip_address: str | None = None,
+        floating_ip_address: str | None = None,
+    ) -> FloatingIP | None:
+        """Create a new floating IP."""
+        with self._lock:
+            network = self._networks.get(floating_network_id)
+            if not network or not network.external:
+                return None
+
+            # Allocate floating IP address
+            if not floating_ip_address:
+                floating_ip_address = f"203.0.113.{self._next_floating_ip}"
+                self._next_floating_ip += 1
+
+            fip = FloatingIP(
+                id=str(uuid4()),
+                description=description,
+                floating_network_id=floating_network_id,
+                floating_ip_address=floating_ip_address,
+                port_id=port_id,
+                fixed_ip_address=fixed_ip_address,
+                project_id=project_id,
+            )
+
+            if port_id:
+                fip.status = FloatingIPStatus.ACTIVE
+                port = self._ports.get(port_id)
+                if port and port.fixed_ips:
+                    fip.fixed_ip_address = port.fixed_ips[0].ip_address
+
+            self._floating_ips[fip.id] = fip
+            return fip
+
+    def get_floating_ip(self, floatingip_id: str) -> FloatingIP | None:
+        """Get a floating IP by ID."""
+        with self._lock:
+            return self._floating_ips.get(floatingip_id)
+
+    def list_floating_ips(
+        self,
+        project_id: str | None = None,
+        floating_network_id: str | None = None,
+        port_id: str | None = None,
+        status: str | None = None,
+    ) -> list[FloatingIP]:
+        """List floating IPs with optional filtering."""
+        with self._lock:
+            fips = list(self._floating_ips.values())
+            if project_id:
+                fips = [f for f in fips if f.project_id == project_id]
+            if floating_network_id:
+                fips = [f for f in fips if f.floating_network_id == floating_network_id]
+            if port_id:
+                fips = [f for f in fips if f.port_id == port_id]
+            if status:
+                fips = [f for f in fips if f.status.value == status]
+            return fips
+
+    def update_floating_ip(
+        self,
+        floatingip_id: str,
+        description: str | None = None,
+        port_id: str | None = None,
+    ) -> FloatingIP | None:
+        """Update a floating IP (associate/disassociate)."""
+        with self._lock:
+            fip = self._floating_ips.get(floatingip_id)
+            if not fip:
+                return None
+            if description is not None:
+                fip.description = description
+            if port_id is not None:
+                fip.port_id = port_id if port_id else None
+                if port_id:
+                    port = self._ports.get(port_id)
+                    if port and port.fixed_ips:
+                        fip.fixed_ip_address = port.fixed_ips[0].ip_address
+                    fip.status = FloatingIPStatus.ACTIVE
+                else:
+                    fip.fixed_ip_address = None
+                    fip.status = FloatingIPStatus.DOWN
+            fip.updated_at = datetime.utcnow()
+            return fip
+
+    def delete_floating_ip(self, floatingip_id: str) -> bool:
+        """Delete a floating IP."""
+        with self._lock:
+            if floatingip_id not in self._floating_ips:
+                return False
+            del self._floating_ips[floatingip_id]
+            return True
+
+    # Security Group operations
+    def create_security_group(
+        self,
+        name: str,
+        project_id: str,
+        description: str = "",
+    ) -> SecurityGroup:
+        """Create a new security group."""
+        with self._lock:
+            sg = SecurityGroup(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                project_id=project_id,
+            )
+            # Add default egress rules
+            for ethertype in ["IPv4", "IPv6"]:
+                rule = SecurityGroupRule(
+                    id=str(uuid4()),
+                    security_group_id=sg.id,
+                    direction="egress",
+                    ethertype=ethertype,
+                    project_id=project_id,
+                )
+                sg.security_group_rules.append(rule)
+                self._security_group_rules[rule.id] = rule
+            self._security_groups[sg.id] = sg
+            return sg
+
+    def get_security_group(self, security_group_id: str) -> SecurityGroup | None:
+        """Get a security group by ID."""
+        with self._lock:
+            return self._security_groups.get(security_group_id)
+
+    def list_security_groups(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+    ) -> list[SecurityGroup]:
+        """List security groups with optional filtering."""
+        with self._lock:
+            sgs = list(self._security_groups.values())
+            if project_id:
+                sgs = [s for s in sgs if s.project_id == project_id]
+            if name:
+                sgs = [s for s in sgs if s.name == name]
+            return sgs
+
+    def update_security_group(
+        self,
+        security_group_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> SecurityGroup | None:
+        """Update a security group."""
+        with self._lock:
+            sg = self._security_groups.get(security_group_id)
+            if not sg:
+                return None
+            if name is not None:
+                sg.name = name
+            if description is not None:
+                sg.description = description
+            sg.updated_at = datetime.utcnow()
+            return sg
+
+    def delete_security_group(self, security_group_id: str) -> bool:
+        """Delete a security group."""
+        with self._lock:
+            sg = self._security_groups.get(security_group_id)
+            if not sg:
+                return False
+            if sg.name == "default":
+                return False  # Cannot delete default security group
+            # Delete associated rules
+            for rule in sg.security_group_rules:
+                if rule.id in self._security_group_rules:
+                    del self._security_group_rules[rule.id]
+            del self._security_groups[security_group_id]
+            return True
+
+    # Security Group Rule operations
+    def create_security_group_rule(
+        self,
+        security_group_id: str,
+        direction: str,
+        project_id: str,
+        ethertype: str = "IPv4",
+        protocol: str | None = None,
+        port_range_min: int | None = None,
+        port_range_max: int | None = None,
+        remote_ip_prefix: str | None = None,
+        remote_group_id: str | None = None,
+        description: str = "",
+    ) -> SecurityGroupRule | None:
+        """Create a new security group rule."""
+        with self._lock:
+            sg = self._security_groups.get(security_group_id)
+            if not sg:
+                return None
+
+            rule = SecurityGroupRule(
+                id=str(uuid4()),
+                security_group_id=security_group_id,
+                direction=direction,
+                ethertype=ethertype,
+                protocol=protocol,
+                port_range_min=port_range_min,
+                port_range_max=port_range_max,
+                remote_ip_prefix=remote_ip_prefix,
+                remote_group_id=remote_group_id,
+                description=description,
+                project_id=project_id,
+            )
+            sg.security_group_rules.append(rule)
+            self._security_group_rules[rule.id] = rule
+            return rule
+
+    def get_security_group_rule(self, rule_id: str) -> SecurityGroupRule | None:
+        """Get a security group rule by ID."""
+        with self._lock:
+            return self._security_group_rules.get(rule_id)
+
+    def list_security_group_rules(
+        self,
+        project_id: str | None = None,
+        security_group_id: str | None = None,
+    ) -> list[SecurityGroupRule]:
+        """List security group rules with optional filtering."""
+        with self._lock:
+            rules = list(self._security_group_rules.values())
+            if project_id:
+                rules = [r for r in rules if r.project_id == project_id]
+            if security_group_id:
+                rules = [r for r in rules if r.security_group_id == security_group_id]
+            return rules
+
+    def delete_security_group_rule(self, rule_id: str) -> bool:
+        """Delete a security group rule."""
+        with self._lock:
+            rule = self._security_group_rules.get(rule_id)
+            if not rule:
+                return False
+            # Remove from parent security group
+            sg = self._security_groups.get(rule.security_group_id)
+            if sg:
+                sg.security_group_rules = [r for r in sg.security_group_rules if r.id != rule_id]
+            del self._security_group_rules[rule_id]
+            return True
+
+    def reset_neutron(self) -> None:
+        """Reset all Neutron data to defaults."""
+        with self._lock:
+            self._networks.clear()
+            self._subnets.clear()
+            self._ports.clear()
+            self._routers.clear()
+            self._floating_ips.clear()
+            self._security_groups.clear()
+            self._security_group_rules.clear()
+            self._next_floating_ip = 1
+            self._init_default_neutron_data()
 
 
 # Global database instance
