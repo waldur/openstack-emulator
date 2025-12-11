@@ -47,9 +47,7 @@ class LoadProfileRequest(BaseModel):
     spike_probability: float = Field(default=0.0, alias="spikeProbability")
     spike_multiplier: float = Field(default=3.0, alias="spikeMultiplier")
     timeout_probability: float = Field(default=0.0, alias="timeoutProbability")
-    affected_operations: list[str] = Field(
-        default=["all"], alias="affectedOperations"
-    )
+    affected_operations: list[str] = Field(default=["all"], alias="affectedOperations")
     gradual_degradation: GradualDegradationRequest | None = Field(
         default=None, alias="gradualDegradation"
     )
@@ -63,12 +61,8 @@ class FailureConfigRequest(BaseModel):
     failure_probability: float = Field(default=1.0, alias="failureProbability")
     error_message: str = Field(default="", alias="errorMessage")
     error_code: int = Field(default=500, alias="errorCode")
-    affected_operations: list[str] = Field(
-        default=["all"], alias="affectedOperations"
-    )
-    affected_resources: list[str] = Field(
-        default=["all"], alias="affectedResources"
-    )
+    affected_operations: list[str] = Field(default=["all"], alias="affectedOperations")
+    affected_resources: list[str] = Field(default=["all"], alias="affectedResources")
 
 
 class ScenarioEnableRequest(BaseModel):
@@ -76,12 +70,8 @@ class ScenarioEnableRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    load_profile: LoadProfileRequest | None = Field(
-        default=None, alias="loadProfile"
-    )
-    failure_config: FailureConfigRequest | None = Field(
-        default=None, alias="failureConfig"
-    )
+    load_profile: LoadProfileRequest | None = Field(default=None, alias="loadProfile")
+    failure_config: FailureConfigRequest | None = Field(default=None, alias="failureConfig")
 
 
 class CustomScenarioRequest(BaseModel):
@@ -95,12 +85,8 @@ class CustomScenarioRequest(BaseModel):
     category: str
     failure_type: str = Field(alias="failureType")
     target_service: str | None = Field(default=None, alias="targetService")
-    load_profile: LoadProfileRequest | None = Field(
-        default=None, alias="loadProfile"
-    )
-    failure_config: FailureConfigRequest | None = Field(
-        default=None, alias="failureConfig"
-    )
+    load_profile: LoadProfileRequest | None = Field(default=None, alias="loadProfile")
+    failure_config: FailureConfigRequest | None = Field(default=None, alias="failureConfig")
 
 
 class LoadPresetRequest(BaseModel):
@@ -109,9 +95,7 @@ class LoadPresetRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     level: int = Field(ge=0, le=100, description="Load level 0-100%")
-    service: str | None = Field(
-        default=None, description="Target service (None for all)"
-    )
+    service: str | None = Field(default=None, description="Target service (None for all)")
 
 
 # =============================================================================
@@ -121,12 +105,8 @@ class LoadPresetRequest(BaseModel):
 
 @router.get("/scenarios")
 async def list_scenarios(
-    category: str | None = Query(
-        default=None, description="Filter by category"
-    ),
-    enabled: bool = Query(
-        default=False, description="Only show enabled scenarios"
-    ),
+    category: str | None = Query(default=None, description="Filter by category"),
+    enabled: bool = Query(default=False, description="Only show enabled scenarios"),
 ) -> dict[str, Any]:
     """List all available scenarios."""
     category_filter = None
@@ -139,9 +119,7 @@ async def list_scenarios(
                 detail=f"Invalid category: {category}. Valid values: {[c.value for c in ScenarioCategory]}",
             )
 
-    scenarios = scenario_manager.list_scenarios(
-        category=category_filter, enabled_only=enabled
-    )
+    scenarios = scenario_manager.list_scenarios(category=category_filter, enabled_only=enabled)
 
     return {
         "scenarios": [s.to_dict() for s in scenarios],
@@ -153,9 +131,7 @@ async def list_scenarios(
 
 @router.get("/scenarios/active")
 async def get_active_scenarios(
-    service: str | None = Query(
-        default=None, description="Filter by target service"
-    ),
+    service: str | None = Query(default=None, description="Filter by target service"),
 ) -> dict[str, Any]:
     """Get currently active scenarios."""
     active = scenario_manager.get_active_scenarios(service)
@@ -380,70 +356,75 @@ async def delete_custom_scenario(scenario_id: str) -> dict[str, Any]:
 @router.post("/scenarios/preset/{preset_name}")
 async def apply_preset(
     preset_name: str,
-    service: str | None = Query(
-        default=None, description="Target service (None for all)"
-    ),
 ) -> dict[str, Any]:
     """
-    Apply a load preset.
+    Apply a scenario preset (enables multiple related scenarios).
 
     Available presets:
-    - light: Light system load
-    - moderate: Moderate system load
-    - heavy: Heavy system load
-    - stressed: System under severe stress
-    - chaos: Chaotic conditions with random failures
+    - healthy: Reset all scenarios (clean state)
+    - degraded: Light performance issues + slow database
+    - storage_crisis: Storage backend issues + disk full errors
+    - network_trouble: Network partition + slow networking
+    - overloaded: Heavy load + message queue issues + slow database
+    - meltdown: Complete infrastructure failure (chaos mode)
     """
-    # First, disable any existing load-related scenarios
-    for scenario in scenario_manager.list_scenarios(enabled_only=True):
-        if scenario.category == ScenarioCategory.PERFORMANCE:
-            scenario_manager.disable_scenario(scenario.id)
-
-    preset_scenarios = {
-        "light": "light_load",
-        "moderate": "system_under_load",
-        "heavy": "heavy_load",
-        "stressed": "system_stressed",
-        "chaos": "cascading_failure",
+    # Define preset combinations
+    preset_configs: dict[str, dict[str, Any]] = {
+        "healthy": {
+            "description": "All systems nominal",
+            "scenarios": [],  # Empty list means reset all
+        },
+        "degraded": {
+            "description": "Degraded performance - slow responses",
+            "scenarios": ["light_load", "database_slow"],
+        },
+        "storage_crisis": {
+            "description": "Storage infrastructure problems",
+            "scenarios": ["slow_storage_backend", "cinder_disk_full", "cinder_slow"],
+        },
+        "network_trouble": {
+            "description": "Network infrastructure issues",
+            "scenarios": ["neutron_network_partition", "neutron_slow"],
+        },
+        "overloaded": {
+            "description": "System overload - multiple bottlenecks",
+            "scenarios": ["heavy_load", "rabbitmq_unstable", "database_slow"],
+        },
+        "meltdown": {
+            "description": "Complete infrastructure meltdown",
+            "scenarios": [
+                "cascading_failure",
+                "rabbitmq_down",
+                "quota_exceeded",
+                "keystone_overloaded",
+            ],
+        },
     }
 
-    if preset_name not in preset_scenarios:
+    if preset_name not in preset_configs:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown preset: {preset_name}. Available: {list(preset_scenarios.keys())}",
+            detail=f"Unknown preset: {preset_name}. Available: {list(preset_configs.keys())}",
         )
 
-    scenario_id = preset_scenarios[preset_name]
+    config = preset_configs[preset_name]
 
-    # For service-specific presets, we need to modify the target
-    if service:
-        # Create a temporary service-specific version
-        base_scenario = scenario_manager.get_scenario(scenario_id)
-        if base_scenario:
-            custom_id = f"{scenario_id}_{service}"
-            # Check if it already exists
-            existing = scenario_manager.get_scenario(custom_id)
-            if not existing:
-                custom_scenario = Scenario(
-                    id=custom_id,
-                    name=f"{base_scenario.name} ({service})",
-                    description=f"{base_scenario.description} - targeting {service} only",
-                    category=base_scenario.category,
-                    failure_type=base_scenario.failure_type,
-                    target_service=service,
-                    load_profile=base_scenario.load_profile,
-                    failure_config=base_scenario.failure_config,
-                    builtin=False,
-                )
-                scenario_manager.register_scenario(custom_scenario)
-            scenario_id = custom_id
+    # First, disable all currently active scenarios
+    scenario_manager.reset()
 
-    scenario = scenario_manager.enable_scenario(scenario_id)
+    # Enable the preset's scenarios
+    enabled_scenarios = []
+    for scenario_id in config["scenarios"]:
+        scenario = scenario_manager.enable_scenario(scenario_id)
+        if scenario:
+            enabled_scenarios.append(scenario.to_dict())
 
     return {
-        "message": f"Preset '{preset_name}' applied",
-        "scenario": scenario.to_dict() if scenario else None,
-        "target_service": service,
+        "message": f"Preset '{preset_name}' applied: {config['description']}",
+        "preset": preset_name,
+        "description": config["description"],
+        "enabled_scenarios": enabled_scenarios,
+        "count": len(enabled_scenarios),
     }
 
 

@@ -2068,15 +2068,30 @@ def build_scenarios_content(
 
     # Build preset buttons
     presets = """
-    <div style="margin-bottom: 20px;">
-        <h4 style="margin-bottom: 10px; color: #00d4ff;">Quick Presets</h4>
+    <div style="margin-bottom: 25px;">
+        <h4 style="margin-bottom: 12px; color: #00d4ff;">Environment Presets</h4>
+        <p style="font-size: 0.85rem; color: #6e7681; margin-bottom: 12px;">
+            Apply pre-configured scenario combinations to simulate real-world conditions
+        </p>
         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-            <button class="btn btn-sm" onclick="applyPreset('light')">Light Load</button>
-            <button class="btn btn-sm" onclick="applyPreset('moderate')">Moderate Load</button>
-            <button class="btn btn-sm" onclick="applyPreset('heavy')">Heavy Load</button>
-            <button class="btn btn-sm btn-danger" onclick="applyPreset('stressed')">Stressed</button>
-            <button class="btn btn-sm btn-danger" onclick="applyPreset('chaos')">Chaos Mode</button>
-            <button class="btn btn-sm btn-secondary" onclick="resetAllScenarios()">Reset All</button>
+            <button class="btn btn-sm btn-success" onclick="applyPreset('healthy')" title="Reset all scenarios">
+                Healthy
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('degraded')" title="Light load + slow database">
+                Degraded
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('storage_crisis')" title="Storage issues + disk full">
+                Storage Crisis
+            </button>
+            <button class="btn btn-sm" onclick="applyPreset('network_trouble')" title="Network partition + latency">
+                Network Trouble
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('overloaded')" title="Heavy load + MQ issues + slow DB">
+                Overloaded
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="applyPreset('meltdown')" title="Complete infrastructure failure">
+                Meltdown
+            </button>
         </div>
     </div>
     """

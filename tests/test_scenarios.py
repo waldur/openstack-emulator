@@ -149,9 +149,7 @@ class TestScenarioManager:
 
     def test_filter_scenarios_by_category(self):
         """Test filtering scenarios by category."""
-        performance = scenario_manager.list_scenarios(
-            category=ScenarioCategory.PERFORMANCE
-        )
+        performance = scenario_manager.list_scenarios(category=ScenarioCategory.PERFORMANCE)
         assert all(s.category == ScenarioCategory.PERFORMANCE for s in performance)
         assert len(performance) > 0
 
@@ -314,9 +312,7 @@ class TestScenarioAPI:
 
         # Verify it's disabled
         active = scenarios_client.get("/scenarios/active")
-        assert not any(
-            s["id"] == "light_load" for s in active.json()["active_scenarios"]
-        )
+        assert not any(s["id"] == "light_load" for s in active.json()["active_scenarios"])
 
     def test_reset_scenarios_api(self, scenarios_client):
         """Test resetting all scenarios via API."""
@@ -334,13 +330,15 @@ class TestScenarioAPI:
 
     def test_apply_preset(self, scenarios_client):
         """Test applying a preset."""
-        response = scenarios_client.post("/scenarios/preset/heavy")
+        response = scenarios_client.post("/scenarios/preset/overloaded")
         assert response.status_code == 200
 
-        # Verify preset is active
+        # Verify preset scenarios are active (overloaded enables multiple)
         active = scenarios_client.get("/scenarios/active")
         active_ids = [s["id"] for s in active.json()["active_scenarios"]]
         assert "heavy_load" in active_ids
+        assert "rabbitmq_unstable" in active_ids
+        assert "database_slow" in active_ids
 
     def test_set_load_level(self, scenarios_client):
         """Test setting load level."""
