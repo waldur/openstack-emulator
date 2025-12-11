@@ -1257,7 +1257,8 @@ class FloatingIP:
     floating_network_id: str = ""
     floating_ip_address: str = ""
     fixed_ip_address: str | None = None
-    port_id: str | None = None
+    port_id: str | None = None  # The internal port this FIP is associated with
+    floating_port_id: str | None = None  # The port on external network holding the FIP
     router_id: str | None = None
     project_id: str = ""
     dns_domain: str = ""
@@ -1276,6 +1277,7 @@ class FloatingIP:
             "floating_ip_address": self.floating_ip_address,
             "fixed_ip_address": self.fixed_ip_address,
             "port_id": self.port_id,
+            "floating_port_id": self.floating_port_id,
             "router_id": self.router_id,
             "tenant_id": self.project_id,
             "project_id": self.project_id,

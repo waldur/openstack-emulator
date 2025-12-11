@@ -72,6 +72,11 @@ from emulator.core.models import (
     VolumeType,
 )
 
+# Neutron device owner constants
+DEVICE_OWNER_FLOATINGIP = "network:floatingip"
+DEVICE_OWNER_ROUTER_INTERFACE = "network:router_interface"
+DEVICE_OWNER_ROUTER_GATEWAY = "network:router_gateway"
+
 
 class Database:
     """In-memory database for storing OpenStack resources."""
@@ -3892,32 +3897,72 @@ class Database:
         fixed_ip_address: str | None = None,
         floating_ip_address: str | None = None,
     ) -> FloatingIP | None:
-        """Create a new floating IP."""
+        """Create a new floating IP.
+
+        In real OpenStack Neutron, creating a floating IP also creates a port
+        on the external network with device_owner='network:floatingip'. This
+        port holds the floating IP address and is referenced via floating_port_id.
+        """
         with self._lock:
             network = self._networks.get(floating_network_id)
             if not network or not network.external:
                 return None
 
-            # Allocate floating IP address
+            # Allocate floating IP address from external network
             if not floating_ip_address:
                 floating_ip_address = f"203.0.113.{self._next_floating_ip}"
                 self._next_floating_ip += 1
 
-            fip = FloatingIP(
+            # Create floating IP ID first (needed for port device_id)
+            fip_id = str(uuid4())
+
+            # Find a subnet on the external network for the floating port
+            subnet_id = None
+            for sid in network.subnets:
+                subnet = self._subnets.get(sid)
+                if subnet:
+                    subnet_id = sid
+                    break
+
+            # Create a port on the external network to hold the floating IP
+            # This mimics real Neutron behavior where a port with
+            # device_owner='network:floatingip' is created
+            floating_port = Port(
                 id=str(uuid4()),
+                name="",
+                description="",
+                network_id=floating_network_id,
+                admin_state_up=True,
+                mac_address=self._generate_mac_address(),
+                fixed_ips=(
+                    [FixedIP(subnet_id=subnet_id or "", ip_address=floating_ip_address)]
+                    if subnet_id
+                    else []
+                ),
+                device_id=fip_id,  # Link back to the floating IP
+                device_owner=DEVICE_OWNER_FLOATINGIP,
+                project_id=project_id,
+                security_groups=[],
+                port_security_enabled=False,  # Floating IP ports don't have port security
+            )
+            self._ports[floating_port.id] = floating_port
+
+            fip = FloatingIP(
+                id=fip_id,
                 description=description,
                 floating_network_id=floating_network_id,
                 floating_ip_address=floating_ip_address,
                 port_id=port_id,
+                floating_port_id=floating_port.id,  # Reference to external network port
                 fixed_ip_address=fixed_ip_address,
                 project_id=project_id,
             )
 
             if port_id:
                 fip.status = FloatingIPStatus.ACTIVE
-                port = self._ports.get(port_id)
-                if port and port.fixed_ips:
-                    fip.fixed_ip_address = port.fixed_ips[0].ip_address
+                internal_port = self._ports.get(port_id)
+                if internal_port and internal_port.fixed_ips:
+                    fip.fixed_ip_address = internal_port.fixed_ips[0].ip_address
 
             self._floating_ips[fip.id] = fip
             return fip
@@ -4002,7 +4047,7 @@ class Database:
             return fip
 
     def delete_floating_ip(self, floatingip_id: str, project_id: str | None = None) -> bool:
-        """Delete a floating IP.
+        """Delete a floating IP and its associated external network port.
 
         Args:
             floatingip_id: The floating IP ID to delete.
@@ -4017,6 +4062,11 @@ class Database:
                 return False
             if project_id is not None and fip.project_id != project_id:
                 return False
+
+            # Delete the associated port on the external network
+            if fip.floating_port_id and fip.floating_port_id in self._ports:
+                del self._ports[fip.floating_port_id]
+
             del self._floating_ips[floatingip_id]
             return True
 
