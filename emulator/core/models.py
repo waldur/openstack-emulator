@@ -7,6 +7,40 @@ from typing import Any
 from uuid import uuid4
 
 
+class VolumeStatus(str, Enum):
+    """Volume status enumeration matching OpenStack Cinder states."""
+
+    CREATING = "creating"
+    AVAILABLE = "available"
+    ATTACHING = "attaching"
+    DETACHING = "detaching"
+    IN_USE = "in-use"
+    MAINTENANCE = "maintenance"
+    DELETING = "deleting"
+    AWAITING_TRANSFER = "awaiting-transfer"
+    ERROR = "error"
+    ERROR_DELETING = "error_deleting"
+    BACKING_UP = "backing-up"
+    RESTORING_BACKUP = "restoring-backup"
+    ERROR_BACKING_UP = "error_backing-up"
+    ERROR_RESTORING = "error_restoring"
+    ERROR_EXTENDING = "error_extending"
+    DOWNLOADING = "downloading"
+    UPLOADING = "uploading"
+    RETYPING = "retyping"
+    EXTENDING = "extending"
+
+
+class SnapshotStatus(str, Enum):
+    """Snapshot status enumeration matching OpenStack Cinder states."""
+
+    CREATING = "creating"
+    AVAILABLE = "available"
+    DELETING = "deleting"
+    ERROR = "error"
+    ERROR_DELETING = "error_deleting"
+
+
 class ServerStatus(str, Enum):
     """Server status enumeration matching OpenStack Nova states."""
 
@@ -567,3 +601,187 @@ class Credential:
         if self.project_id:
             result["project_id"] = self.project_id
         return result
+
+
+# Cinder Block Storage Models
+
+
+@dataclass
+class VolumeType:
+    """Represents a Cinder volume type."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    is_public: bool = True
+    extra_specs: dict[str, str] = field(default_factory=dict)
+    qos_specs_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "is_public": self.is_public,
+            "extra_specs": self.extra_specs,
+            "qos_specs_id": self.qos_specs_id,
+        }
+
+
+@dataclass
+class VolumeAttachment:
+    """Represents a volume attachment to a server."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    volume_id: str = ""
+    server_id: str = ""
+    device: str = ""  # e.g., /dev/vdb
+    attached_at: datetime = field(default_factory=datetime.utcnow)
+    host_name: str = ""
+    attachment_id: str = field(default_factory=lambda: str(uuid4()))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "volume_id": self.volume_id,
+            "server_id": self.server_id,
+            "device": self.device,
+            "attached_at": self.attached_at.isoformat() + "Z",
+            "host_name": self.host_name,
+            "attachment_id": self.attachment_id,
+        }
+
+
+@dataclass
+class Volume:
+    """Represents a Cinder volume."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: VolumeStatus = VolumeStatus.CREATING
+    size: int = 1  # GB
+    volume_type: str = "lvmdriver-1"
+    availability_zone: str = "nova"
+    bootable: bool = False
+    encrypted: bool = False
+    multiattach: bool = False
+    source_volid: str | None = None
+    snapshot_id: str | None = None
+    image_id: str | None = None
+    project_id: str = ""
+    user_id: str = ""
+    host: str | None = None
+    attachments: list[VolumeAttachment] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    migration_status: str | None = None
+    replication_status: str | None = None
+    consistencygroup_id: str | None = None
+    group_id: str | None = None
+
+    def to_dict(self, detailed: bool = True) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "links": [
+                {"rel": "self", "href": f"/v3/volumes/{self.id}"},
+                {"rel": "bookmark", "href": f"/volumes/{self.id}"},
+            ],
+        }
+        if detailed:
+            result.update(
+                {
+                    "description": self.description,
+                    "status": self.status.value,
+                    "size": self.size,
+                    "volume_type": self.volume_type,
+                    "availability_zone": self.availability_zone,
+                    "bootable": str(self.bootable).lower(),
+                    "encrypted": self.encrypted,
+                    "multiattach": self.multiattach,
+                    "source_volid": self.source_volid,
+                    "snapshot_id": self.snapshot_id,
+                    "image_id": self.image_id,
+                    "os-vol-tenant-attr:tenant_id": self.project_id,
+                    "user_id": self.user_id,
+                    "os-vol-host-attr:host": self.host,
+                    "attachments": [a.to_dict() for a in self.attachments],
+                    "metadata": self.metadata,
+                    "created_at": self.created_at.isoformat() + "Z",
+                    "updated_at": self.updated_at.isoformat() + "Z",
+                    "migration_status": self.migration_status,
+                    "replication_status": self.replication_status,
+                    "consistencygroup_id": self.consistencygroup_id,
+                    "group_id": self.group_id,
+                }
+            )
+        return result
+
+
+@dataclass
+class Snapshot:
+    """Represents a Cinder volume snapshot."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: SnapshotStatus = SnapshotStatus.CREATING
+    volume_id: str = ""
+    size: int = 0  # GB (inherited from volume)
+    project_id: str = ""
+    user_id: str = ""
+    metadata: dict[str, str] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    progress: str = "0%"
+
+    def to_dict(self, detailed: bool = True) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "links": [
+                {"rel": "self", "href": f"/v3/snapshots/{self.id}"},
+                {"rel": "bookmark", "href": f"/snapshots/{self.id}"},
+            ],
+        }
+        if detailed:
+            result.update(
+                {
+                    "description": self.description,
+                    "status": self.status.value,
+                    "volume_id": self.volume_id,
+                    "size": self.size,
+                    "os-extended-snapshot-attributes:project_id": self.project_id,
+                    "user_id": self.user_id,
+                    "metadata": self.metadata,
+                    "created_at": self.created_at.isoformat() + "Z",
+                    "updated_at": self.updated_at.isoformat() + "Z",
+                    "os-extended-snapshot-attributes:progress": self.progress,
+                }
+            )
+        return result
+
+
+@dataclass
+class QosSpec:
+    """Represents a Cinder QoS specification."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    consumer: str = "both"  # front-end, back-end, both
+    specs: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "consumer": self.consumer,
+            "specs": self.specs,
+        }

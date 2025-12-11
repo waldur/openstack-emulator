@@ -17,14 +17,21 @@ from emulator.core.models import (
     Keypair,
     PowerState,
     Project,
+    QosSpec,
     Region,
     Role,
     RoleAssignment,
     Server,
     ServerStatus,
     Service,
+    Snapshot,
+    SnapshotStatus,
     Token,
     User,
+    Volume,
+    VolumeAttachment,
+    VolumeStatus,
+    VolumeType,
 )
 
 
@@ -56,10 +63,17 @@ class Database:
         self._regions: dict[str, Region] = {}
         self._credentials: dict[str, Credential] = {}
 
+        # Storage dictionaries - Cinder
+        self._volumes: dict[str, Volume] = {}
+        self._snapshots: dict[str, Snapshot] = {}
+        self._volume_types: dict[str, VolumeType] = {}
+        self._qos_specs: dict[str, QosSpec] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
         self._init_default_keystone_data()
+        self._init_default_volume_types()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -212,12 +226,42 @@ class Database:
         )
         self._services[image_service.id] = image_service
 
+        # Block Storage service (Cinder)
+        volume_service = Service(
+            id=str(uuid4()),
+            name="cinder",
+            type="volumev3",
+            description="OpenStack Block Storage Service",
+            enabled=True,
+        )
+        self._services[volume_service.id] = volume_service
+
         # Store service IDs for catalog generation
         self._service_ids = {
             "identity": identity_service.id,
             "compute": compute_service.id,
             "image": image_service.id,
+            "volumev3": volume_service.id,
         }
+
+    def _init_default_volume_types(self) -> None:
+        """Create default volume types."""
+        default_types = [
+            VolumeType(
+                id=str(uuid4()),
+                name="lvmdriver-1",
+                description="Default LVM volume type",
+                is_public=True,
+            ),
+            VolumeType(
+                id=str(uuid4()),
+                name="__DEFAULT__",
+                description="Default volume type",
+                is_public=True,
+            ),
+        ]
+        for vtype in default_types:
+            self._volume_types[vtype.id] = vtype
 
     # Token operations
     def create_token(
@@ -332,6 +376,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{base_url}/v3",
+                    },
+                ],
+            },
+            {
+                "type": "volumev3",
+                "name": "cinderv3",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{base_url}/v3/%(project_id)s",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{base_url}/v3/%(project_id)s",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{base_url}/v3/%(project_id)s",
                     },
                 ],
             },
@@ -1819,6 +1884,536 @@ class Database:
             self._credentials.clear()
             self._tokens.clear()
             self._init_default_keystone_data()
+
+    def reset_cinder(self) -> None:
+        """Reset all Cinder data to defaults."""
+        with self._lock:
+            self._volumes.clear()
+            self._snapshots.clear()
+            self._volume_types.clear()
+            self._qos_specs.clear()
+            self._init_default_volume_types()
+
+    # Volume operations
+    def create_volume(
+        self,
+        name: str,
+        size: int,
+        project_id: str,
+        user_id: str,
+        description: str = "",
+        volume_type: str | None = None,
+        availability_zone: str = "nova",
+        metadata: dict[str, str] | None = None,
+        source_volid: str | None = None,
+        snapshot_id: str | None = None,
+        image_id: str | None = None,
+        multiattach: bool = False,
+    ) -> Volume:
+        """Create a new volume."""
+        with self._lock:
+            # Determine volume type
+            if not volume_type:
+                # Use default volume type
+                for vt in self._volume_types.values():
+                    if vt.name == "__DEFAULT__":
+                        volume_type = vt.name
+                        break
+                else:
+                    volume_type = "lvmdriver-1"
+
+            volume = Volume(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                status=VolumeStatus.CREATING,
+                size=size,
+                volume_type=volume_type,
+                availability_zone=availability_zone,
+                bootable=image_id is not None,
+                multiattach=multiattach,
+                source_volid=source_volid,
+                snapshot_id=snapshot_id,
+                image_id=image_id,
+                project_id=project_id,
+                user_id=user_id,
+                host="cinder-host@lvmdriver-1#lvmdriver-1",
+                metadata=metadata or {},
+            )
+
+            self._volumes[volume.id] = volume
+
+            # Simulate immediate availability for emulator
+            self._complete_volume_creation(volume.id)
+
+            return volume
+
+    def _complete_volume_creation(self, volume_id: str) -> None:
+        """Simulate volume creation completion."""
+        volume = self._volumes.get(volume_id)
+        if volume:
+            volume.status = VolumeStatus.AVAILABLE
+            volume.updated_at = datetime.utcnow()
+
+    def get_volume(self, volume_id: str) -> Volume | None:
+        """Get a volume by ID."""
+        with self._lock:
+            return self._volumes.get(volume_id)
+
+    def list_volumes(
+        self,
+        project_id: str | None = None,
+        status: str | None = None,
+        name: str | None = None,
+        limit: int | None = None,
+        marker: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[Volume]:
+        """List volumes with optional filtering."""
+        with self._lock:
+            volumes = list(self._volumes.values())
+
+            # Apply filters
+            if project_id and not all_tenants:
+                volumes = [v for v in volumes if v.project_id == project_id]
+            if status:
+                volumes = [v for v in volumes if v.status.value == status]
+            if name:
+                volumes = [v for v in volumes if name in v.name]
+
+            # Sort by created date
+            volumes.sort(key=lambda v: v.created_at)
+
+            # Apply pagination
+            if marker:
+                marker_found = False
+                filtered = []
+                for volume in volumes:
+                    if marker_found:
+                        filtered.append(volume)
+                    elif volume.id == marker:
+                        marker_found = True
+                volumes = filtered
+
+            if limit:
+                volumes = volumes[:limit]
+
+            return volumes
+
+    def update_volume(
+        self,
+        volume_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> Volume | None:
+        """Update a volume."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if volume:
+                if name is not None:
+                    volume.name = name
+                if description is not None:
+                    volume.description = description
+                if metadata is not None:
+                    volume.metadata = metadata
+                volume.updated_at = datetime.utcnow()
+            return volume
+
+    def delete_volume(self, volume_id: str) -> bool:
+        """Delete a volume."""
+        with self._lock:
+            if volume_id in self._volumes:
+                volume = self._volumes[volume_id]
+                # Check if volume can be deleted
+                if volume.status == VolumeStatus.IN_USE:
+                    return False
+                if volume.attachments:
+                    return False
+                del self._volumes[volume_id]
+                return True
+            return False
+
+    def extend_volume(self, volume_id: str, new_size: int) -> Volume | None:
+        """Extend a volume to a new size."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if volume and new_size > volume.size:
+                if volume.status == VolumeStatus.AVAILABLE:
+                    volume.size = new_size
+                    volume.updated_at = datetime.utcnow()
+                    return volume
+            return None
+
+    def attach_volume(
+        self,
+        volume_id: str,
+        server_id: str,
+        device: str = "/dev/vdb",
+        host_name: str = "compute-host-1",
+    ) -> VolumeAttachment | None:
+        """Attach a volume to a server."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if not volume:
+                return None
+
+            if volume.status != VolumeStatus.AVAILABLE and not volume.multiattach:
+                return None
+
+            attachment = VolumeAttachment(
+                id=str(uuid4()),
+                volume_id=volume_id,
+                server_id=server_id,
+                device=device,
+                host_name=host_name,
+            )
+
+            volume.attachments.append(attachment)
+            volume.status = VolumeStatus.IN_USE
+            volume.updated_at = datetime.utcnow()
+
+            return attachment
+
+    def detach_volume(self, volume_id: str, attachment_id: str) -> bool:
+        """Detach a volume from a server."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if not volume:
+                return False
+
+            for i, attachment in enumerate(volume.attachments):
+                if attachment.id == attachment_id or attachment.attachment_id == attachment_id:
+                    del volume.attachments[i]
+                    if not volume.attachments:
+                        volume.status = VolumeStatus.AVAILABLE
+                    volume.updated_at = datetime.utcnow()
+                    return True
+            return False
+
+    def set_volume_bootable(self, volume_id: str, bootable: bool) -> Volume | None:
+        """Set volume bootable flag."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if volume:
+                volume.bootable = bootable
+                volume.updated_at = datetime.utcnow()
+            return volume
+
+    # Snapshot operations
+    def create_snapshot(
+        self,
+        volume_id: str,
+        name: str,
+        project_id: str,
+        user_id: str,
+        description: str = "",
+        metadata: dict[str, str] | None = None,
+        force: bool = False,
+    ) -> Snapshot | None:
+        """Create a volume snapshot."""
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if not volume:
+                return None
+
+            # Check if volume can be snapshotted
+            if not force and volume.status not in [VolumeStatus.AVAILABLE, VolumeStatus.IN_USE]:
+                return None
+
+            snapshot = Snapshot(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                status=SnapshotStatus.CREATING,
+                volume_id=volume_id,
+                size=volume.size,
+                project_id=project_id,
+                user_id=user_id,
+                metadata=metadata or {},
+            )
+
+            self._snapshots[snapshot.id] = snapshot
+
+            # Simulate immediate availability
+            self._complete_snapshot_creation(snapshot.id)
+
+            return snapshot
+
+    def _complete_snapshot_creation(self, snapshot_id: str) -> None:
+        """Simulate snapshot creation completion."""
+        snapshot = self._snapshots.get(snapshot_id)
+        if snapshot:
+            snapshot.status = SnapshotStatus.AVAILABLE
+            snapshot.progress = "100%"
+            snapshot.updated_at = datetime.utcnow()
+
+    def get_snapshot(self, snapshot_id: str) -> Snapshot | None:
+        """Get a snapshot by ID."""
+        with self._lock:
+            return self._snapshots.get(snapshot_id)
+
+    def list_snapshots(
+        self,
+        project_id: str | None = None,
+        volume_id: str | None = None,
+        status: str | None = None,
+        name: str | None = None,
+        limit: int | None = None,
+        marker: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[Snapshot]:
+        """List snapshots with optional filtering."""
+        with self._lock:
+            snapshots = list(self._snapshots.values())
+
+            # Apply filters
+            if project_id and not all_tenants:
+                snapshots = [s for s in snapshots if s.project_id == project_id]
+            if volume_id:
+                snapshots = [s for s in snapshots if s.volume_id == volume_id]
+            if status:
+                snapshots = [s for s in snapshots if s.status.value == status]
+            if name:
+                snapshots = [s for s in snapshots if name in s.name]
+
+            # Sort by created date
+            snapshots.sort(key=lambda s: s.created_at)
+
+            # Apply pagination
+            if marker:
+                marker_found = False
+                filtered = []
+                for snapshot in snapshots:
+                    if marker_found:
+                        filtered.append(snapshot)
+                    elif snapshot.id == marker:
+                        marker_found = True
+                snapshots = filtered
+
+            if limit:
+                snapshots = snapshots[:limit]
+
+            return snapshots
+
+    def update_snapshot(
+        self,
+        snapshot_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> Snapshot | None:
+        """Update a snapshot."""
+        with self._lock:
+            snapshot = self._snapshots.get(snapshot_id)
+            if snapshot:
+                if name is not None:
+                    snapshot.name = name
+                if description is not None:
+                    snapshot.description = description
+                if metadata is not None:
+                    snapshot.metadata = metadata
+                snapshot.updated_at = datetime.utcnow()
+            return snapshot
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """Delete a snapshot."""
+        with self._lock:
+            if snapshot_id in self._snapshots:
+                del self._snapshots[snapshot_id]
+                return True
+            return False
+
+    # Volume type operations
+    def create_volume_type(
+        self,
+        name: str,
+        description: str = "",
+        is_public: bool = True,
+        extra_specs: dict[str, str] | None = None,
+    ) -> VolumeType:
+        """Create a new volume type."""
+        with self._lock:
+            vtype = VolumeType(
+                id=str(uuid4()),
+                name=name,
+                description=description,
+                is_public=is_public,
+                extra_specs=extra_specs or {},
+            )
+            self._volume_types[vtype.id] = vtype
+            return vtype
+
+    def get_volume_type(self, volume_type_id: str) -> VolumeType | None:
+        """Get a volume type by ID."""
+        with self._lock:
+            return self._volume_types.get(volume_type_id)
+
+    def get_volume_type_by_name(self, name: str) -> VolumeType | None:
+        """Get a volume type by name."""
+        with self._lock:
+            for vtype in self._volume_types.values():
+                if vtype.name == name:
+                    return vtype
+            return None
+
+    def list_volume_types(
+        self,
+        is_public: bool | None = None,
+    ) -> list[VolumeType]:
+        """List volume types with optional filtering."""
+        with self._lock:
+            volume_types = list(self._volume_types.values())
+            if is_public is not None:
+                volume_types = [vt for vt in volume_types if vt.is_public == is_public]
+            return volume_types
+
+    def update_volume_type(
+        self,
+        volume_type_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        is_public: bool | None = None,
+    ) -> VolumeType | None:
+        """Update a volume type."""
+        with self._lock:
+            vtype = self._volume_types.get(volume_type_id)
+            if vtype:
+                if name is not None:
+                    vtype.name = name
+                if description is not None:
+                    vtype.description = description
+                if is_public is not None:
+                    vtype.is_public = is_public
+            return vtype
+
+    def delete_volume_type(self, volume_type_id: str) -> bool:
+        """Delete a volume type."""
+        with self._lock:
+            if volume_type_id in self._volume_types:
+                del self._volume_types[volume_type_id]
+                return True
+            return False
+
+    def set_volume_type_extra_specs(
+        self, volume_type_id: str, extra_specs: dict[str, str]
+    ) -> VolumeType | None:
+        """Set extra specs for a volume type."""
+        with self._lock:
+            vtype = self._volume_types.get(volume_type_id)
+            if vtype:
+                vtype.extra_specs.update(extra_specs)
+            return vtype
+
+    def delete_volume_type_extra_spec(
+        self, volume_type_id: str, key: str
+    ) -> bool:
+        """Delete an extra spec from a volume type."""
+        with self._lock:
+            vtype = self._volume_types.get(volume_type_id)
+            if vtype and key in vtype.extra_specs:
+                del vtype.extra_specs[key]
+                return True
+            return False
+
+    # QoS specs operations
+    def create_qos_spec(
+        self,
+        name: str,
+        consumer: str = "both",
+        specs: dict[str, str] | None = None,
+    ) -> QosSpec:
+        """Create a new QoS spec."""
+        with self._lock:
+            qos = QosSpec(
+                id=str(uuid4()),
+                name=name,
+                consumer=consumer,
+                specs=specs or {},
+            )
+            self._qos_specs[qos.id] = qos
+            return qos
+
+    def get_qos_spec(self, qos_id: str) -> QosSpec | None:
+        """Get a QoS spec by ID."""
+        with self._lock:
+            return self._qos_specs.get(qos_id)
+
+    def list_qos_specs(self) -> list[QosSpec]:
+        """List all QoS specs."""
+        with self._lock:
+            return list(self._qos_specs.values())
+
+    def update_qos_spec(
+        self,
+        qos_id: str,
+        specs: dict[str, str] | None = None,
+    ) -> QosSpec | None:
+        """Update a QoS spec."""
+        with self._lock:
+            qos = self._qos_specs.get(qos_id)
+            if qos and specs:
+                qos.specs.update(specs)
+            return qos
+
+    def delete_qos_spec(self, qos_id: str) -> bool:
+        """Delete a QoS spec."""
+        with self._lock:
+            if qos_id in self._qos_specs:
+                del self._qos_specs[qos_id]
+                return True
+            return False
+
+    def associate_qos_spec_with_type(
+        self, qos_id: str, volume_type_id: str
+    ) -> bool:
+        """Associate a QoS spec with a volume type."""
+        with self._lock:
+            qos = self._qos_specs.get(qos_id)
+            vtype = self._volume_types.get(volume_type_id)
+            if qos and vtype:
+                vtype.qos_specs_id = qos_id
+                return True
+            return False
+
+    def disassociate_qos_spec_from_type(
+        self, qos_id: str, volume_type_id: str
+    ) -> bool:
+        """Disassociate a QoS spec from a volume type."""
+        with self._lock:
+            vtype = self._volume_types.get(volume_type_id)
+            if vtype and vtype.qos_specs_id == qos_id:
+                vtype.qos_specs_id = None
+                return True
+            return False
+
+    # Volume limits/quotas
+    def get_volume_limits(self, project_id: str) -> dict[str, Any]:
+        """Get volume limits/quotas for a project."""
+        with self._lock:
+            # Count current usage
+            volumes = [v for v in self._volumes.values() if v.project_id == project_id]
+            snapshots = [s for s in self._snapshots.values() if s.project_id == project_id]
+            total_gb = sum(v.size for v in volumes)
+            snapshot_gb = sum(s.size for s in snapshots)
+
+            return {
+                "limits": {
+                    "rate": [],
+                    "absolute": {
+                        "totalSnapshotsUsed": len(snapshots),
+                        "maxTotalBackups": 10,
+                        "maxTotalVolumeGigabytes": 1000,
+                        "maxTotalSnapshots": 10,
+                        "maxTotalBackupGigabytes": 1000,
+                        "totalBackupGigabytesUsed": 0,
+                        "maxTotalVolumes": 10,
+                        "totalVolumesUsed": len(volumes),
+                        "totalBackupsUsed": 0,
+                        "totalGigabytesUsed": total_gb + snapshot_gb,
+                    },
+                }
+            }
 
 
 # Global database instance

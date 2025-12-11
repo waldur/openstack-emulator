@@ -1,6 +1,6 @@
 # OpenStack Emulator
 
-A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute) and Keystone (Identity) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
+A lightweight OpenStack API emulator for testing purposes. This emulator provides a simplified implementation of OpenStack Nova (Compute), Keystone (Identity), and Cinder (Block Storage) APIs, allowing you to develop and test OpenStack clients without needing a full OpenStack deployment.
 
 ## Features
 
@@ -28,6 +28,15 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - **Endpoints**: Service endpoint management
   - **Regions**: Region hierarchy management
   - **Credentials**: EC2-style credential management
+
+- **Cinder Block Storage API (v3)**
+  - **Volumes**: Full CRUD operations for block storage volumes
+  - **Volume Actions**: Extend, attach, detach, set bootable flag
+  - **Snapshots**: Create, list, show, update, delete volume snapshots
+  - **Volume Types**: Manage volume types with extra specs
+  - **Volume Metadata**: Manage volume and snapshot metadata
+  - **Limits**: Get volume quotas and usage
+  - **Availability Zones**: List storage availability zones
 
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
@@ -90,6 +99,7 @@ export OS_USER_DOMAIN_NAME=Default
 export OS_PROJECT_DOMAIN_NAME=Default
 export OS_IDENTITY_API_VERSION=3
 export OS_COMPUTE_API_VERSION=2.1
+export OS_VOLUME_API_VERSION=3
 
 # List flavors
 openstack flavor list
@@ -114,6 +124,24 @@ openstack server start test-server
 
 # Delete server
 openstack server delete test-server
+
+# List volumes
+openstack volume list
+
+# Create a volume
+openstack volume create --size 10 my-volume
+
+# Show volume details
+openstack volume show my-volume
+
+# Create a snapshot
+openstack volume snapshot create --volume my-volume my-snapshot
+
+# List volume types
+openstack volume type list
+
+# Delete volume
+openstack volume delete my-volume
 ```
 
 ### Example Usage with Python SDK
@@ -269,6 +297,73 @@ curl -s http://localhost:8774/v3/regions \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
+### Cinder API Examples
+
+```bash
+# Get project ID from token (needed for Cinder API)
+PROJECT_ID=$(curl -s http://localhost:8774/v3/auth/tokens \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "X-Subject-Token: $TOKEN" | jq -r '.token.project.id')
+
+# List volumes
+curl -s "http://localhost:8774/v3/$PROJECT_ID/volumes/detail" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a volume
+curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/volumes" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"volume": {"name": "my-volume", "size": 10}}' | jq
+
+# Show volume details
+curl -s "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Update a volume
+curl -s -X PUT "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"volume": {"name": "renamed-volume", "description": "Updated description"}}' | jq
+
+# Extend a volume
+curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>/action" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"os-extend": {"new_size": 20}}'
+
+# Delete a volume
+curl -s -X DELETE "http://localhost:8774/v3/$PROJECT_ID/volumes/<volume-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# List snapshots
+curl -s "http://localhost:8774/v3/$PROJECT_ID/snapshots/detail" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a snapshot
+curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/snapshots" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"snapshot": {"name": "my-snapshot", "volume_id": "<volume-id>"}}' | jq
+
+# Delete a snapshot
+curl -s -X DELETE "http://localhost:8774/v3/$PROJECT_ID/snapshots/<snapshot-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# List volume types
+curl -s "http://localhost:8774/v3/$PROJECT_ID/types" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a volume type
+curl -s -X POST "http://localhost:8774/v3/$PROJECT_ID/types" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"volume_type": {"name": "ssd", "description": "SSD storage"}}' | jq
+
+# Get volume limits
+curl -s "http://localhost:8774/v3/$PROJECT_ID/limits" \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
 ## Emulator-Specific Endpoints
 
 ### Health Check
@@ -311,14 +406,16 @@ openstack-emulator/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── app.py           # Main FastAPI application
+│   │   ├── cinder.py        # Cinder Block Storage API endpoints
 │   │   ├── keystone.py      # Keystone Identity API endpoints
 │   │   └── nova.py          # Nova Compute API endpoints
 │   └── core/
 │       ├── __init__.py
 │       ├── database.py      # In-memory database
-│       └── models.py        # Data models (Server, Flavor, Image, etc.)
+│       └── models.py        # Data models (Server, Flavor, Image, Volume, etc.)
 ├── tests/
 │   ├── __init__.py
+│   ├── test_cinder.py       # Cinder API tests
 │   ├── test_nova.py         # Nova API tests
 │   └── test_keystone.py     # Keystone API tests
 ├── pyproject.toml           # Project configuration
@@ -334,7 +431,7 @@ This is an emulator for testing purposes. It has several limitations compared to
 - **In-memory storage**: Data is lost when the emulator restarts
 - **Limited API coverage**: Only essential endpoints are implemented
 - **No networking**: Network operations are simulated
-- **No storage**: Volume operations are not implemented
+- **Simulated block storage**: Volumes are simulated, not actual block devices
 - **Single tenant**: Multi-tenancy is simplified
 
 ## Contributing

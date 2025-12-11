@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from emulator.api.cinder import router as cinder_router
 from emulator.api.keystone import router as keystone_router
 from emulator.api.nova import router as nova_router
 
@@ -47,6 +48,9 @@ app.include_router(keystone_router)
 # Nova (Compute) API
 app.include_router(nova_router)
 
+# Cinder (Block Storage) API
+app.include_router(cinder_router)
+
 
 # Health check endpoint
 @app.get("/health")
@@ -70,6 +74,9 @@ async def emulator_status() -> dict[str, object]:
             "images": len(db._images),
             "tokens": len(db._tokens),
             "keypairs": len(db._keypairs),
+            "volumes": len(db._volumes),
+            "snapshots": len(db._snapshots),
+            "volume_types": len(db._volume_types),
         },
     }
 
@@ -88,5 +95,6 @@ async def reset_emulator() -> dict[str, str]:
     db._init_default_flavors()
     db._init_default_images()
     db.reset_keystone()
+    db.reset_cinder()
 
     return {"status": "reset complete"}
