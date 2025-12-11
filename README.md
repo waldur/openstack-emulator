@@ -18,7 +18,16 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
   - Token authentication (password method)
   - Token validation and revocation
   - Service catalog
-  - Projects and users (simplified)
+  - **Domains**: Full CRUD operations for identity domains
+  - **Projects**: Full CRUD operations for projects/tenants
+  - **Users**: Full CRUD operations including password management
+  - **Roles**: Full CRUD operations and role management
+  - **Role Assignments**: Grant/revoke roles to users/groups on projects/domains
+  - **Groups**: User group management with membership operations
+  - **Services**: Service registry management
+  - **Endpoints**: Service endpoint management
+  - **Regions**: Region hierarchy management
+  - **Credentials**: EC2-style credential management
 
 - **Emulator-specific features**
   - In-memory database (no external dependencies)
@@ -192,6 +201,74 @@ curl -s http://localhost:8774/v2.1/flavors/detail \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
+### Keystone API Examples
+
+```bash
+# List domains
+curl -s http://localhost:8774/v3/domains \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a new domain
+curl -s -X POST http://localhost:8774/v3/domains \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"domain": {"name": "my-domain", "description": "My Domain"}}' | jq
+
+# List projects
+curl -s http://localhost:8774/v3/projects \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a new project
+curl -s -X POST http://localhost:8774/v3/projects \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"project": {"name": "my-project", "description": "My Project"}}' | jq
+
+# List users
+curl -s http://localhost:8774/v3/users \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a new user
+curl -s -X POST http://localhost:8774/v3/users \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user": {"name": "newuser", "password": "secret123", "email": "user@example.com"}}' | jq
+
+# List roles
+curl -s http://localhost:8774/v3/roles \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Assign role to user on project
+curl -s -X PUT "http://localhost:8774/v3/projects/<project-id>/users/<user-id>/roles/<role-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# List groups
+curl -s http://localhost:8774/v3/groups \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Create a group and add user
+curl -s -X POST http://localhost:8774/v3/groups \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"group": {"name": "developers", "description": "Developer group"}}' | jq
+
+# Add user to group
+curl -s -X PUT "http://localhost:8774/v3/groups/<group-id>/users/<user-id>" \
+  -H "X-Auth-Token: $TOKEN"
+
+# List services
+curl -s http://localhost:8774/v3/services \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# List endpoints
+curl -s http://localhost:8774/v3/endpoints \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# List regions
+curl -s http://localhost:8774/v3/regions \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
 ## Emulator-Specific Endpoints
 
 ### Health Check
@@ -242,7 +319,8 @@ openstack-emulator/
 │       └── models.py        # Data models (Server, Flavor, Image, etc.)
 ├── tests/
 │   ├── __init__.py
-│   └── test_nova.py         # API tests
+│   ├── test_nova.py         # Nova API tests
+│   └── test_keystone.py     # Keystone API tests
 ├── pyproject.toml           # Project configuration
 └── README.md
 ```

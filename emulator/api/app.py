@@ -80,14 +80,13 @@ async def reset_emulator() -> dict[str, str]:
     """Reset the emulator to initial state."""
     from emulator.core.database import db
 
-    # Clear all data
+    # Clear Nova data
     db._servers.clear()
-    db._tokens.clear()
     db._keypairs.clear()
 
     # Reinitialize defaults
     db._init_default_flavors()
     db._init_default_images()
-    db._init_default_users()
+    db.reset_keystone()
 
     return {"status": "reset complete"}

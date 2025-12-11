@@ -318,3 +318,252 @@ class Token:
                 "catalog": self.catalog,
             }
         }
+
+
+# Keystone Identity Models
+
+
+@dataclass
+class Domain:
+    """Represents a Keystone domain."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    enabled: bool = True
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "enabled": self.enabled,
+            "tags": self.tags,
+            "links": {"self": f"/v3/domains/{self.id}"},
+        }
+
+
+@dataclass
+class Project:
+    """Represents a Keystone project."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    domain_id: str = "default"
+    parent_id: str | None = None
+    enabled: bool = True
+    is_domain: bool = False
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "domain_id": self.domain_id,
+            "enabled": self.enabled,
+            "is_domain": self.is_domain,
+            "tags": self.tags,
+            "links": {"self": f"/v3/projects/{self.id}"},
+        }
+        if self.parent_id:
+            result["parent_id"] = self.parent_id
+        return result
+
+
+@dataclass
+class User:
+    """Represents a Keystone user."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    domain_id: str = "default"
+    default_project_id: str | None = None
+    enabled: bool = True
+    password_hash: str = ""
+    email: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "domain_id": self.domain_id,
+            "enabled": self.enabled,
+            "email": self.email,
+            "links": {"self": f"/v3/users/{self.id}"},
+        }
+        if self.default_project_id:
+            result["default_project_id"] = self.default_project_id
+        return result
+
+
+@dataclass
+class Role:
+    """Represents a Keystone role."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    domain_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "links": {"self": f"/v3/roles/{self.id}"},
+        }
+        if self.domain_id:
+            result["domain_id"] = self.domain_id
+        return result
+
+
+@dataclass
+class RoleAssignment:
+    """Represents a role assignment to a user/group on a project/domain."""
+
+    role_id: str = ""
+    user_id: str | None = None
+    group_id: str | None = None
+    project_id: str | None = None
+    domain_id: str | None = None
+    inherited: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "role": {"id": self.role_id},
+            "links": {"assignment": "/v3/role_assignments"},
+        }
+        if self.user_id:
+            result["user"] = {"id": self.user_id}
+        if self.group_id:
+            result["group"] = {"id": self.group_id}
+        if self.project_id:
+            result["scope"] = {"project": {"id": self.project_id}}
+        elif self.domain_id:
+            result["scope"] = {"domain": {"id": self.domain_id}}
+        return result
+
+
+@dataclass
+class Group:
+    """Represents a Keystone group."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    domain_id: str = "default"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "domain_id": self.domain_id,
+            "links": {"self": f"/v3/groups/{self.id}"},
+        }
+
+
+@dataclass
+class Service:
+    """Represents a Keystone service."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    type: str = ""
+    description: str = ""
+    enabled: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+            "description": self.description,
+            "enabled": self.enabled,
+            "links": {"self": f"/v3/services/{self.id}"},
+        }
+
+
+@dataclass
+class Endpoint:
+    """Represents a Keystone endpoint."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    service_id: str = ""
+    interface: str = "public"  # public, internal, admin
+    url: str = ""
+    region_id: str | None = None
+    enabled: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "service_id": self.service_id,
+            "interface": self.interface,
+            "url": self.url,
+            "enabled": self.enabled,
+            "links": {"self": f"/v3/endpoints/{self.id}"},
+        }
+        if self.region_id:
+            result["region_id"] = self.region_id
+            result["region"] = self.region_id
+        return result
+
+
+@dataclass
+class Region:
+    """Represents a Keystone region."""
+
+    id: str = ""
+    description: str = ""
+    parent_region_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "description": self.description,
+            "links": {"self": f"/v3/regions/{self.id}"},
+        }
+        if self.parent_region_id:
+            result["parent_region_id"] = self.parent_region_id
+        return result
+
+
+@dataclass
+class Credential:
+    """Represents a Keystone credential (e.g., EC2-style)."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    user_id: str = ""
+    project_id: str | None = None
+    type: str = "ec2"  # ec2, cert, etc.
+    blob: str = ""  # JSON-encoded credential data
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "user_id": self.user_id,
+            "type": self.type,
+            "blob": self.blob,
+            "links": {"self": f"/v3/credentials/{self.id}"},
+        }
+        if self.project_id:
+            result["project_id"] = self.project_id
+        return result

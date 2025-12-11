@@ -1,8 +1,8 @@
-"""Keystone Identity API endpoints for OpenStack emulator."""
+"""Keystone Identity API v3 endpoints for OpenStack emulator."""
 
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from emulator.core.database import db
@@ -36,6 +36,170 @@ class AuthBody(BaseModel):
     """Wrapper for auth request."""
 
     auth: AuthRequest
+
+
+class DomainCreate(BaseModel):
+    """Domain creation request."""
+
+    name: str
+    description: str = ""
+    enabled: bool = True
+
+
+class DomainUpdate(BaseModel):
+    """Domain update request."""
+
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+
+
+class ProjectCreate(BaseModel):
+    """Project creation request."""
+
+    name: str
+    domain_id: str = "default"
+    description: str = ""
+    enabled: bool = True
+    parent_id: str | None = None
+    is_domain: bool = False
+
+
+class ProjectUpdate(BaseModel):
+    """Project update request."""
+
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    domain_id: str | None = None
+
+
+class UserCreate(BaseModel):
+    """User creation request."""
+
+    name: str
+    domain_id: str = "default"
+    password: str | None = None
+    email: str = ""
+    description: str = ""
+    enabled: bool = True
+    default_project_id: str | None = None
+
+
+class UserUpdate(BaseModel):
+    """User update request."""
+
+    name: str | None = None
+    password: str | None = None
+    email: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    default_project_id: str | None = None
+
+
+class RoleCreate(BaseModel):
+    """Role creation request."""
+
+    name: str
+    description: str = ""
+    domain_id: str | None = None
+
+
+class RoleUpdate(BaseModel):
+    """Role update request."""
+
+    name: str | None = None
+    description: str | None = None
+
+
+class GroupCreate(BaseModel):
+    """Group creation request."""
+
+    name: str
+    domain_id: str = "default"
+    description: str = ""
+
+
+class GroupUpdate(BaseModel):
+    """Group update request."""
+
+    name: str | None = None
+    description: str | None = None
+
+
+class ServiceCreate(BaseModel):
+    """Service creation request."""
+
+    name: str
+    type: str
+    description: str = ""
+    enabled: bool = True
+
+
+class ServiceUpdate(BaseModel):
+    """Service update request."""
+
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+
+
+class EndpointCreate(BaseModel):
+    """Endpoint creation request."""
+
+    service_id: str
+    interface: str
+    url: str
+    region_id: str | None = None
+    enabled: bool = True
+
+
+class EndpointUpdate(BaseModel):
+    """Endpoint update request."""
+
+    interface: str | None = None
+    url: str | None = None
+    region_id: str | None = None
+    enabled: bool | None = None
+
+
+class RegionCreate(BaseModel):
+    """Region creation request."""
+
+    id: str
+    description: str = ""
+    parent_region_id: str | None = None
+
+
+class RegionUpdate(BaseModel):
+    """Region update request."""
+
+    description: str | None = None
+    parent_region_id: str | None = None
+
+
+class CredentialCreate(BaseModel):
+    """Credential creation request."""
+
+    user_id: str
+    type: str
+    blob: str
+    project_id: str | None = None
+
+
+class CredentialUpdate(BaseModel):
+    """Credential update request."""
+
+    blob: str | None = None
+    project_id: str | None = None
+
+
+def validate_token_header(x_auth_token: str) -> Any:
+    """Validate auth token and return token object."""
+    token = db.validate_token(x_auth_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not found or expired")
+    return token
 
 
 # API Version endpoints
@@ -93,9 +257,15 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     """
     base_url = str(request.base_url).rstrip("/")
 
-    # Extract user info from request (simplified - accepts anything)
+    # Extract user info from request
     user_info = body.auth.identity.password.get("user", {})
     user_name = user_info.get("name", "admin")
+    user_domain = user_info.get("domain", {})
+    domain_id = user_domain.get("id", "default")
+    if not domain_id:
+        domain_name = user_domain.get("name", "Default")
+        domain = db.get_domain_by_name(domain_name)
+        domain_id = domain.id if domain else "default"
 
     project_name = "admin"
     if body.auth.scope and body.auth.scope.project:
@@ -106,6 +276,7 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         user_name=user_name,
         project_name=project_name,
         base_url=base_url,
+        domain_id=domain_id,
     )
 
     # Set token in header
@@ -158,37 +329,131 @@ async def get_catalog(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get the service catalog for the current token."""
-    token = db.validate_token(x_auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not found or expired")
-
+    token = validate_token_header(x_auth_token)
     return {"catalog": token.catalog}
 
 
-# Projects endpoint (simplified)
+# Domain endpoints
+@router.get("/v3/domains")
+async def list_domains(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    enabled: bool | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """List domains."""
+    validate_token_header(x_auth_token)
+    domains = db.list_domains(enabled=enabled, name=name)
+    return {
+        "domains": [d.to_dict() for d in domains],
+        "links": {"self": "/v3/domains", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/domains", status_code=201)
+async def create_domain(
+    body: dict[str, DomainCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a domain."""
+    validate_token_header(x_auth_token)
+    domain_data = body.get("domain")
+    if not domain_data:
+        raise HTTPException(status_code=400, detail="Missing domain in request body")
+
+    domain = db.create_domain(
+        name=domain_data.name,
+        description=domain_data.description,
+        enabled=domain_data.enabled,
+    )
+    return {"domain": domain.to_dict()}
+
+
+@router.get("/v3/domains/{domain_id}")
+async def get_domain(
+    domain_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a domain by ID."""
+    validate_token_header(x_auth_token)
+    domain = db.get_domain(domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    return {"domain": domain.to_dict()}
+
+
+@router.patch("/v3/domains/{domain_id}")
+async def update_domain(
+    domain_id: str,
+    body: dict[str, DomainUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a domain."""
+    validate_token_header(x_auth_token)
+    domain_data = body.get("domain")
+    if not domain_data:
+        raise HTTPException(status_code=400, detail="Missing domain in request body")
+
+    domain = db.update_domain(
+        domain_id,
+        name=domain_data.name,
+        description=domain_data.description,
+        enabled=domain_data.enabled,
+    )
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    return {"domain": domain.to_dict()}
+
+
+@router.delete("/v3/domains/{domain_id}")
+async def delete_domain(
+    domain_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a domain."""
+    validate_token_header(x_auth_token)
+    if not db.delete_domain(domain_id):
+        raise HTTPException(status_code=404, detail="Domain not found or cannot be deleted")
+    return Response(status_code=204)
+
+
+# Project endpoints
 @router.get("/v3/projects")
 async def list_projects(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    domain_id: str | None = None,
+    enabled: bool | None = None,
+    name: str | None = None,
+    parent_id: str | None = None,
 ) -> dict[str, Any]:
-    """List projects (simplified - returns default project)."""
-    token = db.validate_token(x_auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not found or expired")
-
+    """List projects."""
+    validate_token_header(x_auth_token)
+    projects = db.list_projects(domain_id=domain_id, enabled=enabled, name=name, parent_id=parent_id)
     return {
-        "projects": [
-            {
-                "id": token.project_id,
-                "name": token.project_name,
-                "domain_id": token.domain_id,
-                "description": "Default project",
-                "enabled": True,
-                "is_domain": False,
-                "links": {"self": f"/v3/projects/{token.project_id}"},
-            }
-        ],
+        "projects": [p.to_dict() for p in projects],
         "links": {"self": "/v3/projects", "previous": None, "next": None},
     }
+
+
+@router.post("/v3/projects", status_code=201)
+async def create_project(
+    body: dict[str, ProjectCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a project."""
+    validate_token_header(x_auth_token)
+    project_data = body.get("project")
+    if not project_data:
+        raise HTTPException(status_code=400, detail="Missing project in request body")
+
+    project = db.create_project(
+        name=project_data.name,
+        domain_id=project_data.domain_id,
+        description=project_data.description,
+        enabled=project_data.enabled,
+        parent_id=project_data.parent_id,
+        is_domain=project_data.is_domain,
+    )
+    return {"project": project.to_dict()}
 
 
 @router.get("/v3/projects/{project_id}")
@@ -197,48 +462,87 @@ async def get_project(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a project by ID."""
-    token = db.validate_token(x_auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not found or expired")
-
-    if project_id != token.project_id:
+    validate_token_header(x_auth_token)
+    project = db.get_project(project_id)
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    return {
-        "project": {
-            "id": token.project_id,
-            "name": token.project_name,
-            "domain_id": token.domain_id,
-            "description": "Default project",
-            "enabled": True,
-            "is_domain": False,
-            "links": {"self": f"/v3/projects/{token.project_id}"},
-        }
-    }
+    return {"project": project.to_dict()}
 
 
-# Users endpoint (simplified)
+@router.patch("/v3/projects/{project_id}")
+async def update_project(
+    project_id: str,
+    body: dict[str, ProjectUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a project."""
+    validate_token_header(x_auth_token)
+    project_data = body.get("project")
+    if not project_data:
+        raise HTTPException(status_code=400, detail="Missing project in request body")
+
+    project = db.update_project(
+        project_id,
+        name=project_data.name,
+        description=project_data.description,
+        enabled=project_data.enabled,
+        domain_id=project_data.domain_id,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"project": project.to_dict()}
+
+
+@router.delete("/v3/projects/{project_id}")
+async def delete_project(
+    project_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a project."""
+    validate_token_header(x_auth_token)
+    if not db.delete_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return Response(status_code=204)
+
+
+# User endpoints
 @router.get("/v3/users")
 async def list_users(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    domain_id: str | None = None,
+    enabled: bool | None = None,
+    name: str | None = None,
 ) -> dict[str, Any]:
-    """List users (simplified - returns current user)."""
-    token = db.validate_token(x_auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not found or expired")
-
+    """List users."""
+    validate_token_header(x_auth_token)
+    users = db.list_users(domain_id=domain_id, enabled=enabled, name=name)
     return {
-        "users": [
-            {
-                "id": token.user_id,
-                "name": token.user_name,
-                "domain_id": token.domain_id,
-                "enabled": True,
-                "links": {"self": f"/v3/users/{token.user_id}"},
-            }
-        ],
+        "users": [u.to_dict() for u in users],
         "links": {"self": "/v3/users", "previous": None, "next": None},
     }
+
+
+@router.post("/v3/users", status_code=201)
+async def create_user(
+    body: dict[str, UserCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a user."""
+    validate_token_header(x_auth_token)
+    user_data = body.get("user")
+    if not user_data:
+        raise HTTPException(status_code=400, detail="Missing user in request body")
+
+    user = db.create_user(
+        name=user_data.name,
+        domain_id=user_data.domain_id,
+        password=user_data.password or "",
+        email=user_data.email,
+        description=user_data.description,
+        enabled=user_data.enabled,
+        default_project_id=user_data.default_project_id,
+    )
+    return {"user": user.to_dict()}
 
 
 @router.get("/v3/users/{user_id}")
@@ -247,19 +551,887 @@ async def get_user(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a user by ID."""
-    token = db.validate_token(x_auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not found or expired")
+    validate_token_header(x_auth_token)
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user": user.to_dict()}
 
-    if user_id != token.user_id:
+
+@router.patch("/v3/users/{user_id}")
+async def update_user(
+    user_id: str,
+    body: dict[str, UserUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a user."""
+    validate_token_header(x_auth_token)
+    user_data = body.get("user")
+    if not user_data:
+        raise HTTPException(status_code=400, detail="Missing user in request body")
+
+    user = db.update_user(
+        user_id,
+        name=user_data.name,
+        description=user_data.description,
+        email=user_data.email,
+        enabled=user_data.enabled,
+        password=user_data.password,
+        default_project_id=user_data.default_project_id,
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user": user.to_dict()}
+
+
+@router.delete("/v3/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a user."""
+    validate_token_header(x_auth_token)
+    if not db.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return Response(status_code=204)
+
+
+@router.get("/v3/users/{user_id}/groups")
+async def list_user_groups(
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List groups a user belongs to."""
+    validate_token_header(x_auth_token)
+    if not db.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    groups = db.list_groups_for_user(user_id)
+    return {
+        "groups": [g.to_dict() for g in groups],
+        "links": {"self": f"/v3/users/{user_id}/groups", "previous": None, "next": None},
+    }
+
+
+@router.get("/v3/users/{user_id}/projects")
+async def list_user_projects(
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List projects a user has access to."""
+    validate_token_header(x_auth_token)
+    if not db.get_user(user_id):
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Get all role assignments for this user
+    assignments = db.list_role_assignments(user_id=user_id)
+    project_ids = {a.project_id for a in assignments if a.project_id}
+
+    projects = [db.get_project(pid) for pid in project_ids if db.get_project(pid)]
     return {
-        "user": {
-            "id": token.user_id,
-            "name": token.user_name,
-            "domain_id": token.domain_id,
-            "enabled": True,
-            "links": {"self": f"/v3/users/{token.user_id}"},
-        }
+        "projects": [p.to_dict() for p in projects if p],
+        "links": {"self": f"/v3/users/{user_id}/projects", "previous": None, "next": None},
     }
+
+
+# Role endpoints
+@router.get("/v3/roles")
+async def list_roles(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    domain_id: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """List roles."""
+    validate_token_header(x_auth_token)
+    roles = db.list_roles(domain_id=domain_id, name=name)
+    return {
+        "roles": [r.to_dict() for r in roles],
+        "links": {"self": "/v3/roles", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/roles", status_code=201)
+async def create_role(
+    body: dict[str, RoleCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a role."""
+    validate_token_header(x_auth_token)
+    role_data = body.get("role")
+    if not role_data:
+        raise HTTPException(status_code=400, detail="Missing role in request body")
+
+    role = db.create_role(
+        name=role_data.name,
+        description=role_data.description,
+        domain_id=role_data.domain_id,
+    )
+    return {"role": role.to_dict()}
+
+
+@router.get("/v3/roles/{role_id}")
+async def get_role(
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a role by ID."""
+    validate_token_header(x_auth_token)
+    role = db.get_role(role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    return {"role": role.to_dict()}
+
+
+@router.patch("/v3/roles/{role_id}")
+async def update_role(
+    role_id: str,
+    body: dict[str, RoleUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a role."""
+    validate_token_header(x_auth_token)
+    role_data = body.get("role")
+    if not role_data:
+        raise HTTPException(status_code=400, detail="Missing role in request body")
+
+    role = db.update_role(
+        role_id,
+        name=role_data.name,
+        description=role_data.description,
+    )
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    return {"role": role.to_dict()}
+
+
+@router.delete("/v3/roles/{role_id}")
+async def delete_role(
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a role."""
+    validate_token_header(x_auth_token)
+    if not db.delete_role(role_id):
+        raise HTTPException(status_code=404, detail="Role not found")
+    return Response(status_code=204)
+
+
+# Role assignment endpoints - Projects
+@router.put("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}")
+async def assign_role_to_user_on_project(
+    project_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Assign a role to a user on a project."""
+    validate_token_header(x_auth_token)
+
+    if not db.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not db.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db.get_role(role_id):
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    db.assign_role_to_user_on_project(role_id, user_id, project_id)
+    return Response(status_code=204)
+
+
+@router.head("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}")
+@router.get("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}")
+async def check_role_assignment_on_project(
+    project_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Check if a user has a role on a project."""
+    validate_token_header(x_auth_token)
+
+    if db.check_role_assignment(role_id, user_id=user_id, project_id=project_id):
+        return Response(status_code=204)
+    raise HTTPException(status_code=404, detail="Role assignment not found")
+
+
+@router.delete("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}")
+async def revoke_role_from_user_on_project(
+    project_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Revoke a role from a user on a project."""
+    validate_token_header(x_auth_token)
+
+    if not db.revoke_role_from_user_on_project(role_id, user_id, project_id):
+        raise HTTPException(status_code=404, detail="Role assignment not found")
+    return Response(status_code=204)
+
+
+@router.get("/v3/projects/{project_id}/users/{user_id}/roles")
+async def list_user_roles_on_project(
+    project_id: str,
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List roles for a user on a project."""
+    validate_token_header(x_auth_token)
+
+    roles = db.get_user_roles_on_project(user_id, project_id)
+    return {
+        "roles": [{"id": r["id"], "name": r["name"], "links": {"self": f"/v3/roles/{r['id']}"}} for r in roles],
+        "links": {"self": f"/v3/projects/{project_id}/users/{user_id}/roles", "previous": None, "next": None},
+    }
+
+
+# Role assignment endpoints - Domains
+@router.put("/v3/domains/{domain_id}/users/{user_id}/roles/{role_id}")
+async def assign_role_to_user_on_domain(
+    domain_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Assign a role to a user on a domain."""
+    validate_token_header(x_auth_token)
+
+    if not db.get_domain(domain_id):
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if not db.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db.get_role(role_id):
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    db.assign_role_to_user_on_domain(role_id, user_id, domain_id)
+    return Response(status_code=204)
+
+
+@router.head("/v3/domains/{domain_id}/users/{user_id}/roles/{role_id}")
+@router.get("/v3/domains/{domain_id}/users/{user_id}/roles/{role_id}")
+async def check_role_assignment_on_domain(
+    domain_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Check if a user has a role on a domain."""
+    validate_token_header(x_auth_token)
+
+    if db.check_role_assignment(role_id, user_id=user_id, domain_id=domain_id):
+        return Response(status_code=204)
+    raise HTTPException(status_code=404, detail="Role assignment not found")
+
+
+@router.delete("/v3/domains/{domain_id}/users/{user_id}/roles/{role_id}")
+async def revoke_role_from_user_on_domain(
+    domain_id: str,
+    user_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Revoke a role from a user on a domain."""
+    validate_token_header(x_auth_token)
+
+    if not db.revoke_role_from_user_on_domain(role_id, user_id, domain_id):
+        raise HTTPException(status_code=404, detail="Role assignment not found")
+    return Response(status_code=204)
+
+
+@router.get("/v3/domains/{domain_id}/users/{user_id}/roles")
+async def list_user_roles_on_domain(
+    domain_id: str,
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List roles for a user on a domain."""
+    validate_token_header(x_auth_token)
+
+    assignments = db.list_role_assignments(user_id=user_id, domain_id=domain_id)
+    roles = []
+    for a in assignments:
+        role = db.get_role(a.role_id)
+        if role:
+            roles.append(role.to_dict())
+    return {
+        "roles": roles,
+        "links": {"self": f"/v3/domains/{domain_id}/users/{user_id}/roles", "previous": None, "next": None},
+    }
+
+
+# Role assignment endpoints - Groups on Projects
+@router.put("/v3/projects/{project_id}/groups/{group_id}/roles/{role_id}")
+async def assign_role_to_group_on_project(
+    project_id: str,
+    group_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Assign a role to a group on a project."""
+    validate_token_header(x_auth_token)
+
+    if not db.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not db.get_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    if not db.get_role(role_id):
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    db.assign_role_to_group_on_project(role_id, group_id, project_id)
+    return Response(status_code=204)
+
+
+@router.delete("/v3/projects/{project_id}/groups/{group_id}/roles/{role_id}")
+async def revoke_role_from_group_on_project(
+    project_id: str,
+    group_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Revoke a role from a group on a project."""
+    validate_token_header(x_auth_token)
+
+    if not db.revoke_role_from_group_on_project(role_id, group_id, project_id):
+        raise HTTPException(status_code=404, detail="Role assignment not found")
+    return Response(status_code=204)
+
+
+# Role assignment endpoints - Groups on Domains
+@router.put("/v3/domains/{domain_id}/groups/{group_id}/roles/{role_id}")
+async def assign_role_to_group_on_domain(
+    domain_id: str,
+    group_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Assign a role to a group on a domain."""
+    validate_token_header(x_auth_token)
+
+    if not db.get_domain(domain_id):
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if not db.get_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    if not db.get_role(role_id):
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    db.assign_role_to_group_on_domain(role_id, group_id, domain_id)
+    return Response(status_code=204)
+
+
+@router.delete("/v3/domains/{domain_id}/groups/{group_id}/roles/{role_id}")
+async def revoke_role_from_group_on_domain(
+    domain_id: str,
+    group_id: str,
+    role_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Revoke a role from a group on a domain."""
+    validate_token_header(x_auth_token)
+
+    if not db.revoke_role_from_group_on_domain(role_id, group_id, domain_id):
+        raise HTTPException(status_code=404, detail="Role assignment not found")
+    return Response(status_code=204)
+
+
+# Role assignments listing
+@router.get("/v3/role_assignments")
+async def list_role_assignments(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    user_id: str | None = Query(None, alias="user.id"),
+    group_id: str | None = Query(None, alias="group.id"),
+    role_id: str | None = Query(None, alias="role.id"),
+    scope_project_id: str | None = Query(None, alias="scope.project.id"),
+    scope_domain_id: str | None = Query(None, alias="scope.domain.id"),
+) -> dict[str, Any]:
+    """List all role assignments."""
+    validate_token_header(x_auth_token)
+
+    assignments = db.list_role_assignments(
+        user_id=user_id,
+        group_id=group_id,
+        role_id=role_id,
+        project_id=scope_project_id,
+        domain_id=scope_domain_id,
+    )
+
+    return {
+        "role_assignments": [a.to_dict() for a in assignments],
+        "links": {"self": "/v3/role_assignments", "previous": None, "next": None},
+    }
+
+
+# Group endpoints
+@router.get("/v3/groups")
+async def list_groups(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    domain_id: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """List groups."""
+    validate_token_header(x_auth_token)
+    groups = db.list_groups(domain_id=domain_id, name=name)
+    return {
+        "groups": [g.to_dict() for g in groups],
+        "links": {"self": "/v3/groups", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/groups", status_code=201)
+async def create_group(
+    body: dict[str, GroupCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a group."""
+    validate_token_header(x_auth_token)
+    group_data = body.get("group")
+    if not group_data:
+        raise HTTPException(status_code=400, detail="Missing group in request body")
+
+    group = db.create_group(
+        name=group_data.name,
+        domain_id=group_data.domain_id,
+        description=group_data.description,
+    )
+    return {"group": group.to_dict()}
+
+
+@router.get("/v3/groups/{group_id}")
+async def get_group(
+    group_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a group by ID."""
+    validate_token_header(x_auth_token)
+    group = db.get_group(group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"group": group.to_dict()}
+
+
+@router.patch("/v3/groups/{group_id}")
+async def update_group(
+    group_id: str,
+    body: dict[str, GroupUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a group."""
+    validate_token_header(x_auth_token)
+    group_data = body.get("group")
+    if not group_data:
+        raise HTTPException(status_code=400, detail="Missing group in request body")
+
+    group = db.update_group(
+        group_id,
+        name=group_data.name,
+        description=group_data.description,
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"group": group.to_dict()}
+
+
+@router.delete("/v3/groups/{group_id}")
+async def delete_group(
+    group_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a group."""
+    validate_token_header(x_auth_token)
+    if not db.delete_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    return Response(status_code=204)
+
+
+@router.get("/v3/groups/{group_id}/users")
+async def list_group_users(
+    group_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List users in a group."""
+    validate_token_header(x_auth_token)
+    if not db.get_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    users = db.list_users_in_group(group_id)
+    return {
+        "users": [u.to_dict() for u in users],
+        "links": {"self": f"/v3/groups/{group_id}/users", "previous": None, "next": None},
+    }
+
+
+@router.put("/v3/groups/{group_id}/users/{user_id}")
+async def add_user_to_group(
+    group_id: str,
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Add a user to a group."""
+    validate_token_header(x_auth_token)
+    if not db.get_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    if not db.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    db.add_user_to_group(user_id, group_id)
+    return Response(status_code=204)
+
+
+@router.head("/v3/groups/{group_id}/users/{user_id}")
+async def check_user_in_group(
+    group_id: str,
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Check if a user is in a group."""
+    validate_token_header(x_auth_token)
+    if db.check_user_in_group(user_id, group_id):
+        return Response(status_code=204)
+    raise HTTPException(status_code=404, detail="User not in group")
+
+
+@router.delete("/v3/groups/{group_id}/users/{user_id}")
+async def remove_user_from_group(
+    group_id: str,
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Remove a user from a group."""
+    validate_token_header(x_auth_token)
+    if not db.remove_user_from_group(user_id, group_id):
+        raise HTTPException(status_code=404, detail="User or group not found")
+    return Response(status_code=204)
+
+
+# Service endpoints
+@router.get("/v3/services")
+async def list_services(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    type: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """List services."""
+    validate_token_header(x_auth_token)
+    services = db.list_services(service_type=type, name=name)
+    return {
+        "services": [s.to_dict() for s in services],
+        "links": {"self": "/v3/services", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/services", status_code=201)
+async def create_service(
+    body: dict[str, ServiceCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a service."""
+    validate_token_header(x_auth_token)
+    service_data = body.get("service")
+    if not service_data:
+        raise HTTPException(status_code=400, detail="Missing service in request body")
+
+    service = db.create_service(
+        name=service_data.name,
+        service_type=service_data.type,
+        description=service_data.description,
+        enabled=service_data.enabled,
+    )
+    return {"service": service.to_dict()}
+
+
+@router.get("/v3/services/{service_id}")
+async def get_service(
+    service_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a service by ID."""
+    validate_token_header(x_auth_token)
+    service = db.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"service": service.to_dict()}
+
+
+@router.patch("/v3/services/{service_id}")
+async def update_service(
+    service_id: str,
+    body: dict[str, ServiceUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a service."""
+    validate_token_header(x_auth_token)
+    service_data = body.get("service")
+    if not service_data:
+        raise HTTPException(status_code=400, detail="Missing service in request body")
+
+    service = db.update_service(
+        service_id,
+        name=service_data.name,
+        description=service_data.description,
+        enabled=service_data.enabled,
+    )
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"service": service.to_dict()}
+
+
+@router.delete("/v3/services/{service_id}")
+async def delete_service(
+    service_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a service."""
+    validate_token_header(x_auth_token)
+    if not db.delete_service(service_id):
+        raise HTTPException(status_code=404, detail="Service not found")
+    return Response(status_code=204)
+
+
+# Endpoint endpoints
+@router.get("/v3/endpoints")
+async def list_endpoints(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    service_id: str | None = None,
+    interface: str | None = None,
+    region_id: str | None = None,
+) -> dict[str, Any]:
+    """List endpoints."""
+    validate_token_header(x_auth_token)
+    endpoints = db.list_endpoints(service_id=service_id, interface=interface, region_id=region_id)
+    return {
+        "endpoints": [e.to_dict() for e in endpoints],
+        "links": {"self": "/v3/endpoints", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/endpoints", status_code=201)
+async def create_endpoint(
+    body: dict[str, EndpointCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create an endpoint."""
+    validate_token_header(x_auth_token)
+    endpoint_data = body.get("endpoint")
+    if not endpoint_data:
+        raise HTTPException(status_code=400, detail="Missing endpoint in request body")
+
+    if not db.get_service(endpoint_data.service_id):
+        raise HTTPException(status_code=400, detail="Service not found")
+
+    endpoint = db.create_endpoint(
+        service_id=endpoint_data.service_id,
+        interface=endpoint_data.interface,
+        url=endpoint_data.url,
+        region_id=endpoint_data.region_id,
+        enabled=endpoint_data.enabled,
+    )
+    return {"endpoint": endpoint.to_dict()}
+
+
+@router.get("/v3/endpoints/{endpoint_id}")
+async def get_endpoint(
+    endpoint_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get an endpoint by ID."""
+    validate_token_header(x_auth_token)
+    endpoint = db.get_endpoint(endpoint_id)
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    return {"endpoint": endpoint.to_dict()}
+
+
+@router.patch("/v3/endpoints/{endpoint_id}")
+async def update_endpoint(
+    endpoint_id: str,
+    body: dict[str, EndpointUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update an endpoint."""
+    validate_token_header(x_auth_token)
+    endpoint_data = body.get("endpoint")
+    if not endpoint_data:
+        raise HTTPException(status_code=400, detail="Missing endpoint in request body")
+
+    endpoint = db.update_endpoint(
+        endpoint_id,
+        interface=endpoint_data.interface,
+        url=endpoint_data.url,
+        region_id=endpoint_data.region_id,
+        enabled=endpoint_data.enabled,
+    )
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    return {"endpoint": endpoint.to_dict()}
+
+
+@router.delete("/v3/endpoints/{endpoint_id}")
+async def delete_endpoint(
+    endpoint_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete an endpoint."""
+    validate_token_header(x_auth_token)
+    if not db.delete_endpoint(endpoint_id):
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    return Response(status_code=204)
+
+
+# Region endpoints
+@router.get("/v3/regions")
+async def list_regions(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    parent_region_id: str | None = None,
+) -> dict[str, Any]:
+    """List regions."""
+    validate_token_header(x_auth_token)
+    regions = db.list_regions(parent_region_id=parent_region_id)
+    return {
+        "regions": [r.to_dict() for r in regions],
+        "links": {"self": "/v3/regions", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/regions", status_code=201)
+async def create_region(
+    body: dict[str, RegionCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a region."""
+    validate_token_header(x_auth_token)
+    region_data = body.get("region")
+    if not region_data:
+        raise HTTPException(status_code=400, detail="Missing region in request body")
+
+    region = db.create_region(
+        region_id=region_data.id,
+        description=region_data.description,
+        parent_region_id=region_data.parent_region_id,
+    )
+    return {"region": region.to_dict()}
+
+
+@router.get("/v3/regions/{region_id}")
+async def get_region(
+    region_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a region by ID."""
+    validate_token_header(x_auth_token)
+    region = db.get_region(region_id)
+    if not region:
+        raise HTTPException(status_code=404, detail="Region not found")
+    return {"region": region.to_dict()}
+
+
+@router.patch("/v3/regions/{region_id}")
+async def update_region(
+    region_id: str,
+    body: dict[str, RegionUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a region."""
+    validate_token_header(x_auth_token)
+    region_data = body.get("region")
+    if not region_data:
+        raise HTTPException(status_code=400, detail="Missing region in request body")
+
+    region = db.update_region(
+        region_id,
+        description=region_data.description,
+        parent_region_id=region_data.parent_region_id,
+    )
+    if not region:
+        raise HTTPException(status_code=404, detail="Region not found")
+    return {"region": region.to_dict()}
+
+
+@router.delete("/v3/regions/{region_id}")
+async def delete_region(
+    region_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a region."""
+    validate_token_header(x_auth_token)
+    if not db.delete_region(region_id):
+        raise HTTPException(status_code=404, detail="Region not found")
+    return Response(status_code=204)
+
+
+# Credential endpoints
+@router.get("/v3/credentials")
+async def list_credentials(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+    user_id: str | None = None,
+    type: str | None = None,
+) -> dict[str, Any]:
+    """List credentials."""
+    validate_token_header(x_auth_token)
+    credentials = db.list_credentials(user_id=user_id, credential_type=type)
+    return {
+        "credentials": [c.to_dict() for c in credentials],
+        "links": {"self": "/v3/credentials", "previous": None, "next": None},
+    }
+
+
+@router.post("/v3/credentials", status_code=201)
+async def create_credential(
+    body: dict[str, CredentialCreate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a credential."""
+    validate_token_header(x_auth_token)
+    credential_data = body.get("credential")
+    if not credential_data:
+        raise HTTPException(status_code=400, detail="Missing credential in request body")
+
+    credential = db.create_credential(
+        user_id=credential_data.user_id,
+        credential_type=credential_data.type,
+        blob=credential_data.blob,
+        project_id=credential_data.project_id,
+    )
+    return {"credential": credential.to_dict()}
+
+
+@router.get("/v3/credentials/{credential_id}")
+async def get_credential(
+    credential_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a credential by ID."""
+    validate_token_header(x_auth_token)
+    credential = db.get_credential(credential_id)
+    if not credential:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return {"credential": credential.to_dict()}
+
+
+@router.patch("/v3/credentials/{credential_id}")
+async def update_credential(
+    credential_id: str,
+    body: dict[str, CredentialUpdate],
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a credential."""
+    validate_token_header(x_auth_token)
+    credential_data = body.get("credential")
+    if not credential_data:
+        raise HTTPException(status_code=400, detail="Missing credential in request body")
+
+    credential = db.update_credential(
+        credential_id,
+        blob=credential_data.blob,
+        project_id=credential_data.project_id,
+    )
+    if not credential:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return {"credential": credential.to_dict()}
+
+
+@router.delete("/v3/credentials/{credential_id}")
+async def delete_credential(
+    credential_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a credential."""
+    validate_token_header(x_auth_token)
+    if not db.delete_credential(credential_id):
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return Response(status_code=204)
