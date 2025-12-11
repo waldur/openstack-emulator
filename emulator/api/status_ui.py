@@ -615,12 +615,44 @@ tailwind.config = {
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.8rem;
         color: #a855f7;
-        cursor: help;
+        cursor: pointer;
         position: relative;
     }
     .uuid:hover {
         color: #c084fc;
-        text-decoration: underline;
+    }
+    .uuid-value {
+        position: relative;
+        display: inline-block;
+    }
+    .uuid-value::after {
+        content: attr(data-full);
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        background: #0d1117;
+        border: 1px solid #00d4ff;
+        color: #00ff41;
+        padding: 8px 12px;
+        font-size: 0.75rem;
+        white-space: nowrap;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s, visibility 0.2s;
+        z-index: 1000;
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+        margin-bottom: 5px;
+    }
+    .uuid-value:hover::after {
+        opacity: 1;
+        visibility: visible;
+    }
+    /* Click to copy feedback */
+    .uuid-value.copied::after {
+        content: 'Copied!';
+        background: #00ff41;
+        color: #0a0a0f;
+        border-color: #00ff41;
     }
     /* Clickable service cards */
     .service-card-link {
@@ -646,6 +678,31 @@ JS_SCRIPT = """
         });
         document.getElementById('tab-' + tabName).classList.add('active');
         document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+    }
+
+    // Copy UUID to clipboard
+    function copyUuid(element) {
+        const uuid = element.getAttribute('data-full');
+        navigator.clipboard.writeText(uuid).then(() => {
+            element.classList.add('copied');
+            showToast('UUID copied to clipboard', 'success');
+            setTimeout(() => {
+                element.classList.remove('copied');
+            }, 1500);
+        }).catch(err => {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = uuid;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            element.classList.add('copied');
+            showToast('UUID copied to clipboard', 'success');
+            setTimeout(() => {
+                element.classList.remove('copied');
+            }, 1500);
+        });
     }
 
     // Modal functions
@@ -895,7 +952,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{server.id}">{server.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{server.id}" onclick="copyUuid(this)">{server.id[:13]}...</span></td>
             <td>{server.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{server.flavor_id}</td>
@@ -942,7 +999,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{volume.id}">{volume.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{volume.id}" onclick="copyUuid(this)">{volume.id[:13]}...</span></td>
             <td>{volume.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
@@ -993,7 +1050,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{image.id}">{image.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{image.id}" onclick="copyUuid(this)">{image.id[:13]}...</span></td>
             <td>{image.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{visibility}</td>
@@ -1041,7 +1098,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{network.id}">{network.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{network.id}" onclick="copyUuid(this)">{network.id[:13]}...</span></td>
             <td>{network.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
@@ -1085,7 +1142,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{subnet.id}">{subnet.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{subnet.id}" onclick="copyUuid(this)">{subnet.id[:13]}...</span></td>
             <td>{subnet.name or '-'}</td>
             <td>{subnet.cidr}</td>
             <td>{subnet.gateway_ip or '-'}</td>
@@ -1133,7 +1190,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{port.id}">{port.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{port.id}" onclick="copyUuid(this)">{port.id[:13]}...</span></td>
             <td>{port.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
@@ -1181,7 +1238,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{router.id}">{router.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{router.id}" onclick="copyUuid(this)">{router.id[:13]}...</span></td>
             <td>{router.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{'Yes' if router.admin_state_up else 'No'}</td>
@@ -1228,11 +1285,11 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{fip.id}">{fip.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{fip.id}" onclick="copyUuid(this)">{fip.id[:13]}...</span></td>
             <td>{fip.floating_ip_address}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{fip.fixed_ip_address or '-'}</td>
-            <td class="uuid" title="{fip.port_id or ''}">{fip.port_id[:13] + '...' if fip.port_id else '-'}</td>
+            <td class="uuid">{f'<span class="uuid-value" data-full="{fip.port_id}" onclick="copyUuid(this)">{fip.port_id[:13]}...</span>' if fip.port_id else '-'}</td>
             {actions}
         </tr>
         """
@@ -1274,7 +1331,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{sg.id}">{sg.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{sg.id}" onclick="copyUuid(this)">{sg.id[:13]}...</span></td>
             <td>{sg.name}</td>
             <td>{sg.description or '-'}</td>
             <td>{rule_count}</td>
@@ -1316,7 +1373,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{project.id}">{project.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{project.id}" onclick="copyUuid(this)">{project.id[:13]}...</span></td>
             <td>{project.name}</td>
             <td>{project.description or '-'}</td>
             <td>{'Yes' if project.enabled else 'No'}</td>
@@ -1358,7 +1415,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{user.id}">{user.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{user.id}" onclick="copyUuid(this)">{user.id[:13]}...</span></td>
             <td>{user.name}</td>
             <td>{user.email or '-'}</td>
             <td>{'Yes' if user.enabled else 'No'}</td>
@@ -1493,11 +1550,11 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid" title="{snapshot.id}">{snapshot.id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{snapshot.id}" onclick="copyUuid(this)">{snapshot.id[:13]}...</span></td>
             <td>{snapshot.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
-            <td class="uuid" title="{snapshot.volume_id}">{snapshot.volume_id[:13]}...</td>
+            <td class="uuid"><span class="uuid-value" data-full="{snapshot.volume_id}" onclick="copyUuid(this)">{snapshot.volume_id[:13]}...</span></td>
             {actions}
         </tr>
         """
