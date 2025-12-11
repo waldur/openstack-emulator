@@ -33,6 +33,7 @@ SERVICES: dict[str, ServiceInfo] = {
     "cinder": {"port": 8776, "name": "Block Storage"},
     "glance": {"port": 9292, "name": "Image"},
     "neutron": {"port": 9696, "name": "Networking"},
+    "octavia": {"port": 9876, "name": "Load Balancer"},
 }
 
 
@@ -1587,6 +1588,256 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
     """
 
 
+def render_load_balancers_table(load_balancers: list, authenticated: bool) -> str:
+    """Render the load balancers table HTML."""
+    if not load_balancers:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO LOAD BALANCERS FOUND ]</div>'
+
+    rows = ""
+    for lb in load_balancers:
+        prov_status = (
+            lb.provisioning_status.value
+            if hasattr(lb.provisioning_status, "value")
+            else str(lb.provisioning_status)
+        )
+        op_status = (
+            lb.operating_status.value
+            if hasattr(lb.operating_status, "value")
+            else str(lb.operating_status)
+        )
+        prov_class = get_status_class(prov_status)
+        op_class = get_status_class(op_status)
+
+        actions = ""
+        if authenticated:
+            actions = f"""
+            <td class="action-btns">
+                <button class="action-btn delete" onclick="deleteResource('loadbalancers', '{lb.id}', '{lb.name or lb.id[:8]}')" title="Delete">Delete</button>
+            </td>
+            """
+
+        rows += f"""
+        <tr>
+            <td class="uuid"><span class="uuid-value" data-full="{lb.id}" onclick="copyUuid(this)">{lb.id[:13]}...</span></td>
+            <td>{lb.name or '-'}</td>
+            <td>{lb.vip_address or '-'}</td>
+            <td><span class="status-badge {prov_class}">{prov_status}</span></td>
+            <td><span class="status-badge {op_class}">{op_status}</span></td>
+            <td>{lb.provider}</td>
+            {actions}
+        </tr>
+        """
+
+    action_header = "<th>Actions</th>" if authenticated else ""
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>VIP Address</th>
+                <th>Provisioning</th>
+                <th>Operating</th>
+                <th>Provider</th>
+                {action_header}
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+
+
+def render_listeners_table(listeners: list, authenticated: bool) -> str:
+    """Render the listeners table HTML."""
+    if not listeners:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO LISTENERS FOUND ]</div>'
+
+    rows = ""
+    for listener in listeners:
+        prov_status = (
+            listener.provisioning_status.value
+            if hasattr(listener.provisioning_status, "value")
+            else str(listener.provisioning_status)
+        )
+        prov_class = get_status_class(prov_status)
+        protocol = (
+            listener.protocol.value
+            if hasattr(listener.protocol, "value")
+            else str(listener.protocol)
+        )
+
+        actions = ""
+        if authenticated:
+            actions = f"""
+            <td class="action-btns">
+                <button class="action-btn delete" onclick="deleteResource('listeners', '{listener.id}', '{listener.name or listener.id[:8]}')" title="Delete">Delete</button>
+            </td>
+            """
+
+        rows += f"""
+        <tr>
+            <td class="uuid"><span class="uuid-value" data-full="{listener.id}" onclick="copyUuid(this)">{listener.id[:13]}...</span></td>
+            <td>{listener.name or '-'}</td>
+            <td>{protocol}</td>
+            <td>{listener.protocol_port}</td>
+            <td><span class="status-badge {prov_class}">{prov_status}</span></td>
+            <td class="uuid"><span class="uuid-value" data-full="{listener.loadbalancer_id}" onclick="copyUuid(this)">{listener.loadbalancer_id[:13]}...</span></td>
+            {actions}
+        </tr>
+        """
+
+    action_header = "<th>Actions</th>" if authenticated else ""
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Protocol</th>
+                <th>Port</th>
+                <th>Status</th>
+                <th>Load Balancer</th>
+                {action_header}
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+
+
+def render_pools_table(pools: list, authenticated: bool) -> str:
+    """Render the pools table HTML."""
+    if not pools:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO POOLS FOUND ]</div>'
+
+    rows = ""
+    for pool in pools:
+        prov_status = (
+            pool.provisioning_status.value
+            if hasattr(pool.provisioning_status, "value")
+            else str(pool.provisioning_status)
+        )
+        prov_class = get_status_class(prov_status)
+        protocol = (
+            pool.protocol.value if hasattr(pool.protocol, "value") else str(pool.protocol)
+        )
+        lb_algorithm = (
+            pool.lb_algorithm.value
+            if hasattr(pool.lb_algorithm, "value")
+            else str(pool.lb_algorithm)
+        )
+
+        actions = ""
+        if authenticated:
+            actions = f"""
+            <td class="action-btns">
+                <button class="action-btn delete" onclick="deleteResource('pools', '{pool.id}', '{pool.name or pool.id[:8]}')" title="Delete">Delete</button>
+            </td>
+            """
+
+        lb_id = pool.loadbalancer_id or "-"
+        lb_cell = (
+            f'<span class="uuid-value" data-full="{lb_id}" onclick="copyUuid(this)">{lb_id[:13]}...</span>'
+            if lb_id != "-"
+            else "-"
+        )
+
+        rows += f"""
+        <tr>
+            <td class="uuid"><span class="uuid-value" data-full="{pool.id}" onclick="copyUuid(this)">{pool.id[:13]}...</span></td>
+            <td>{pool.name or '-'}</td>
+            <td>{protocol}</td>
+            <td>{lb_algorithm}</td>
+            <td><span class="status-badge {prov_class}">{prov_status}</span></td>
+            <td>{len(pool.members)}</td>
+            {actions}
+        </tr>
+        """
+
+    action_header = "<th>Actions</th>" if authenticated else ""
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Protocol</th>
+                <th>Algorithm</th>
+                <th>Status</th>
+                <th>Members</th>
+                {action_header}
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+
+
+def render_health_monitors_table(health_monitors: list, authenticated: bool) -> str:
+    """Render the health monitors table HTML."""
+    if not health_monitors:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO HEALTH MONITORS FOUND ]</div>'
+
+    rows = ""
+    for monitor in health_monitors:
+        prov_status = (
+            monitor.provisioning_status.value
+            if hasattr(monitor.provisioning_status, "value")
+            else str(monitor.provisioning_status)
+        )
+        prov_class = get_status_class(prov_status)
+        mon_type = (
+            monitor.type.value if hasattr(monitor.type, "value") else str(monitor.type)
+        )
+
+        actions = ""
+        if authenticated:
+            actions = f"""
+            <td class="action-btns">
+                <button class="action-btn delete" onclick="deleteResource('healthmonitors', '{monitor.id}', '{monitor.name or monitor.id[:8]}')" title="Delete">Delete</button>
+            </td>
+            """
+
+        pool_id = monitor.pool_id or "-"
+        pool_cell = (
+            f'<span class="uuid-value" data-full="{pool_id}" onclick="copyUuid(this)">{pool_id[:13]}...</span>'
+            if pool_id != "-"
+            else "-"
+        )
+
+        rows += f"""
+        <tr>
+            <td class="uuid"><span class="uuid-value" data-full="{monitor.id}" onclick="copyUuid(this)">{monitor.id[:13]}...</span></td>
+            <td>{monitor.name or '-'}</td>
+            <td>{mon_type}</td>
+            <td>{monitor.delay}s</td>
+            <td>{monitor.timeout}s</td>
+            <td><span class="status-badge {prov_class}">{prov_status}</span></td>
+            <td class="uuid">{pool_cell}</td>
+            {actions}
+        </tr>
+        """
+
+    action_header = "<th>Actions</th>" if authenticated else ""
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Delay</th>
+                <th>Timeout</th>
+                <th>Status</th>
+                <th>Pool</th>
+                {action_header}
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+
+
 def render_create_modals(
     flavors: list,
     images: list,
@@ -2081,6 +2332,7 @@ async def status_page(
         "cinder": "storage",
         "glance": "storage",
         "neutron": "network",
+        "octavia": "loadbalancer",
     }
     service_cards = ""
     for service, status in service_status.items():
@@ -2125,6 +2377,11 @@ async def status_page(
     keypairs = list(db._keypairs.values())
     snapshots = db.list_snapshots()
     volume_types = db.list_volume_types()
+    # Octavia resources
+    load_balancers = db.list_load_balancers()
+    listeners = db.list_listeners()
+    pools = db.list_pools()
+    health_monitors = db.list_health_monitors()
 
     # Build authentication section
     if authenticated and current_user:
@@ -2208,7 +2465,7 @@ async def status_page(
                     <h2 class="text-lg font-semibold text-[#00d4ff] uppercase tracking-wider">Service Status</h2>
                     <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                     {service_cards}
                 </div>
             </div>
@@ -2225,6 +2482,7 @@ async def status_page(
                     <button class="tab active" data-tab="compute" onclick="switchTab('compute')">[ COMPUTE ]</button>
                     <button class="tab" data-tab="storage" onclick="switchTab('storage')">[ STORAGE ]</button>
                     <button class="tab" data-tab="network" onclick="switchTab('network')">[ NETWORK ]</button>
+                    <button class="tab" data-tab="loadbalancer" onclick="switchTab('loadbalancer')">[ LOAD BALANCER ]</button>
                     <button class="tab" data-tab="identity" onclick="switchTab('identity')">[ IDENTITY ]</button>
                 </div>
 
@@ -2357,6 +2615,46 @@ async def status_page(
                     </div>
                 </div>
 
+                <!-- Load Balancer Tab -->
+                <div id="tab-loadbalancer" class="tab-content">
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Load Balancers
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(load_balancers)}</span>
+                            </h3>
+                        </div>
+                        {render_load_balancers_table(load_balancers, authenticated)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Listeners
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(listeners)}</span>
+                            </h3>
+                        </div>
+                        {render_listeners_table(listeners, authenticated)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Pools
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(pools)}</span>
+                            </h3>
+                        </div>
+                        {render_pools_table(pools, authenticated)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Health Monitors
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(health_monitors)}</span>
+                            </h3>
+                        </div>
+                        {render_health_monitors_table(health_monitors, authenticated)}
+                    </div>
+                </div>
+
                 <!-- Identity Tab -->
                 <div id="tab-identity" class="tab-content">
                     <div class="mb-8">
@@ -2436,6 +2734,10 @@ async def api_status(request: Request) -> dict:
             "flavors": len(db.list_flavors()),
             "keypairs": len(db._keypairs),
             "snapshots": len(db.list_snapshots()),
+            "load_balancers": len(db.list_load_balancers()),
+            "listeners": len(db.list_listeners()),
+            "pools": len(db.list_pools()),
+            "health_monitors": len(db.list_health_monitors()),
         },
     }
 
