@@ -15,7 +15,7 @@ def reset_db():
     db._keypairs.clear()
     db._init_default_flavors()
     db._init_default_images()
-    db._init_default_users()
+    db.reset_keystone()
     yield
 
 
