@@ -1573,13 +1573,24 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
             </td>
             """
 
+        # floating_port_id is the port on the external network holding the FIP
+        floating_port_cell = "-"
+        if fip.floating_port_id:
+            floating_port_cell = f'<span class="uuid-value" data-full="{fip.floating_port_id}" onclick="copyUuid(this)">{fip.floating_port_id[:13]}...</span>'
+
+        # port_id is the internal port the FIP is associated with
+        internal_port_cell = "-"
+        if fip.port_id:
+            internal_port_cell = f'<span class="uuid-value" data-full="{fip.port_id}" onclick="copyUuid(this)">{fip.port_id[:13]}...</span>'
+
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{fip.id}" onclick="copyUuid(this)">{fip.id[:13]}...</span></td>
             <td>{fip.floating_ip_address}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{fip.fixed_ip_address or '-'}</td>
-            <td class="uuid">{f'<span class="uuid-value" data-full="{fip.port_id}" onclick="copyUuid(this)">{fip.port_id[:13]}...</span>' if fip.port_id else '-'}</td>
+            <td class="uuid">{floating_port_cell}</td>
+            <td class="uuid">{internal_port_cell}</td>
             {actions}
         </tr>
         """
@@ -1593,7 +1604,8 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
                 <th>Floating IP</th>
                 <th>Status</th>
                 <th>Fixed IP</th>
-                <th>Port</th>
+                <th>Floating Port</th>
+                <th>Internal Port</th>
                 {action_header}
             </tr>
         </thead>
