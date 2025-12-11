@@ -610,6 +610,26 @@ tailwind.config = {
     @keyframes blink {
         50% { opacity: 0; }
     }
+    /* UUID styling with tooltip */
+    .uuid {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        color: #a855f7;
+        cursor: help;
+        position: relative;
+    }
+    .uuid:hover {
+        color: #c084fc;
+        text-decoration: underline;
+    }
+    /* Clickable service cards */
+    .service-card-link {
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .service-card-link:hover {
+        transform: translateY(-2px);
+    }
 </style>
 """
 
@@ -875,7 +895,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{server.id[:8]}...</td>
+            <td class="uuid" title="{server.id}">{server.id[:13]}...</td>
             <td>{server.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{server.flavor_id}</td>
@@ -922,7 +942,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{volume.id[:8]}...</td>
+            <td class="uuid" title="{volume.id}">{volume.id[:13]}...</td>
             <td>{volume.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
@@ -973,7 +993,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{image.id[:8]}...</td>
+            <td class="uuid" title="{image.id}">{image.id[:13]}...</td>
             <td>{image.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{visibility}</td>
@@ -1021,7 +1041,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{network.id[:8]}...</td>
+            <td class="uuid" title="{network.id}">{network.id[:13]}...</td>
             <td>{network.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
@@ -1065,7 +1085,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{subnet.id[:8]}...</td>
+            <td class="uuid" title="{subnet.id}">{subnet.id[:13]}...</td>
             <td>{subnet.name or '-'}</td>
             <td>{subnet.cidr}</td>
             <td>{subnet.gateway_ip or '-'}</td>
@@ -1113,7 +1133,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{port.id[:8]}...</td>
+            <td class="uuid" title="{port.id}">{port.id[:13]}...</td>
             <td>{port.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
@@ -1161,7 +1181,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{router.id[:8]}...</td>
+            <td class="uuid" title="{router.id}">{router.id[:13]}...</td>
             <td>{router.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{'Yes' if router.admin_state_up else 'No'}</td>
@@ -1208,11 +1228,11 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{fip.id[:8]}...</td>
+            <td class="uuid" title="{fip.id}">{fip.id[:13]}...</td>
             <td>{fip.floating_ip_address}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{fip.fixed_ip_address or '-'}</td>
-            <td class="uuid">{fip.port_id[:8] + '...' if fip.port_id else '-'}</td>
+            <td class="uuid" title="{fip.port_id or ''}">{fip.port_id[:13] + '...' if fip.port_id else '-'}</td>
             {actions}
         </tr>
         """
@@ -1254,7 +1274,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
 
         rows += f"""
         <tr>
-            <td class="uuid">{sg.id[:8]}...</td>
+            <td class="uuid" title="{sg.id}">{sg.id[:13]}...</td>
             <td>{sg.name}</td>
             <td>{sg.description or '-'}</td>
             <td>{rule_count}</td>
@@ -1296,7 +1316,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{project.id[:8]}...</td>
+            <td class="uuid" title="{project.id}">{project.id[:13]}...</td>
             <td>{project.name}</td>
             <td>{project.description or '-'}</td>
             <td>{'Yes' if project.enabled else 'No'}</td>
@@ -1338,7 +1358,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{user.id[:8]}...</td>
+            <td class="uuid" title="{user.id}">{user.id[:13]}...</td>
             <td>{user.name}</td>
             <td>{user.email or '-'}</td>
             <td>{'Yes' if user.enabled else 'No'}</td>
@@ -1473,11 +1493,11 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
 
         rows += f"""
         <tr>
-            <td class="uuid">{snapshot.id[:8]}...</td>
+            <td class="uuid" title="{snapshot.id}">{snapshot.id[:13]}...</td>
             <td>{snapshot.name or '-'}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
-            <td class="uuid">{snapshot.volume_id[:8]}...</td>
+            <td class="uuid" title="{snapshot.volume_id}">{snapshot.volume_id[:13]}...</td>
             {actions}
         </tr>
         """
@@ -1988,6 +2008,14 @@ async def status_page(
         }
 
     # Build service cards HTML
+    # Map services to resource tabs
+    service_to_tab = {
+        "keystone": "identity",
+        "nova": "compute",
+        "cinder": "storage",
+        "glance": "storage",
+        "neutron": "network",
+    }
     service_cards = ""
     for service, status in service_status.items():
         if status["healthy"]:
@@ -2002,8 +2030,9 @@ async def status_page(
             status_color = "text-[#ff3366]"
             status_text = "OFFLINE"
             indicator = ""
+        target_tab = service_to_tab.get(service, "compute")
         service_cards += f"""
-        <div class="bg-[#0d1117] border {border_color} p-5 {glow_class} relative">
+        <div class="bg-[#0d1117] border {border_color} p-5 {glow_class} relative service-card-link" onclick="switchTab('{target_tab}')" title="Click to view {target_tab} resources">
             <div class="absolute top-2 right-2 w-2 h-2 rounded-full bg-current {status_color} {indicator}"></div>
             <div class="text-[#00d4ff] text-xs uppercase tracking-wider mb-1">{status['name']}</div>
             <div class="text-lg font-semibold text-[#e2e8f0] mb-3">{service.upper()}</div>
