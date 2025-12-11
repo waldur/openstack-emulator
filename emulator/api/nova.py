@@ -408,6 +408,30 @@ async def server_action(
             }
         }
 
+    elif "addSecurityGroup" in body:
+        sg_data = body["addSecurityGroup"]
+        sg_name = sg_data.get("name")
+        if not sg_name:
+            raise HTTPException(status_code=400, detail="Security group name required")
+        # Add security group to server
+        if not any(sg["name"] == sg_name for sg in server.security_groups):
+            server.security_groups.append({"name": sg_name})
+        return Response(status_code=202)
+
+    elif "removeSecurityGroup" in body:
+        sg_data = body["removeSecurityGroup"]
+        sg_name = sg_data.get("name")
+        if not sg_name:
+            raise HTTPException(status_code=400, detail="Security group name required")
+        # Remove security group from server
+        original_len = len(server.security_groups)
+        server.security_groups = [sg for sg in server.security_groups if sg["name"] != sg_name]
+        if len(server.security_groups) == original_len:
+            raise HTTPException(
+                status_code=404, detail=f"Security group {sg_name} not found on server"
+            )
+        return Response(status_code=202)
+
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {list(body.keys())}")
 
@@ -616,11 +640,20 @@ async def delete_image(
 @router.get("/v2.1/os-keypairs")
 async def list_keypairs(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+    user_id: str | None = Query(None),
+    fingerprint: str | None = Query(None, alias="fingerprint"),
 ) -> dict[str, Any]:
-    """List keypairs."""
+    """List keypairs with optional filtering by user_id and fingerprint."""
     token = get_token_or_raise(x_auth_token)
 
-    keypairs = db.list_keypairs(user_id=token.user_id)
+    # Use provided user_id or default to token's user
+    effective_user_id = user_id or token.user_id
+    keypairs = db.list_keypairs(user_id=effective_user_id)
+
+    # Filter by fingerprint if provided
+    if fingerprint:
+        keypairs = [kp for kp in keypairs if kp.fingerprint == fingerprint]
+
     return {"keypairs": [{"keypair": kp.to_dict()} for kp in keypairs]}
 
 
@@ -813,3 +846,194 @@ async def get_hypervisor_statistics(
             "disk_available_least": 1000,
         }
     }
+
+
+# ==================== Server Groups ====================
+
+
+class ServerGroupCreateRequest(BaseModel):
+    """Server group creation request body."""
+
+    name: str
+    policies: list[str] = []
+
+
+class ServerGroupCreateBody(BaseModel):
+    """Wrapper for server group creation request."""
+
+    server_group: ServerGroupCreateRequest
+
+
+@router.get("/v2.1/os-server-groups")
+async def list_server_groups(
+    all_projects: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List server groups."""
+    token = get_token_or_raise(x_auth_token)
+
+    groups = db.list_server_groups(
+        project_id=token.project_id,
+        all_projects=all_projects,
+    )
+
+    return {"server_groups": [g.to_dict() for g in groups]}
+
+
+@router.post("/v2.1/os-server-groups", status_code=200)
+async def create_server_group(
+    body: ServerGroupCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a new server group."""
+    token = get_token_or_raise(x_auth_token)
+
+    req = body.server_group
+    group = db.create_server_group(
+        name=req.name,
+        policies=req.policies,
+        project_id=token.project_id,
+        user_id=token.user_id,
+    )
+
+    return {"server_group": group.to_dict()}
+
+
+@router.get("/v2.1/os-server-groups/{server_group_id}")
+async def get_server_group(
+    server_group_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a server group by ID."""
+    get_token_or_raise(x_auth_token)
+
+    group = db.get_server_group(server_group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Server group not found")
+
+    return {"server_group": group.to_dict()}
+
+
+@router.delete("/v2.1/os-server-groups/{server_group_id}", status_code=204)
+async def delete_server_group(
+    server_group_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a server group."""
+    get_token_or_raise(x_auth_token)
+
+    if not db.delete_server_group(server_group_id):
+        raise HTTPException(status_code=404, detail="Server group not found")
+
+    return Response(status_code=204)
+
+
+# ==================== Quotas ====================
+
+
+@router.get("/v2.1/os-quota-sets/{tenant_id}")
+async def get_quota_set(
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get compute quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    quota = db.get_nova_quota(tenant_id)
+    return {"quota_set": quota.to_dict()}
+
+
+@router.get("/v2.1/os-quota-sets/{tenant_id}/detail")
+async def get_quota_set_detail(
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get detailed compute quota set with usage for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    quota = db.get_nova_quota(tenant_id)
+    usage = db.get_nova_quota_usage(tenant_id)
+
+    detail = {
+        "id": tenant_id,
+        "instances": {"limit": quota.instances, "in_use": usage.get("instances", 0), "reserved": 0},
+        "cores": {"limit": quota.cores, "in_use": usage.get("cores", 0), "reserved": 0},
+        "ram": {"limit": quota.ram, "in_use": usage.get("ram", 0), "reserved": 0},
+        "metadata_items": {"limit": quota.metadata_items, "in_use": 0, "reserved": 0},
+        "injected_files": {"limit": quota.injected_files, "in_use": 0, "reserved": 0},
+        "injected_file_content_bytes": {
+            "limit": quota.injected_file_content_bytes,
+            "in_use": 0,
+            "reserved": 0,
+        },
+        "injected_file_path_bytes": {
+            "limit": quota.injected_file_path_bytes,
+            "in_use": 0,
+            "reserved": 0,
+        },
+        "key_pairs": {"limit": quota.key_pairs, "in_use": usage.get("key_pairs", 0), "reserved": 0},
+        "server_groups": {
+            "limit": quota.server_groups,
+            "in_use": usage.get("server_groups", 0),
+            "reserved": 0,
+        },
+        "server_group_members": {"limit": quota.server_group_members, "in_use": 0, "reserved": 0},
+    }
+
+    return {"quota_set": detail}
+
+
+@router.put("/v2.1/os-quota-sets/{tenant_id}")
+async def update_quota_set(
+    tenant_id: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update compute quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    body = await request.json()
+    quota_data = body.get("quota_set", {})
+
+    quota = db.update_nova_quota(
+        project_id=tenant_id,
+        instances=quota_data.get("instances"),
+        cores=quota_data.get("cores"),
+        ram=quota_data.get("ram"),
+        metadata_items=quota_data.get("metadata_items"),
+        injected_files=quota_data.get("injected_files"),
+        injected_file_content_bytes=quota_data.get("injected_file_content_bytes"),
+        injected_file_path_bytes=quota_data.get("injected_file_path_bytes"),
+        key_pairs=quota_data.get("key_pairs"),
+        server_groups=quota_data.get("server_groups"),
+        server_group_members=quota_data.get("server_group_members"),
+    )
+
+    return {"quota_set": quota.to_dict()}
+
+
+@router.delete("/v2.1/os-quota-sets/{tenant_id}", status_code=202)
+async def delete_quota_set(
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete (reset) compute quota set for a tenant."""
+    get_token_or_raise(x_auth_token)
+
+    db.delete_nova_quota(tenant_id)
+    return Response(status_code=202)
+
+
+@router.get("/v2.1/os-quota-sets/{tenant_id}/defaults")
+async def get_quota_set_defaults(
+    tenant_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get default compute quota set."""
+    get_token_or_raise(x_auth_token)
+
+    # Return default quota values
+    from emulator.core.models import NovaQuota
+
+    default_quota = NovaQuota(project_id=tenant_id)
+    return {"quota_set": default_quota.to_dict()}

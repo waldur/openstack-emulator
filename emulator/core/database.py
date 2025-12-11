@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from emulator.core.models import (
     AllocationPool,
+    CinderQuota,
     ContainerFormat,
     Credential,
     DiskFormat,
@@ -39,6 +40,8 @@ from emulator.core.models import (
     LoadBalancerOperatingStatus,
     LoadBalancerProvisioningStatus,
     Network,
+    NeutronQuota,
+    NovaQuota,
     Pool,
     PoolLBAlgorithm,
     PoolMember,
@@ -47,6 +50,7 @@ from emulator.core.models import (
     PowerState,
     Project,
     QosSpec,
+    RbacPolicy,
     Region,
     Role,
     RoleAssignment,
@@ -54,6 +58,7 @@ from emulator.core.models import (
     SecurityGroup,
     SecurityGroupRule,
     Server,
+    ServerGroup,
     ServerStatus,
     Service,
     Snapshot,
@@ -116,6 +121,17 @@ class Database:
         self._security_group_rules: dict[str, SecurityGroupRule] = {}
         self._next_floating_ip: int = 1  # For generating sequential floating IPs
 
+        # Storage dictionaries - Nova Server Groups
+        self._server_groups: dict[str, ServerGroup] = {}
+
+        # Storage dictionaries - Quotas
+        self._nova_quotas: dict[str, NovaQuota] = {}
+        self._neutron_quotas: dict[str, NeutronQuota] = {}
+        self._cinder_quotas: dict[str, CinderQuota] = {}
+
+        # Storage dictionaries - RBAC Policies
+        self._rbac_policies: dict[str, RbacPolicy] = {}
+
         # Storage dictionaries - Octavia
         self._load_balancers: dict[str, LoadBalancer] = {}
         self._listeners: dict[str, Listener] = {}
@@ -123,7 +139,7 @@ class Database:
         self._pool_members: dict[str, PoolMember] = {}  # key: pool_id:member_id
         self._health_monitors: dict[str, HealthMonitor] = {}
         self._l7policies: dict[str, L7Policy] = {}
-        self._l7rules: dict[str, L7Rule] = {}
+        self._l7rules: dict[str, L7Rule] = {}  # key: policy_id:rule_id
         self._next_lb_vip: int = 1  # For generating sequential VIP addresses
 
         # Initialize with default data
@@ -328,34 +344,12 @@ class Database:
         )
         self._services[volume_service.id] = volume_service
 
-        # Network service (Neutron)
-        network_service = Service(
-            id=str(uuid4()),
-            name="neutron",
-            type="network",
-            description="OpenStack Network Service",
-            enabled=True,
-        )
-        self._services[network_service.id] = network_service
-
-        # Load Balancer service (Octavia)
-        load_balancer_service = Service(
-            id=str(uuid4()),
-            name="octavia",
-            type="load-balancer",
-            description="OpenStack Load Balancer Service",
-            enabled=True,
-        )
-        self._services[load_balancer_service.id] = load_balancer_service
-
         # Store service IDs for catalog generation
         self._service_ids = {
             "identity": identity_service.id,
             "compute": compute_service.id,
             "image": image_service.id,
             "volumev3": volume_service.id,
-            "network": network_service.id,
-            "load-balancer": load_balancer_service.id,
         }
 
     def _init_default_volume_types(self) -> None:
@@ -471,7 +465,6 @@ class Database:
         cinder_url = f"{scheme}://{host}:8776"
         glance_url = f"{scheme}://{host}:9292"
         neutron_url = f"{scheme}://{host}:9696"
-        octavia_url = f"{scheme}://{host}:9876"
 
         return [
             {
@@ -576,27 +569,6 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{neutron_url}",
-                    },
-                ],
-            },
-            {
-                "type": "load-balancer",
-                "name": "octavia",
-                "endpoints": [
-                    {
-                        "region": "RegionOne",
-                        "interface": "public",
-                        "url": f"{octavia_url}",
-                    },
-                    {
-                        "region": "RegionOne",
-                        "interface": "internal",
-                        "url": f"{octavia_url}",
-                    },
-                    {
-                        "region": "RegionOne",
-                        "interface": "admin",
-                        "url": f"{octavia_url}",
                     },
                 ],
             },
@@ -3852,6 +3824,414 @@ class Database:
             self._next_floating_ip = 1
             self._init_default_neutron_data()
 
+    # ==================== Server Group Operations ====================
+
+    def create_server_group(
+        self,
+        name: str,
+        policies: list[str],
+        project_id: str,
+        user_id: str,
+        metadata: dict[str, str] | None = None,
+    ) -> ServerGroup:
+        """Create a new server group."""
+        with self._lock:
+            server_group = ServerGroup(
+                name=name,
+                policies=policies,
+                project_id=project_id,
+                user_id=user_id,
+                metadata=metadata or {},
+            )
+            self._server_groups[server_group.id] = server_group
+            return server_group
+
+    def get_server_group(self, server_group_id: str) -> ServerGroup | None:
+        """Get a server group by ID."""
+        with self._lock:
+            return self._server_groups.get(server_group_id)
+
+    def list_server_groups(
+        self,
+        project_id: str | None = None,
+        all_projects: bool = False,
+    ) -> list[ServerGroup]:
+        """List server groups with optional filtering."""
+        with self._lock:
+            groups = list(self._server_groups.values())
+            if not all_projects and project_id:
+                groups = [g for g in groups if g.project_id == project_id]
+            return groups
+
+    def delete_server_group(self, server_group_id: str) -> bool:
+        """Delete a server group."""
+        with self._lock:
+            if server_group_id in self._server_groups:
+                del self._server_groups[server_group_id]
+                return True
+            return False
+
+    def add_server_to_group(self, server_group_id: str, server_id: str) -> bool:
+        """Add a server to a server group."""
+        with self._lock:
+            group = self._server_groups.get(server_group_id)
+            if not group:
+                return False
+            if server_id not in group.members:
+                group.members.append(server_id)
+            return True
+
+    def remove_server_from_group(self, server_group_id: str, server_id: str) -> bool:
+        """Remove a server from a server group."""
+        with self._lock:
+            group = self._server_groups.get(server_group_id)
+            if not group:
+                return False
+            if server_id in group.members:
+                group.members.remove(server_id)
+            return True
+
+    # ==================== Nova Quota Operations ====================
+
+    def get_nova_quota(self, project_id: str) -> NovaQuota:
+        """Get Nova quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._nova_quotas:
+                self._nova_quotas[project_id] = NovaQuota(project_id=project_id)
+            return self._nova_quotas[project_id]
+
+    def update_nova_quota(
+        self,
+        project_id: str,
+        instances: int | None = None,
+        cores: int | None = None,
+        ram: int | None = None,
+        metadata_items: int | None = None,
+        injected_files: int | None = None,
+        injected_file_content_bytes: int | None = None,
+        injected_file_path_bytes: int | None = None,
+        key_pairs: int | None = None,
+        server_groups: int | None = None,
+        server_group_members: int | None = None,
+    ) -> NovaQuota:
+        """Update Nova quotas for a project."""
+        with self._lock:
+            quota = self.get_nova_quota(project_id)
+            if instances is not None:
+                quota.instances = instances
+            if cores is not None:
+                quota.cores = cores
+            if ram is not None:
+                quota.ram = ram
+            if metadata_items is not None:
+                quota.metadata_items = metadata_items
+            if injected_files is not None:
+                quota.injected_files = injected_files
+            if injected_file_content_bytes is not None:
+                quota.injected_file_content_bytes = injected_file_content_bytes
+            if injected_file_path_bytes is not None:
+                quota.injected_file_path_bytes = injected_file_path_bytes
+            if key_pairs is not None:
+                quota.key_pairs = key_pairs
+            if server_groups is not None:
+                quota.server_groups = server_groups
+            if server_group_members is not None:
+                quota.server_group_members = server_group_members
+            return quota
+
+    def delete_nova_quota(self, project_id: str) -> bool:
+        """Delete Nova quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._nova_quotas:
+                del self._nova_quotas[project_id]
+                return True
+            return False
+
+    def get_nova_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Nova quota usage for a project."""
+        with self._lock:
+            servers = [s for s in self._servers.values() if s.tenant_id == project_id]
+            total_cores = 0
+            total_ram = 0
+            for server in servers:
+                flavor = self._flavors.get(server.flavor_id)
+                if flavor:
+                    total_cores += flavor.vcpus
+                    total_ram += flavor.ram
+
+            keypairs = [k for k in self._keypairs.values() if k.user_id.startswith(project_id)]
+            server_groups = [g for g in self._server_groups.values() if g.project_id == project_id]
+
+            return {
+                "instances": len(servers),
+                "cores": total_cores,
+                "ram": total_ram,
+                "key_pairs": len(keypairs),
+                "server_groups": len(server_groups),
+            }
+
+    # ==================== Neutron Quota Operations ====================
+
+    def get_neutron_quota(self, project_id: str) -> NeutronQuota:
+        """Get Neutron quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._neutron_quotas:
+                self._neutron_quotas[project_id] = NeutronQuota(project_id=project_id)
+            return self._neutron_quotas[project_id]
+
+    def update_neutron_quota(
+        self,
+        project_id: str,
+        network: int | None = None,
+        subnet: int | None = None,
+        subnetpool: int | None = None,
+        port: int | None = None,
+        router: int | None = None,
+        floatingip: int | None = None,
+        security_group: int | None = None,
+        security_group_rule: int | None = None,
+        rbac_policy: int | None = None,
+    ) -> NeutronQuota:
+        """Update Neutron quotas for a project."""
+        with self._lock:
+            quota = self.get_neutron_quota(project_id)
+            if network is not None:
+                quota.network = network
+            if subnet is not None:
+                quota.subnet = subnet
+            if subnetpool is not None:
+                quota.subnetpool = subnetpool
+            if port is not None:
+                quota.port = port
+            if router is not None:
+                quota.router = router
+            if floatingip is not None:
+                quota.floatingip = floatingip
+            if security_group is not None:
+                quota.security_group = security_group
+            if security_group_rule is not None:
+                quota.security_group_rule = security_group_rule
+            if rbac_policy is not None:
+                quota.rbac_policy = rbac_policy
+            return quota
+
+    def delete_neutron_quota(self, project_id: str) -> bool:
+        """Delete Neutron quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._neutron_quotas:
+                del self._neutron_quotas[project_id]
+                return True
+            return False
+
+    def get_neutron_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Neutron quota usage for a project."""
+        with self._lock:
+            networks = [n for n in self._networks.values() if n.project_id == project_id]
+            subnets = [s for s in self._subnets.values() if s.project_id == project_id]
+            ports = [p for p in self._ports.values() if p.project_id == project_id]
+            routers = [r for r in self._routers.values() if r.project_id == project_id]
+            floating_ips = [f for f in self._floating_ips.values() if f.project_id == project_id]
+            security_groups = [
+                sg for sg in self._security_groups.values() if sg.project_id == project_id
+            ]
+            security_group_rules = [
+                r for r in self._security_group_rules.values() if r.project_id == project_id
+            ]
+
+            return {
+                "network": len(networks),
+                "subnet": len(subnets),
+                "subnetpool": 0,
+                "port": len(ports),
+                "router": len(routers),
+                "floatingip": len(floating_ips),
+                "security_group": len(security_groups),
+                "security_group_rule": len(security_group_rules),
+                "rbac_policy": 0,
+            }
+
+    # ==================== Cinder Quota Operations ====================
+
+    def get_cinder_quota(self, project_id: str) -> CinderQuota:
+        """Get Cinder quotas for a project (creates default if not exists)."""
+        with self._lock:
+            if project_id not in self._cinder_quotas:
+                self._cinder_quotas[project_id] = CinderQuota(project_id=project_id)
+            return self._cinder_quotas[project_id]
+
+    def update_cinder_quota(
+        self,
+        project_id: str,
+        volumes: int | None = None,
+        snapshots: int | None = None,
+        gigabytes: int | None = None,
+        per_volume_gigabytes: int | None = None,
+        backups: int | None = None,
+        backup_gigabytes: int | None = None,
+        groups: int | None = None,
+    ) -> CinderQuota:
+        """Update Cinder quotas for a project."""
+        with self._lock:
+            quota = self.get_cinder_quota(project_id)
+            if volumes is not None:
+                quota.volumes = volumes
+            if snapshots is not None:
+                quota.snapshots = snapshots
+            if gigabytes is not None:
+                quota.gigabytes = gigabytes
+            if per_volume_gigabytes is not None:
+                quota.per_volume_gigabytes = per_volume_gigabytes
+            if backups is not None:
+                quota.backups = backups
+            if backup_gigabytes is not None:
+                quota.backup_gigabytes = backup_gigabytes
+            if groups is not None:
+                quota.groups = groups
+            return quota
+
+    def delete_cinder_quota(self, project_id: str) -> bool:
+        """Delete Cinder quota for a project (resets to defaults)."""
+        with self._lock:
+            if project_id in self._cinder_quotas:
+                del self._cinder_quotas[project_id]
+                return True
+            return False
+
+    def get_cinder_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Get current Cinder quota usage for a project."""
+        with self._lock:
+            volumes = [v for v in self._volumes.values() if v.project_id == project_id]
+            snapshots = [s for s in self._snapshots.values() if s.project_id == project_id]
+            total_gigabytes = sum(v.size for v in volumes)
+
+            return {
+                "volumes": len(volumes),
+                "snapshots": len(snapshots),
+                "gigabytes": total_gigabytes,
+                "backups": 0,
+                "backup_gigabytes": 0,
+                "groups": 0,
+            }
+
+    # ==================== RBAC Policy Operations ====================
+
+    def create_rbac_policy(
+        self,
+        object_type: str,
+        object_id: str,
+        target_project: str,
+        project_id: str,
+        action: str = "access_as_shared",
+    ) -> RbacPolicy:
+        """Create a new RBAC policy."""
+        with self._lock:
+            policy = RbacPolicy(
+                object_type=object_type,
+                object_id=object_id,
+                target_project=target_project,
+                project_id=project_id,
+                action=action,
+            )
+            self._rbac_policies[policy.id] = policy
+
+            # If sharing a network, update the network's shared flag
+            if object_type == "network" and target_project == "*":
+                network = self._networks.get(object_id)
+                if network:
+                    network.shared = True
+
+            return policy
+
+    def get_rbac_policy(self, policy_id: str) -> RbacPolicy | None:
+        """Get an RBAC policy by ID."""
+        with self._lock:
+            return self._rbac_policies.get(policy_id)
+
+    def list_rbac_policies(
+        self,
+        project_id: str | None = None,
+        object_type: str | None = None,
+        object_id: str | None = None,
+        target_project: str | None = None,
+        action: str | None = None,
+    ) -> list[RbacPolicy]:
+        """List RBAC policies with optional filtering."""
+        with self._lock:
+            policies = list(self._rbac_policies.values())
+            if project_id:
+                policies = [p for p in policies if p.project_id == project_id]
+            if object_type:
+                policies = [p for p in policies if p.object_type == object_type]
+            if object_id:
+                policies = [p for p in policies if p.object_id == object_id]
+            if target_project:
+                policies = [p for p in policies if p.target_project == target_project]
+            if action:
+                policies = [p for p in policies if p.action == action]
+            return policies
+
+    def update_rbac_policy(
+        self,
+        policy_id: str,
+        target_project: str | None = None,
+    ) -> RbacPolicy | None:
+        """Update an RBAC policy (only target_project can be updated)."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return None
+
+            old_target = policy.target_project
+
+            if target_project is not None:
+                policy.target_project = target_project
+                policy.updated_at = datetime.utcnow()
+
+                # Update network shared flag if applicable
+                if policy.object_type == "network":
+                    network = self._networks.get(policy.object_id)
+                    if network:
+                        if target_project == "*":
+                            network.shared = True
+                        elif old_target == "*":
+                            # Check if any other policy still shares this network
+                            other_policies = [
+                                p
+                                for p in self._rbac_policies.values()
+                                if p.object_id == policy.object_id
+                                and p.target_project == "*"
+                                and p.id != policy_id
+                            ]
+                            if not other_policies:
+                                network.shared = False
+
+            return policy
+
+    def delete_rbac_policy(self, policy_id: str) -> bool:
+        """Delete an RBAC policy."""
+        with self._lock:
+            policy = self._rbac_policies.get(policy_id)
+            if not policy:
+                return False
+
+            # Update network shared flag if applicable
+            if policy.object_type == "network" and policy.target_project == "*":
+                network = self._networks.get(policy.object_id)
+                if network:
+                    # Check if any other policy still shares this network
+                    other_policies = [
+                        p
+                        for p in self._rbac_policies.values()
+                        if p.object_id == policy.object_id
+                        and p.target_project == "*"
+                        and p.id != policy_id
+                    ]
+                    if not other_policies:
+                        network.shared = False
+
+            del self._rbac_policies[policy_id]
+            return True
+
     # Octavia Load Balancer operations
 
     def create_load_balancer(
@@ -3885,14 +4265,14 @@ class Database:
                 name=name,
                 description=description,
                 admin_state_up=admin_state_up,
-                vip_subnet_id=vip_subnet_id,
-                vip_network_id=vip_network_id,
+                project_id=project_id,
+                vip_subnet_id=vip_subnet_id or "",
+                vip_network_id=vip_network_id or "",
                 vip_port_id=vip_port_id,
                 vip_address=vip_address,
                 flavor_id=flavor_id,
                 provider=provider,
                 availability_zone=availability_zone,
-                project_id=project_id,
                 provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
                 operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
@@ -3927,15 +4307,9 @@ class Database:
             if vip_subnet_id:
                 lbs = [lb for lb in lbs if lb.vip_subnet_id == vip_subnet_id]
             if provisioning_status:
-                lbs = [
-                    lb
-                    for lb in lbs
-                    if lb.provisioning_status.value == provisioning_status
-                ]
+                lbs = [lb for lb in lbs if lb.provisioning_status.value == provisioning_status]
             if operating_status:
-                lbs = [
-                    lb for lb in lbs if lb.operating_status.value == operating_status
-                ]
+                lbs = [lb for lb in lbs if lb.operating_status.value == operating_status]
 
             return lbs
 
@@ -3962,7 +4336,6 @@ class Database:
             if tags is not None:
                 lb.tags = tags
 
-            lb.updated_at = datetime.utcnow()
             return lb
 
     def delete_load_balancer(self, lb_id: str, cascade: bool = False) -> bool:
@@ -3973,10 +4346,9 @@ class Database:
                 return False
 
             if cascade:
-                # Delete all associated listeners
+                # Delete all associated resources
                 for listener in list(lb.listeners):
                     self.delete_listener(listener.id, cascade=True)
-                # Delete all associated pools
                 for pool in list(lb.pools):
                     self.delete_pool(pool.id)
 
@@ -3987,11 +4359,11 @@ class Database:
 
     def create_listener(
         self,
+        name: str,
         loadbalancer_id: str,
         protocol: str,
         protocol_port: int,
         project_id: str,
-        name: str = "",
         description: str = "",
         admin_state_up: bool = True,
         connection_limit: int = -1,
@@ -4002,6 +4374,7 @@ class Database:
         timeout_client_data: int | None = None,
         timeout_member_connect: int | None = None,
         timeout_member_data: int | None = None,
+        timeout_tcp_inspect: int | None = None,
         allowed_cidrs: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> Listener | None:
@@ -4012,39 +4385,31 @@ class Database:
                 return None
 
             listener_id = str(uuid4())
-
-            try:
-                listener_protocol = ListenerProtocol(protocol)
-            except ValueError:
-                listener_protocol = ListenerProtocol.HTTP
-
             listener = Listener(
                 id=listener_id,
                 name=name,
                 description=description,
-                protocol=listener_protocol,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                protocol=ListenerProtocol(protocol),
                 protocol_port=protocol_port,
                 connection_limit=connection_limit,
                 default_pool_id=default_pool_id,
-                admin_state_up=admin_state_up,
-                loadbalancer_id=loadbalancer_id,
-                project_id=project_id,
-                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
-                operating_status=LoadBalancerOperatingStatus.ONLINE,
                 default_tls_container_ref=default_tls_container_ref,
                 sni_container_refs=sni_container_refs or [],
                 insert_headers=insert_headers or {},
                 timeout_client_data=timeout_client_data,
                 timeout_member_connect=timeout_member_connect,
                 timeout_member_data=timeout_member_data,
-                allowed_cidrs=allowed_cidrs,
+                timeout_tcp_inspect=timeout_tcp_inspect,
+                allowed_cidrs=allowed_cidrs or [],
+                loadbalancer_id=loadbalancer_id,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
             )
-
             self._listeners[listener_id] = listener
             lb.listeners.append(listener)
-            lb.updated_at = datetime.utcnow()
-
             return listener
 
     def get_listener(self, listener_id: str) -> Listener | None:
@@ -4067,9 +4432,7 @@ class Database:
             if project_id:
                 listeners = [l for l in listeners if l.project_id == project_id]
             if loadbalancer_id:
-                listeners = [
-                    l for l in listeners if l.loadbalancer_id == loadbalancer_id
-                ]
+                listeners = [l for l in listeners if l.loadbalancer_id == loadbalancer_id]
             if name:
                 listeners = [l for l in listeners if l.name == name]
             if protocol:
@@ -4093,6 +4456,7 @@ class Database:
         timeout_client_data: int | None = None,
         timeout_member_connect: int | None = None,
         timeout_member_data: int | None = None,
+        timeout_tcp_inspect: int | None = None,
         allowed_cidrs: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> Listener | None:
@@ -4124,12 +4488,13 @@ class Database:
                 listener.timeout_member_connect = timeout_member_connect
             if timeout_member_data is not None:
                 listener.timeout_member_data = timeout_member_data
+            if timeout_tcp_inspect is not None:
+                listener.timeout_tcp_inspect = timeout_tcp_inspect
             if allowed_cidrs is not None:
                 listener.allowed_cidrs = allowed_cidrs
             if tags is not None:
                 listener.tags = tags
 
-            listener.updated_at = datetime.utcnow()
             return listener
 
     def delete_listener(self, listener_id: str, cascade: bool = False) -> bool:
@@ -4139,16 +4504,15 @@ class Database:
             if not listener:
                 return False
 
-            if cascade:
-                # Delete associated L7 policies
-                for policy in list(listener.l7policies):
-                    self.delete_l7policy(policy.id)
-
             # Remove from load balancer
             lb = self._load_balancers.get(listener.loadbalancer_id)
             if lb:
                 lb.listeners = [l for l in lb.listeners if l.id != listener_id]
-                lb.updated_at = datetime.utcnow()
+
+            # Delete L7 policies if cascade
+            if cascade:
+                for policy in list(listener.l7policies):
+                    self.delete_l7policy(policy.id)
 
             del self._listeners[listener_id]
             return True
@@ -4157,12 +4521,12 @@ class Database:
 
     def create_pool(
         self,
+        name: str,
         protocol: str,
         lb_algorithm: str,
         project_id: str,
         loadbalancer_id: str | None = None,
         listener_id: str | None = None,
-        name: str = "",
         description: str = "",
         admin_state_up: bool = True,
         session_persistence: dict[str, Any] | None = None,
@@ -4173,48 +4537,47 @@ class Database:
         with self._lock:
             pool_id = str(uuid4())
 
-            try:
-                pool_protocol = PoolProtocol(protocol)
-            except ValueError:
-                pool_protocol = PoolProtocol.HTTP
+            actual_lb_id = loadbalancer_id
+            if loadbalancer_id:
+                lb = self._load_balancers.get(loadbalancer_id)
+                if not lb:
+                    return None
 
-            try:
-                pool_lb_algorithm = PoolLBAlgorithm(lb_algorithm)
-            except ValueError:
-                pool_lb_algorithm = PoolLBAlgorithm.ROUND_ROBIN
+            actual_listener_id = listener_id
+            if listener_id:
+                listener = self._listeners.get(listener_id)
+                if not listener:
+                    return None
+                # Get load balancer from listener
+                if listener.loadbalancer_id and not actual_lb_id:
+                    actual_lb_id = listener.loadbalancer_id
 
             pool = Pool(
                 id=pool_id,
                 name=name,
                 description=description,
-                protocol=pool_protocol,
-                lb_algorithm=pool_lb_algorithm,
                 admin_state_up=admin_state_up,
-                loadbalancer_id=loadbalancer_id,
-                listener_id=listener_id,
                 project_id=project_id,
+                protocol=PoolProtocol(protocol),
+                lb_algorithm=PoolLBAlgorithm(lb_algorithm),
+                session_persistence=session_persistence,
+                loadbalancer_id=actual_lb_id,
+                listener_id=actual_listener_id,
+                tls_enabled=tls_enabled,
                 provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
                 operating_status=LoadBalancerOperatingStatus.ONLINE,
-                session_persistence=session_persistence,
-                tls_enabled=tls_enabled,
                 tags=tags or [],
             )
-
             self._pools[pool_id] = pool
 
-            # Associate with load balancer if specified
-            if loadbalancer_id:
-                lb = self._load_balancers.get(loadbalancer_id)
+            if actual_lb_id:
+                lb = self._load_balancers.get(actual_lb_id)
                 if lb:
                     lb.pools.append(pool)
-                    lb.updated_at = datetime.utcnow()
-
-            # Set as default pool for listener if specified
             if listener_id:
                 listener = self._listeners.get(listener_id)
                 if listener:
                     listener.default_pool_id = pool_id
-                    listener.updated_at = datetime.utcnow()
 
             return pool
 
@@ -4272,10 +4635,7 @@ class Database:
             if admin_state_up is not None:
                 pool.admin_state_up = admin_state_up
             if lb_algorithm is not None:
-                try:
-                    pool.lb_algorithm = PoolLBAlgorithm(lb_algorithm)
-                except ValueError:
-                    pass
+                pool.lb_algorithm = PoolLBAlgorithm(lb_algorithm)
             if session_persistence is not None:
                 pool.session_persistence = session_persistence
             if tls_enabled is not None:
@@ -4283,7 +4643,6 @@ class Database:
             if tags is not None:
                 pool.tags = tags
 
-            pool.updated_at = datetime.utcnow()
             return pool
 
     def delete_pool(self, pool_id: str) -> bool:
@@ -4293,35 +4652,31 @@ class Database:
             if not pool:
                 return False
 
-            # Delete associated members
-            member_keys_to_delete = [
-                key for key in self._pool_members if key.startswith(f"{pool_id}:")
-            ]
-            for key in member_keys_to_delete:
-                del self._pool_members[key]
-
-            # Delete associated health monitor
-            if pool.healthmonitor_id:
-                self.delete_health_monitor(pool.healthmonitor_id)
-
             # Remove from load balancer
             if pool.loadbalancer_id:
                 lb = self._load_balancers.get(pool.loadbalancer_id)
                 if lb:
                     lb.pools = [p for p in lb.pools if p.id != pool_id]
-                    lb.updated_at = datetime.utcnow()
 
-            # Remove as default pool from listener
+            # Remove from listener
             if pool.listener_id:
                 listener = self._listeners.get(pool.listener_id)
                 if listener and listener.default_pool_id == pool_id:
                     listener.default_pool_id = None
-                    listener.updated_at = datetime.utcnow()
+
+            # Delete pool members
+            member_keys = [k for k in self._pool_members.keys() if k.startswith(f"{pool_id}:")]
+            for key in member_keys:
+                del self._pool_members[key]
+
+            # Delete health monitor
+            if pool.healthmonitor_id:
+                self.delete_health_monitor(pool.healthmonitor_id)
 
             del self._pools[pool_id]
             return True
 
-    # Pool member operations
+    # Pool Member operations
 
     def create_pool_member(
         self,
@@ -4333,9 +4688,9 @@ class Database:
         weight: int = 1,
         subnet_id: str | None = None,
         admin_state_up: bool = True,
-        backup: bool = False,
         monitor_address: str | None = None,
         monitor_port: int | None = None,
+        backup: bool = False,
         tags: list[str] | None = None,
     ) -> PoolMember | None:
         """Create a new pool member."""
@@ -4345,37 +4700,30 @@ class Database:
                 return None
 
             member_id = str(uuid4())
-
             member = PoolMember(
                 id=member_id,
                 name=name,
                 address=address,
                 protocol_port=protocol_port,
                 weight=weight,
-                subnet_id=subnet_id,
+                subnet_id=subnet_id or "",
                 admin_state_up=admin_state_up,
-                pool_id=pool_id,
                 project_id=project_id,
-                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
-                operating_status=LoadBalancerOperatingStatus.ONLINE,
-                backup=backup,
                 monitor_address=monitor_address,
                 monitor_port=monitor_port,
+                backup=backup,
+                provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
+                operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
             )
-
-            key = f"{pool_id}:{member_id}"
-            self._pool_members[key] = member
+            self._pool_members[f"{pool_id}:{member_id}"] = member
             pool.members.append(member)
-            pool.updated_at = datetime.utcnow()
-
             return member
 
     def get_pool_member(self, pool_id: str, member_id: str) -> PoolMember | None:
         """Get a pool member by ID."""
         with self._lock:
-            key = f"{pool_id}:{member_id}"
-            return self._pool_members.get(key)
+            return self._pool_members.get(f"{pool_id}:{member_id}")
 
     def list_pool_members(
         self,
@@ -4384,21 +4732,18 @@ class Database:
         address: str | None = None,
         protocol_port: int | None = None,
     ) -> list[PoolMember]:
-        """List pool members with optional filtering."""
+        """List members of a pool."""
         with self._lock:
             pool = self._pools.get(pool_id)
             if not pool:
                 return []
-
             members = list(pool.members)
-
             if project_id:
                 members = [m for m in members if m.project_id == project_id]
             if address:
                 members = [m for m in members if m.address == address]
             if protocol_port:
                 members = [m for m in members if m.protocol_port == protocol_port]
-
             return members
 
     def update_pool_member(
@@ -4408,15 +4753,14 @@ class Database:
         name: str | None = None,
         weight: int | None = None,
         admin_state_up: bool | None = None,
-        backup: bool | None = None,
         monitor_address: str | None = None,
         monitor_port: int | None = None,
+        backup: bool | None = None,
         tags: list[str] | None = None,
     ) -> PoolMember | None:
         """Update a pool member."""
         with self._lock:
-            key = f"{pool_id}:{member_id}"
-            member = self._pool_members.get(key)
+            member = self._pool_members.get(f"{pool_id}:{member_id}")
             if not member:
                 return None
 
@@ -4426,16 +4770,15 @@ class Database:
                 member.weight = weight
             if admin_state_up is not None:
                 member.admin_state_up = admin_state_up
-            if backup is not None:
-                member.backup = backup
             if monitor_address is not None:
                 member.monitor_address = monitor_address
             if monitor_port is not None:
                 member.monitor_port = monitor_port
+            if backup is not None:
+                member.backup = backup
             if tags is not None:
                 member.tags = tags
 
-            member.updated_at = datetime.utcnow()
             return member
 
     def delete_pool_member(self, pool_id: str, member_id: str) -> bool:
@@ -4446,16 +4789,14 @@ class Database:
             if not member:
                 return False
 
-            # Remove from pool
             pool = self._pools.get(pool_id)
             if pool:
                 pool.members = [m for m in pool.members if m.id != member_id]
-                pool.updated_at = datetime.utcnow()
 
             del self._pool_members[key]
             return True
 
-    # Health monitor operations
+    # Health Monitor operations
 
     def create_health_monitor(
         self,
@@ -4471,6 +4812,7 @@ class Database:
         url_path: str = "/",
         expected_codes: str = "200",
         admin_state_up: bool = True,
+        domain_name: str | None = None,
         tags: list[str] | None = None,
     ) -> HealthMonitor | None:
         """Create a new health monitor."""
@@ -4479,21 +4821,15 @@ class Database:
             if not pool:
                 return None
 
-            # Only one health monitor per pool
+            # Check if pool already has a health monitor
             if pool.healthmonitor_id:
                 return None
 
             monitor_id = str(uuid4())
-
-            try:
-                monitor_type = HealthMonitorType(type)
-            except ValueError:
-                monitor_type = HealthMonitorType.HTTP
-
             monitor = HealthMonitor(
                 id=monitor_id,
                 name=name,
-                type=monitor_type,
+                type=HealthMonitorType(type),
                 delay=delay,
                 timeout=timeout,
                 max_retries=max_retries,
@@ -4502,17 +4838,14 @@ class Database:
                 url_path=url_path,
                 expected_codes=expected_codes,
                 admin_state_up=admin_state_up,
-                pool_id=pool_id,
                 project_id=project_id,
+                pool_id=pool_id,
                 provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
                 operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
             )
-
             self._health_monitors[monitor_id] = monitor
             pool.healthmonitor_id = monitor_id
-            pool.updated_at = datetime.utcnow()
-
             return monitor
 
     def get_health_monitor(self, monitor_id: str) -> HealthMonitor | None:
@@ -4551,6 +4884,7 @@ class Database:
         url_path: str | None = None,
         expected_codes: str | None = None,
         admin_state_up: bool | None = None,
+        domain_name: str | None = None,
         tags: list[str] | None = None,
     ) -> HealthMonitor | None:
         """Update a health monitor."""
@@ -4577,10 +4911,11 @@ class Database:
                 monitor.expected_codes = expected_codes
             if admin_state_up is not None:
                 monitor.admin_state_up = admin_state_up
+            if domain_name is not None:
+                monitor.domain_name = domain_name
             if tags is not None:
                 monitor.tags = tags
 
-            monitor.updated_at = datetime.utcnow()
             return monitor
 
     def delete_health_monitor(self, monitor_id: str) -> bool:
@@ -4594,7 +4929,6 @@ class Database:
             pool = self._pools.get(monitor.pool_id)
             if pool:
                 pool.healthmonitor_id = None
-                pool.updated_at = datetime.utcnow()
 
             del self._health_monitors[monitor_id]
             return True
@@ -4608,11 +4942,11 @@ class Database:
         project_id: str,
         name: str = "",
         description: str = "",
+        position: int = 1,
         redirect_pool_id: str | None = None,
         redirect_url: str | None = None,
         redirect_prefix: str | None = None,
         redirect_http_code: int | None = None,
-        position: int = 1,
         admin_state_up: bool = True,
         tags: list[str] | None = None,
     ) -> L7Policy | None:
@@ -4623,34 +4957,25 @@ class Database:
                 return None
 
             policy_id = str(uuid4())
-
-            try:
-                policy_action = L7PolicyAction(action)
-            except ValueError:
-                policy_action = L7PolicyAction.REJECT
-
             policy = L7Policy(
                 id=policy_id,
                 name=name,
                 description=description,
-                action=policy_action,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                listener_id=listener_id,
+                action=L7PolicyAction(action),
+                position=position,
                 redirect_pool_id=redirect_pool_id,
                 redirect_url=redirect_url,
                 redirect_prefix=redirect_prefix,
                 redirect_http_code=redirect_http_code,
-                position=position,
-                admin_state_up=admin_state_up,
-                listener_id=listener_id,
-                project_id=project_id,
                 provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
                 operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
             )
-
             self._l7policies[policy_id] = policy
             listener.l7policies.append(policy)
-            listener.updated_at = datetime.utcnow()
-
             return policy
 
     def get_l7policy(self, policy_id: str) -> L7Policy | None:
@@ -4682,13 +5007,13 @@ class Database:
         policy_id: str,
         name: str | None = None,
         description: str | None = None,
+        admin_state_up: bool | None = None,
         action: str | None = None,
+        position: int | None = None,
         redirect_pool_id: str | None = None,
         redirect_url: str | None = None,
         redirect_prefix: str | None = None,
         redirect_http_code: int | None = None,
-        position: int | None = None,
-        admin_state_up: bool | None = None,
         tags: list[str] | None = None,
     ) -> L7Policy | None:
         """Update an L7 policy."""
@@ -4701,11 +5026,12 @@ class Database:
                 policy.name = name
             if description is not None:
                 policy.description = description
+            if admin_state_up is not None:
+                policy.admin_state_up = admin_state_up
             if action is not None:
-                try:
-                    policy.action = L7PolicyAction(action)
-                except ValueError:
-                    pass
+                policy.action = L7PolicyAction(action)
+            if position is not None:
+                policy.position = position
             if redirect_pool_id is not None:
                 policy.redirect_pool_id = redirect_pool_id
             if redirect_url is not None:
@@ -4714,14 +5040,9 @@ class Database:
                 policy.redirect_prefix = redirect_prefix
             if redirect_http_code is not None:
                 policy.redirect_http_code = redirect_http_code
-            if position is not None:
-                policy.position = position
-            if admin_state_up is not None:
-                policy.admin_state_up = admin_state_up
             if tags is not None:
                 policy.tags = tags
 
-            policy.updated_at = datetime.utcnow()
             return policy
 
     def delete_l7policy(self, policy_id: str) -> bool:
@@ -4731,15 +5052,15 @@ class Database:
             if not policy:
                 return False
 
-            # Delete associated rules
-            for rule in list(policy.rules):
-                self.delete_l7rule(policy_id, rule.id)
-
             # Remove from listener
             listener = self._listeners.get(policy.listener_id)
             if listener:
                 listener.l7policies = [p for p in listener.l7policies if p.id != policy_id]
-                listener.updated_at = datetime.utcnow()
+
+            # Delete associated rules
+            rule_keys = [k for k in self._l7rules.keys() if k.startswith(f"{policy_id}:")]
+            for key in rule_keys:
+                del self._l7rules[key]
 
             del self._l7policies[policy_id]
             return True
@@ -4765,45 +5086,27 @@ class Database:
                 return None
 
             rule_id = str(uuid4())
-
-            try:
-                rule_type = L7RuleType(type)
-            except ValueError:
-                rule_type = L7RuleType.PATH
-
-            try:
-                rule_compare_type = L7RuleCompareType(compare_type)
-            except ValueError:
-                rule_compare_type = L7RuleCompareType.EQUAL_TO
-
             rule = L7Rule(
                 id=rule_id,
-                type=rule_type,
-                compare_type=rule_compare_type,
-                key=key,
+                type=L7RuleType(type),
+                compare_type=L7RuleCompareType(compare_type),
                 value=value,
+                key=key,
                 invert=invert,
                 admin_state_up=admin_state_up,
-                l7policy_id=l7policy_id,
                 project_id=project_id,
                 provisioning_status=LoadBalancerProvisioningStatus.ACTIVE,
                 operating_status=LoadBalancerOperatingStatus.ONLINE,
                 tags=tags or [],
             )
-
-            self._l7rules[rule_id] = rule
+            self._l7rules[f"{l7policy_id}:{rule_id}"] = rule
             policy.rules.append(rule)
-            policy.updated_at = datetime.utcnow()
-
             return rule
 
     def get_l7rule(self, l7policy_id: str, rule_id: str) -> L7Rule | None:
         """Get an L7 rule by ID."""
         with self._lock:
-            rule = self._l7rules.get(rule_id)
-            if rule and rule.l7policy_id == l7policy_id:
-                return rule
-            return None
+            return self._l7rules.get(f"{l7policy_id}:{rule_id}")
 
     def list_l7rules(
         self,
@@ -4811,19 +5114,16 @@ class Database:
         project_id: str | None = None,
         type: str | None = None,
     ) -> list[L7Rule]:
-        """List L7 rules with optional filtering."""
+        """List rules for an L7 policy."""
         with self._lock:
             policy = self._l7policies.get(l7policy_id)
             if not policy:
                 return []
-
             rules = list(policy.rules)
-
             if project_id:
                 rules = [r for r in rules if r.project_id == project_id]
             if type:
                 rules = [r for r in rules if r.type.value == type]
-
             return rules
 
     def update_l7rule(
@@ -4832,32 +5132,26 @@ class Database:
         rule_id: str,
         type: str | None = None,
         compare_type: str | None = None,
-        key: str | None = None,
         value: str | None = None,
+        key: str | None = None,
         invert: bool | None = None,
         admin_state_up: bool | None = None,
         tags: list[str] | None = None,
     ) -> L7Rule | None:
         """Update an L7 rule."""
         with self._lock:
-            rule = self._l7rules.get(rule_id)
-            if not rule or rule.l7policy_id != l7policy_id:
+            rule = self._l7rules.get(f"{l7policy_id}:{rule_id}")
+            if not rule:
                 return None
 
             if type is not None:
-                try:
-                    rule.type = L7RuleType(type)
-                except ValueError:
-                    pass
+                rule.type = L7RuleType(type)
             if compare_type is not None:
-                try:
-                    rule.compare_type = L7RuleCompareType(compare_type)
-                except ValueError:
-                    pass
-            if key is not None:
-                rule.key = key
+                rule.compare_type = L7RuleCompareType(compare_type)
             if value is not None:
                 rule.value = value
+            if key is not None:
+                rule.key = key
             if invert is not None:
                 rule.invert = invert
             if admin_state_up is not None:
@@ -4865,23 +5159,21 @@ class Database:
             if tags is not None:
                 rule.tags = tags
 
-            rule.updated_at = datetime.utcnow()
             return rule
 
     def delete_l7rule(self, l7policy_id: str, rule_id: str) -> bool:
         """Delete an L7 rule."""
         with self._lock:
-            rule = self._l7rules.get(rule_id)
-            if not rule or rule.l7policy_id != l7policy_id:
+            key = f"{l7policy_id}:{rule_id}"
+            rule = self._l7rules.get(key)
+            if not rule:
                 return False
 
-            # Remove from policy
             policy = self._l7policies.get(l7policy_id)
             if policy:
                 policy.rules = [r for r in policy.rules if r.id != rule_id]
-                policy.updated_at = datetime.utcnow()
 
-            del self._l7rules[rule_id]
+            del self._l7rules[key]
             return True
 
     def reset_octavia(self) -> None:

@@ -1360,6 +1360,201 @@ class SecurityGroup:
         }
 
 
+# Nova Server Groups
+
+
+@dataclass
+class ServerGroup:
+    """Represents a Nova server group for affinity/anti-affinity policies."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    policies: list[str] = field(
+        default_factory=list
+    )  # affinity, anti-affinity, soft-affinity, soft-anti-affinity
+    members: list[str] = field(default_factory=list)  # server IDs
+    project_id: str = ""
+    user_id: str = ""
+    metadata: dict[str, str] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "policies": self.policies,
+            "members": self.members,
+            "project_id": self.project_id,
+            "user_id": self.user_id,
+            "metadata": self.metadata,
+        }
+
+
+# Quota Models
+
+
+@dataclass
+class NovaQuota:
+    """Represents Nova compute quotas for a project."""
+
+    project_id: str = ""
+    instances: int = 10
+    cores: int = 20
+    ram: int = 51200  # MB
+    metadata_items: int = 128
+    injected_files: int = 5
+    injected_file_content_bytes: int = 10240
+    injected_file_path_bytes: int = 255
+    key_pairs: int = 100
+    server_groups: int = 10
+    server_group_members: int = 10
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.project_id,
+            "instances": self.instances,
+            "cores": self.cores,
+            "ram": self.ram,
+            "metadata_items": self.metadata_items,
+            "injected_files": self.injected_files,
+            "injected_file_content_bytes": self.injected_file_content_bytes,
+            "injected_file_path_bytes": self.injected_file_path_bytes,
+            "key_pairs": self.key_pairs,
+            "server_groups": self.server_groups,
+            "server_group_members": self.server_group_members,
+        }
+
+
+@dataclass
+class NeutronQuota:
+    """Represents Neutron networking quotas for a project."""
+
+    project_id: str = ""
+    network: int = 100
+    subnet: int = 100
+    subnetpool: int = -1
+    port: int = 500
+    router: int = 10
+    floatingip: int = 50
+    security_group: int = 10
+    security_group_rule: int = 100
+    rbac_policy: int = 10
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "network": self.network,
+            "subnet": self.subnet,
+            "subnetpool": self.subnetpool,
+            "port": self.port,
+            "router": self.router,
+            "floatingip": self.floatingip,
+            "security_group": self.security_group,
+            "security_group_rule": self.security_group_rule,
+            "rbac_policy": self.rbac_policy,
+        }
+
+    def to_detail_dict(self, usage: dict[str, int]) -> dict[str, Any]:
+        """Convert to detailed quota response with usage."""
+        return {
+            "network": {"limit": self.network, "used": usage.get("network", 0), "reserved": 0},
+            "subnet": {"limit": self.subnet, "used": usage.get("subnet", 0), "reserved": 0},
+            "subnetpool": {
+                "limit": self.subnetpool,
+                "used": usage.get("subnetpool", 0),
+                "reserved": 0,
+            },
+            "port": {"limit": self.port, "used": usage.get("port", 0), "reserved": 0},
+            "router": {"limit": self.router, "used": usage.get("router", 0), "reserved": 0},
+            "floatingip": {
+                "limit": self.floatingip,
+                "used": usage.get("floatingip", 0),
+                "reserved": 0,
+            },
+            "security_group": {
+                "limit": self.security_group,
+                "used": usage.get("security_group", 0),
+                "reserved": 0,
+            },
+            "security_group_rule": {
+                "limit": self.security_group_rule,
+                "used": usage.get("security_group_rule", 0),
+                "reserved": 0,
+            },
+            "rbac_policy": {
+                "limit": self.rbac_policy,
+                "used": usage.get("rbac_policy", 0),
+                "reserved": 0,
+            },
+        }
+
+
+@dataclass
+class CinderQuota:
+    """Represents Cinder block storage quotas for a project."""
+
+    project_id: str = ""
+    volumes: int = 10
+    snapshots: int = 10
+    gigabytes: int = 1000  # GB
+    per_volume_gigabytes: int = -1  # -1 means unlimited
+    backups: int = 10
+    backup_gigabytes: int = 1000
+    groups: int = 10
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.project_id,
+            "volumes": self.volumes,
+            "snapshots": self.snapshots,
+            "gigabytes": self.gigabytes,
+            "per_volume_gigabytes": self.per_volume_gigabytes,
+            "backups": self.backups,
+            "backup_gigabytes": self.backup_gigabytes,
+            "groups": self.groups,
+        }
+
+
+# Neutron RBAC Policy Models
+
+
+class RbacAction(str, Enum):
+    """RBAC action types."""
+
+    ACCESS_AS_SHARED = "access_as_shared"
+    ACCESS_AS_EXTERNAL = "access_as_external"
+
+
+@dataclass
+class RbacPolicy:
+    """Represents a Neutron RBAC policy for sharing resources between tenants."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    object_type: str = (
+        "network"  # network, qos_policy, security_group, address_scope, subnetpool, address_group
+    )
+    object_id: str = ""
+    target_project: str = ""  # '*' for all tenants or specific project_id
+    project_id: str = ""  # owner of the policy
+    action: str = "access_as_shared"  # access_as_shared, access_as_external
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "object_type": self.object_type,
+            "object_id": self.object_id,
+            "target_tenant": self.target_project,  # Neutron API uses target_tenant
+            "target_project": self.target_project,
+            "tenant_id": self.project_id,
+            "project_id": self.project_id,
+            "action": self.action,
+        }
 # Octavia Load Balancer Models
 
 
