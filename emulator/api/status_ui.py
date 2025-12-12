@@ -17,6 +17,7 @@ from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
 )
+from emulator.core.presets import PresetLoader
 from emulator.core.scenario_manager import scenario_manager
 from emulator.core.scenarios import ScenarioCategory
 
@@ -1163,6 +1164,48 @@ JS_SCRIPT = """
             } else {
                 const result = await response.json();
                 showToast(result.detail || 'Failed to apply preset', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    // Resource preset management functions
+    async function loadResourcePreset(presetName) {
+        if (!confirm('Load resource preset "' + presetName + '"? This will create resources in the emulator.')) {
+            return;
+        }
+        try {
+            showToast('Loading preset "' + presetName + '"...');
+            const response = await fetch('/api/resource-presets/' + presetName, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            if (response.ok) {
+                showToast('Preset loaded: ' + result.total_resources + ' resources created');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(result.detail?.message || 'Failed to load preset', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function previewResourcePreset(presetName) {
+        try {
+            const response = await fetch('/api/resource-presets/' + presetName + '/preview');
+            const result = await response.json();
+            if (response.ok) {
+                let details = 'Resources to create:\\n';
+                for (const [key, value] of Object.entries(result.resource_counts)) {
+                    if (value > 0) {
+                        details += '  - ' + key + ': ' + value + '\\n';
+                    }
+                }
+                alert('Preset: ' + result.preset_name + '\\n' + result.description + '\\n\\n' + details);
+            } else {
+                showToast('Failed to preview preset', 'error');
             }
         } catch (error) {
             showToast('Network error', 'error');
@@ -2381,6 +2424,85 @@ def build_scenarios_content(
         {presets}
         {scenario_sections}
         {stats_html}
+    </div>
+    """
+
+
+def build_resource_presets_content(available_presets: list[dict]) -> str:
+    """Build the resource presets section HTML."""
+    # Build preset cards
+    preset_cards = ""
+    preset_descriptions = {
+        "empty": "Minimal setup with only default resources",
+        "development": "Small dev environment with project, network, and servers",
+        "production": "Production-like with multiple projects, networks, and load balancers",
+    }
+
+    for preset in available_presets:
+        name = preset.get("name", "unknown")
+        description = preset.get("description", preset_descriptions.get(name, ""))
+        file_name = preset.get("file", f"{name}.yaml")
+
+        # Determine badge color based on preset type
+        if name == "empty":
+            badge_class = "bg-[#238636]"
+            badge_text = "MINIMAL"
+        elif name == "development":
+            badge_class = "bg-[#1f6feb]"
+            badge_text = "DEV"
+        elif name == "production":
+            badge_class = "bg-[#8957e5]"
+            badge_text = "PROD"
+        else:
+            badge_class = "bg-[#6e7681]"
+            badge_text = "CUSTOM"
+
+        preset_cards += f"""
+        <div class="preset-card" style="background: #161b22; border: 1px solid #30363d; padding: 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                    <h4 style="color: #c9d1d9; margin: 0; font-size: 1rem;">{name}</h4>
+                    <span class="{badge_class}" style="color: white; padding: 2px 8px; font-size: 0.7rem; border-radius: 3px;">{badge_text}</span>
+                </div>
+                <p style="color: #8b949e; font-size: 0.85rem; margin: 0 0 6px 0;">{description}</p>
+                <p style="color: #6e7681; font-size: 0.75rem; margin: 0;">File: {file_name}</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-sm" onclick="previewResourcePreset('{name}')" title="Preview resources">
+                    👁 Preview
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="loadResourcePreset('{name}')" title="Load this preset">
+                    ▶ Load
+                </button>
+            </div>
+        </div>
+        """
+
+    if not preset_cards:
+        preset_cards = """
+        <div style="text-align: center; padding: 20px; color: #8b949e;">
+            <p>No resource presets found.</p>
+            <p style="font-size: 0.85rem;">Add YAML files to the presets directory to create presets.</p>
+        </div>
+        """
+
+    return f"""
+    <div class="resource-group">
+        <p style="margin-bottom: 20px; color: #8b949e;">
+            Load pre-configured resource sets to quickly set up OpenStack environments.
+            Presets can create projects, networks, servers, volumes, and more.
+        </p>
+
+        <div style="margin-bottom: 20px;">
+            <div style="background: #0d1117; border: 1px solid #f97316; border-left-width: 4px; padding: 12px 16px; margin-bottom: 16px;">
+                <p style="color: #f97316; font-size: 0.85rem; margin: 0;">
+                    <strong>Note:</strong> Loading a preset will create new resources. Existing resources with the same names will be skipped.
+                </p>
+            </div>
+        </div>
+
+        <h4 style="color: #00d4ff; margin-bottom: 16px;">Available Presets</h4>
+        {preset_cards}
     </div>
     """
 
@@ -3677,6 +3799,11 @@ async def scenarios_page(
     # Build scenarios content HTML
     scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
 
+    # Get resource presets
+    preset_loader = PresetLoader(db)
+    available_presets = preset_loader.list_available_presets()
+    resource_presets_content = build_resource_presets_content(available_presets)
+
     # Build the full HTML page
     html = f"""
     <!DOCTYPE html>
@@ -3727,13 +3854,23 @@ async def scenarios_page(
             </div>
 
             <!-- Scenarios Content -->
-            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6 mb-8">
                 <div class="flex items-center gap-3 mb-6">
                     <span class="text-[#00ff41] text-lg">■</span>
                     <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Scenario Configuration</h2>
                     <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
                 </div>
                 {scenarios_content}
+            </div>
+
+            <!-- Resource Presets Content -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#8957e5] text-lg">📦</span>
+                    <h2 class="text-lg font-semibold text-[#8957e5] uppercase tracking-wider">Resource Presets</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                {resource_presets_content}
             </div>
 
             <!-- Footer -->
@@ -4851,3 +4988,83 @@ async def api_set_load_level(request: ScenarioLoadRequest) -> dict:
     scenario_manager.enable_scenario(scenario_id)
 
     return {"message": f"Load level set to {level}%"}
+
+
+# Resource preset API endpoints
+@router.get("/api/resource-presets")
+async def api_list_resource_presets() -> dict:
+    """List available resource presets."""
+    loader = PresetLoader(db)
+    presets = loader.list_available_presets()
+    return {
+        "presets": presets,
+        "count": len(presets),
+    }
+
+
+@router.post("/api/resource-presets/{preset_name}")
+async def api_load_resource_preset(preset_name: str) -> dict:
+    """Load a resource preset by name."""
+    loader = PresetLoader(db)
+    result = loader.load_preset_by_name(preset_name)
+
+    if not result.success:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Failed to load preset '{preset_name}'",
+                "errors": result.errors,
+            },
+        )
+
+    return {
+        "message": f"Preset '{preset_name}' loaded successfully",
+        "preset_name": result.preset_name,
+        "resources_created": result.resources_created,
+        "total_resources": result.resource_count,
+        "errors": result.errors,
+    }
+
+
+@router.get("/api/resource-presets/{preset_name}/preview")
+async def api_preview_resource_preset(preset_name: str) -> dict:
+    """Preview a resource preset without loading it."""
+    import yaml  # type: ignore[import-untyped]
+
+    loader = PresetLoader(db)
+    preset_path = loader.BUILTIN_PRESETS_DIR / f"{preset_name}.yaml"
+
+    if not preset_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Preset '{preset_name}' not found",
+        )
+
+    with open(preset_path) as f:
+        config = yaml.safe_load(f)
+
+    # Count resources
+    resource_counts: dict[str, int] = {}
+    if "keystone" in config:
+        resource_counts["projects"] = len(config["keystone"].get("projects", []))
+    if "glance" in config:
+        resource_counts["images"] = len(config["glance"].get("images", []))
+    if "neutron" in config:
+        neutron = config["neutron"]
+        resource_counts["networks"] = len(neutron.get("networks", []))
+        resource_counts["routers"] = len(neutron.get("routers", []))
+        resource_counts["security_groups"] = len(neutron.get("security_groups", []))
+    if "nova" in config:
+        resource_counts["servers"] = len(config["nova"].get("servers", []))
+        resource_counts["keypairs"] = len(config["nova"].get("keypairs", []))
+    if "cinder" in config:
+        resource_counts["volumes"] = len(config["cinder"].get("volumes", []))
+        resource_counts["snapshots"] = len(config["cinder"].get("snapshots", []))
+    if "octavia" in config:
+        resource_counts["load_balancers"] = len(config["octavia"].get("load_balancers", []))
+
+    return {
+        "preset_name": config.get("name", preset_name),
+        "description": config.get("description", ""),
+        "resource_counts": resource_counts,
+    }
