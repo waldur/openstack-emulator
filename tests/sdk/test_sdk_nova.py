@@ -371,7 +371,8 @@ class TestNovaServerActions:
 
         # Check image properties (stored in properties dict)
         assert image.properties.get("image_type") == "snapshot"
-        assert image.properties.get("instance_uuid") == server.id
+        # instance_uuid is a top-level attribute, not in properties
+        assert image.instance_uuid == server.id
 
     def test_create_server_image_with_metadata(self, openstack_connection: Connection) -> None:
         """Test creating a snapshot image with custom metadata."""
