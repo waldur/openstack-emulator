@@ -261,8 +261,11 @@ class Database:
         self._projects[service_project.id] = service_project
 
         # Create admin user
+        import hashlib
+
         self._default_user_id = str(uuid4())
         self._default_user_name = "admin"
+        admin_password_hash = hashlib.sha256("s4l4dus".encode()).hexdigest()
         admin_user = User(
             id=self._default_user_id,
             name=self._default_user_name,
@@ -271,6 +274,7 @@ class Database:
             default_project_id=self._default_project_id,
             enabled=True,
             email="admin@example.com",
+            password_hash=admin_password_hash,
         )
         self._users[admin_user.id] = admin_user
 

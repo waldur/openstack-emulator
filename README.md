@@ -174,7 +174,7 @@ The Status Web UI provides a real-time dashboard to view and manage the state of
 
 **Authentication:**
 - Click **Login** to authenticate with Keystone credentials
-- Default credentials: `admin` / any password (emulator accepts any password)
+- Default credentials: `admin` / `s4l4dus`
 - Once logged in, you can create and delete resources directly from the web interface
 
 **Management API Endpoints:**
