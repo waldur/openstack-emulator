@@ -532,6 +532,79 @@ tailwind.config = {
         background: rgba(255, 51, 102, 0.2);
         box-shadow: 0 0 10px rgba(255, 51, 102, 0.4);
     }
+    /* Preview modal - larger and purple themed */
+    .modal-content.preview-modal {
+        max-width: 700px;
+        border-color: #8957e5;
+        box-shadow: 0 0 30px rgba(137, 87, 229, 0.3), inset 0 0 30px rgba(137, 87, 229, 0.05);
+    }
+    .modal-content.preview-modal::before {
+        content: '[ PRESET PREVIEW ]';
+        color: #8957e5;
+    }
+    .modal-content.preview-modal .modal-header {
+        border-bottom-color: #8957e5;
+    }
+    .modal-content.preview-modal .modal-header h3 {
+        color: #8957e5;
+    }
+    .preview-description {
+        color: #8b949e;
+        font-size: 0.9rem;
+        margin-bottom: 20px;
+        padding: 12px;
+        background: rgba(137, 87, 229, 0.1);
+        border-left: 3px solid #8957e5;
+    }
+    .preview-section {
+        margin-bottom: 20px;
+    }
+    .preview-section-title {
+        color: #00d4ff;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .preview-section-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, #1e3a5f, transparent);
+    }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+    }
+    .preview-stat {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid #1e3a5f;
+        padding: 12px;
+        text-align: center;
+    }
+    .preview-stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #00ff41;
+    }
+    .preview-stat-label {
+        font-size: 0.7rem;
+        color: #4a5568;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 4px;
+    }
+    .preview-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid #1e3a5f;
+    }
     /* Form styles */
     .form-group {
         margin-bottom: 20px;
@@ -1197,13 +1270,43 @@ JS_SCRIPT = """
             const response = await fetch('/api/resource-presets/' + presetName + '/preview');
             const result = await response.json();
             if (response.ok) {
-                let details = 'Resources to create:\\n';
+                // Build resource stats grid
+                let statsHtml = '';
+                const resourceLabels = {
+                    'projects': 'Projects',
+                    'images': 'Images',
+                    'networks': 'Networks',
+                    'subnets': 'Subnets',
+                    'routers': 'Routers',
+                    'security_groups': 'Security Groups',
+                    'servers': 'Servers',
+                    'keypairs': 'Keypairs',
+                    'volumes': 'Volumes',
+                    'snapshots': 'Snapshots',
+                    'load_balancers': 'Load Balancers'
+                };
+
+                let totalResources = 0;
                 for (const [key, value] of Object.entries(result.resource_counts)) {
                     if (value > 0) {
-                        details += '  - ' + key + ': ' + value + '\\n';
+                        totalResources += value;
+                        const label = resourceLabels[key] || key;
+                        statsHtml += '<div class="preview-stat"><div class="preview-stat-value">' + value + '</div><div class="preview-stat-label">' + label + '</div></div>';
                     }
                 }
-                alert('Preset: ' + result.preset_name + '\\n' + result.description + '\\n\\n' + details);
+
+                // Update modal content
+                document.getElementById('preview-preset-name').textContent = result.preset_name;
+                document.getElementById('preview-description').textContent = result.description || 'No description available';
+                document.getElementById('preview-total').textContent = totalResources;
+                document.getElementById('preview-stats').innerHTML = statsHtml || '<p style="color: #4a5568; text-align: center;">No resources defined in this preset</p>';
+                document.getElementById('preview-load-btn').onclick = function() {
+                    closeModal('preset-preview-modal');
+                    loadResourcePreset(presetName);
+                };
+
+                // Show modal
+                openModal('preset-preview-modal');
             } else {
                 showToast('Failed to preview preset', 'error');
             }
@@ -2503,6 +2606,39 @@ def build_resource_presets_content(available_presets: list[dict]) -> str:
 
         <h4 style="color: #00d4ff; margin-bottom: 16px;">Available Presets</h4>
         {preset_cards}
+    </div>
+
+    <!-- Preset Preview Modal -->
+    <div id="preset-preview-modal" class="modal">
+        <div class="modal-content preview-modal">
+            <div class="modal-header">
+                <h3>📦 <span id="preview-preset-name">Preset Name</span></h3>
+                <button class="modal-close" onclick="closeModal('preset-preview-modal')">&times;</button>
+            </div>
+
+            <div class="preview-description" id="preview-description">
+                Loading description...
+            </div>
+
+            <div class="preview-section">
+                <div class="preview-section-title">
+                    <span>Resources to Create</span>
+                    <span style="color: #00ff41; font-weight: bold; margin-left: auto; padding-right: 12px;">Total: <span id="preview-total">0</span></span>
+                </div>
+                <div class="preview-grid" id="preview-stats">
+                    <!-- Stats will be populated dynamically -->
+                </div>
+            </div>
+
+            <div class="preview-actions">
+                <button class="btn btn-primary" id="preview-load-btn" style="flex: 1;">
+                    ▶ Load This Preset
+                </button>
+                <button class="btn btn-secondary" onclick="closeModal('preset-preview-modal')" style="flex: 1;">
+                    Cancel
+                </button>
+            </div>
+        </div>
     </div>
     """
 
