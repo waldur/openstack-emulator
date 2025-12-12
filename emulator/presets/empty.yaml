@@ -1,0 +1,33 @@
+name: empty
+description: "Minimal setup with only default resources (no additional resources created)"
+
+# This preset creates no additional resources.
+# The emulator already initializes with:
+# - Default domain, admin project, admin user
+# - Default flavors (m1.tiny through m1.xlarge)
+# - Default images (cirros, ubuntu, debian)
+# - External and private networks
+# - Default security group
+
+keystone:
+  projects: []
+
+glance:
+  images: []
+
+neutron:
+  networks: []
+  routers: []
+  security_groups: []
+  floating_ips: []
+
+nova:
+  keypairs: []
+  servers: []
+
+cinder:
+  volumes: []
+  snapshots: []
+
+octavia:
+  load_balancers: []

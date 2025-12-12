@@ -11,6 +11,65 @@ from emulator.api.app import app
 __version__ = "0.1.0"
 __all__ = ["app", "main"]
 
+
+def load_preset(preset_name: str | None, preset_file: str | None) -> bool:
+    """Load a preset before starting services.
+
+    Args:
+        preset_name: Name of a built-in preset to load.
+        preset_file: Path to a custom preset file.
+
+    Returns:
+        True if preset loaded successfully or no preset specified.
+    """
+    if not preset_name and not preset_file:
+        return True
+
+    from emulator.core.database import db
+    from emulator.core.presets import PresetLoader
+
+    loader = PresetLoader(db)
+
+    if preset_file:
+        print(f"Loading preset from file: {preset_file}")
+        result = loader.load_preset(preset_file)
+    else:
+        print(f"Loading preset: {preset_name}")
+        result = loader.load_preset_by_name(preset_name)  # type: ignore
+
+    if result.success:
+        print(f"Preset '{result.preset_name}' loaded successfully:")
+        for service, count in result.resources_created.items():
+            if count > 0:
+                print(f"  - {service}: {count} resources")
+        print(f"  Total: {result.resource_count} resources")
+        return True
+    else:
+        print(f"Failed to load preset '{result.preset_name}':")
+        for error in result.errors:
+            print(f"  - {error}")
+        return False
+
+
+def list_presets() -> None:
+    """List all available built-in presets."""
+    from emulator.core.database import db
+    from emulator.core.presets import PresetLoader
+
+    loader = PresetLoader(db)
+    presets = loader.list_available_presets()
+
+    if not presets:
+        print("No built-in presets found.")
+        print(f"Preset directory: {loader.BUILTIN_PRESETS_DIR}")
+        return
+
+    print("Available presets:")
+    for preset in presets:
+        print(f"  - {preset['name']}: {preset['description']}")
+        print(f"    File: {preset['file']}")
+
+
 # Standard OpenStack service ports
 SERVICE_PORTS = {
     "keystone": 5000,
@@ -128,8 +187,34 @@ def main() -> None:
         help="Offset to add to all default ports (useful if port 5000 is in use). "
         "Example: --port-offset 1000 runs keystone on 6000",
     )
+    parser.add_argument(
+        "--preset",
+        type=str,
+        default=None,
+        help="Load a built-in preset by name (e.g., 'development', 'production')",
+    )
+    parser.add_argument(
+        "--preset-file",
+        type=str,
+        default=None,
+        help="Load a preset from a YAML file path",
+    )
+    parser.add_argument(
+        "--list-presets",
+        action="store_true",
+        help="List available built-in presets and exit",
+    )
 
     args = parser.parse_args()
+
+    # Handle --list-presets
+    if args.list_presets:
+        list_presets()
+        sys.exit(0)
+
+    # Load preset if specified
+    if not load_preset(args.preset, args.preset_file):
+        sys.exit(1)
 
     if args.service == "all":
         if args.port:
