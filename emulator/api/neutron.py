@@ -614,8 +614,13 @@ async def list_security_groups(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     name: str | None = Query(None),
 ) -> dict[str, Any]:
-    """List security groups."""
+    """List security groups.
+
+    Ensures the default security group exists for the tenant before listing.
+    """
     project_id = _get_project_id(x_auth_token)
+    # Ensure default security group exists for this tenant
+    db.get_or_create_default_security_group(project_id)
     sgs = db.list_security_groups(project_id=project_id, name=name)
     return {"security_groups": [sg.to_dict() for sg in sgs]}
 
@@ -642,8 +647,12 @@ async def get_security_group(
     security_group_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get security group details."""
-    sg = db.get_security_group(security_group_id)
+    """Get security group details.
+
+    Only returns security groups owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    sg = db.get_security_group(security_group_id, project_id=project_id)
     if not sg:
         raise HTTPException(status_code=404, detail="Security group not found")
     return {"security_group": sg.to_dict()}
@@ -655,10 +664,15 @@ async def update_security_group(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a security group."""
+    """Update a security group.
+
+    Only allows updating security groups owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("security_group", {})
     sg = db.update_security_group(
         security_group_id=security_group_id,
+        project_id=project_id,
         name=data.get("name"),
         description=data.get("description"),
     )
@@ -672,8 +686,13 @@ async def delete_security_group(
     security_group_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a security group."""
-    success = db.delete_security_group(security_group_id)
+    """Delete a security group.
+
+    Only allows deleting security groups owned by the requesting tenant.
+    Cannot delete the default security group.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_security_group(security_group_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete security group")
     return Response(status_code=204)
@@ -725,8 +744,12 @@ async def get_security_group_rule(
     rule_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get security group rule details."""
-    rule = db.get_security_group_rule(rule_id)
+    """Get security group rule details.
+
+    Only returns rules owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    rule = db.get_security_group_rule(rule_id, project_id=project_id)
     if not rule:
         raise HTTPException(status_code=404, detail="Security group rule not found")
     return {"security_group_rule": rule.to_dict()}
@@ -737,8 +760,12 @@ async def delete_security_group_rule(
     rule_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a security group rule."""
-    success = db.delete_security_group_rule(rule_id)
+    """Delete a security group rule.
+
+    Only allows deleting rules owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_security_group_rule(rule_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Security group rule not found")
     return Response(status_code=204)
