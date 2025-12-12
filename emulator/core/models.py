@@ -390,6 +390,10 @@ class Server:
     config_drive: str = ""
     progress: int = 0
     fault: dict[str, Any] | None = None
+    # Resize tracking: stores original flavor_id during resize for revert
+    original_flavor_id: str | None = None
+    # Stores the status before resize to restore on confirm/revert
+    pre_resize_status: ServerStatus | None = None
 
     def to_dict(self, detailed: bool = True) -> dict[str, Any]:
         """Convert to API response format."""
