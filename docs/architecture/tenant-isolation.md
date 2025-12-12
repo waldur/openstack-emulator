@@ -4,16 +4,33 @@ This document describes how the OpenStack Emulator implements multi-tenancy and 
 
 ## Overview
 
-OpenStack uses a hierarchical identity model:
+OpenStack uses an identity model where domains contain users, groups, and projects as peers. Users gain access to project resources through role assignments:
 
 ```
 Domain
-  └── Project (Tenant)
-        └── User
-              └── Resources (Servers, Volumes, Networks, etc.)
+  ├── Users
+  ├── Groups
+  └── Projects (Tenants)
+        └── Resources (Servers, Volumes, Networks, etc.)
+
+Role Assignments link Users/Groups to Projects/Domains:
+
+  User ──┬── Role ──► Project (scoped access)
+         └── Role ──► Domain  (domain-wide access)
+
+  Group ─┬── Role ──► Project
+         └── Role ──► Domain
 ```
 
+**Key concepts:**
+- **Users belong to Domains**, not Projects
+- **Projects belong to Domains** and contain resources
+- **Role Assignments** grant users/groups specific roles on projects or domains
+- A user can have different roles on different projects
+
 The emulator implements tenant isolation to ensure resources belonging to one project are not accessible to other projects, mimicking real OpenStack behavior.
+
+For more details on OpenStack identity concepts, see [Keystone Identity Concepts](https://docs.openstack.org/keystone/latest/admin/identity-concepts.html).
 
 ## Resource Isolation Categories
 

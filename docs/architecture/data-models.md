@@ -8,9 +8,24 @@ All models are implemented as Python dataclasses in `emulator/core/models.py`. E
 
 ## Identity Models (Keystone)
 
+The Keystone identity model organizes resources as follows:
+- **Domains** are containers for users, groups, and projects
+- **Users and Groups** belong to a domain (not to projects)
+- **Projects** belong to a domain and contain resources
+- **Role Assignments** grant users/groups access to projects or domains
+
+```
+Domain
+  ├── Users      (domain_id references domain)
+  ├── Groups     (domain_id references domain)
+  └── Projects   (domain_id references domain)
+
+RoleAssignment: user/group + role → project/domain scope
+```
+
 ### Domain
 
-Represents an identity domain that contains projects and users.
+Represents an identity domain that contains users, groups, and projects.
 
 ```python
 @dataclass
@@ -41,7 +56,7 @@ class Project:
 
 ### User
 
-Represents an authenticated user.
+Represents an authenticated user. Users belong to a domain and gain access to projects through role assignments.
 
 ```python
 @dataclass
@@ -49,8 +64,8 @@ class User:
     id: str                    # UUID
     name: str                  # Unique within domain
     description: str = ""
-    domain_id: str = "default"
-    default_project_id: str | None = None
+    domain_id: str = "default" # User belongs to this domain
+    default_project_id: str | None = None  # Default project for scoping
     enabled: bool = True
     password_hash: str = ""    # SHA-256 hash
     email: str = ""
@@ -58,7 +73,11 @@ class User:
     updated_at: datetime
 ```
 
+Note: `default_project_id` is a convenience for token scoping, not ownership. Users access projects via role assignments.
+
 ### Role & RoleAssignment
+
+Roles define what actions a user can perform. Role assignments grant roles to users/groups on specific projects or domains.
 
 ```python
 @dataclass
@@ -70,13 +89,18 @@ class Role:
 
 @dataclass
 class RoleAssignment:
-    role_id: str
-    user_id: str | None = None
-    group_id: str | None = None
-    project_id: str | None = None
-    domain_id: str | None = None
-    inherited: bool = False
+    role_id: str               # The role being assigned
+    user_id: str | None = None    # User receiving the role (or group_id)
+    group_id: str | None = None   # Group receiving the role (or user_id)
+    project_id: str | None = None # Project scope (or domain_id)
+    domain_id: str | None = None  # Domain scope (or project_id)
+    inherited: bool = False       # Inherit to child projects
 ```
+
+A role assignment connects:
+- **Who**: a user OR a group
+- **What**: a role (admin, member, reader)
+- **Where**: a project OR a domain scope
 
 ### Token
 
