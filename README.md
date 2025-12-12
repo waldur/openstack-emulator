@@ -108,7 +108,7 @@ See [Architecture Overview](docs/architecture/README.md) for more details.
 
 ## Contributing
 
-Contributions welcome! Please see [CLAUDE.md](CLAUDE.md) for development guidelines.
+Contributions welcome! Please see the [Development Guide](docs/development.md) for guidelines.
 
 ## License
 
