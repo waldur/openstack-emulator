@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -98,6 +97,8 @@ async def preview_preset(preset_name: str) -> dict[str, Any]:
 
     Returns the preset configuration without creating any resources.
     """
+    import yaml  # type: ignore[import-untyped]
+
     loader = PresetLoader(db)
     preset_path = loader.BUILTIN_PRESETS_DIR / f"{preset_name}.yaml"
 
