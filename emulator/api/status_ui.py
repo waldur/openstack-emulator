@@ -3528,6 +3528,9 @@ async def status_page(
                         <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
                             <span class="mr-2">⚡</span> SCENARIOS {scenarios_badge}
                         </a>
+                        <a href="/presets" class="btn" style="background: linear-gradient(135deg, #8957e5 0%, #7c3aed 100%); border-color: #8957e5;">
+                            <span class="mr-2">📦</span> PRESETS
+                        </a>
                         <button class="btn btn-primary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
                         </button>
@@ -3799,11 +3802,6 @@ async def scenarios_page(
     # Build scenarios content HTML
     scenarios_content = build_scenarios_content(all_scenarios, active_scenarios, stats)
 
-    # Get resource presets
-    preset_loader = PresetLoader(db)
-    available_presets = preset_loader.list_available_presets()
-    resource_presets_content = build_resource_presets_content(available_presets)
-
     # Build the full HTML page
     html = f"""
     <!DOCTYPE html>
@@ -3829,6 +3827,9 @@ async def scenarios_page(
                     <div class="flex items-center gap-4">
                         <a href="/" class="btn btn-primary">
                             <span class="mr-2">←</span> BACK TO STATUS
+                        </a>
+                        <a href="/presets" class="btn" style="background: linear-gradient(135deg, #8957e5 0%, #7c3aed 100%); border-color: #8957e5;">
+                            <span class="mr-2">📦</span> PRESETS
                         </a>
                         <button class="btn btn-secondary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
@@ -3863,22 +3864,117 @@ async def scenarios_page(
                 {scenarios_content}
             </div>
 
-            <!-- Resource Presets Content -->
-            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
-                <div class="flex items-center gap-3 mb-6">
-                    <span class="text-[#8957e5] text-lg">📦</span>
-                    <h2 class="text-lg font-semibold text-[#8957e5] uppercase tracking-wider">Resource Presets</h2>
-                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
-                </div>
-                {resource_presets_content}
-            </div>
-
             <!-- Footer -->
             <div class="mt-8 text-center text-[#4a5568] text-xs">
                 <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
                 <div>OPENSTACK EMULATOR // SCENARIO INJECTION SYSTEM</div>
                 <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
                 <div class="text-[#1e3a5f] mt-1">Changes take effect immediately</div>
+            </div>
+        </div>
+
+        {JS_SCRIPT}
+    </body>
+    </html>
+    """
+
+    return html
+
+
+@router.get("/presets", response_class=HTMLResponse)
+async def presets_page(
+    request: Request,
+    auth_token: str | None = Cookie(default=None),
+) -> str:
+    """Render the dedicated resource presets management page."""
+    # Get resource presets
+    preset_loader = PresetLoader(db)
+    available_presets = preset_loader.list_available_presets()
+    resource_presets_content = build_resource_presets_content(available_presets)
+    preset_count = len(available_presets)
+
+    # Build the full HTML page
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>OPENSTACK EMULATOR // RESOURCE PRESETS</title>
+        {CSS_STYLES}
+    </head>
+    <body class="min-h-screen">
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Header -->
+        <header class="bg-[#0d1117] border-b border-[#1e3a5f] py-6 mb-8">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <div class="text-[#4a5568] text-xs uppercase tracking-widest mb-1">// RESOURCE MANAGEMENT SYSTEM</div>
+                        <h1 class="text-2xl font-bold text-[#8957e5] tracking-wide">RESOURCE PRESETS</h1>
+                        <p class="text-[#00d4ff] text-sm mt-1">Load pre-configured OpenStack environments</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <a href="/" class="btn btn-primary">
+                            <span class="mr-2">←</span> BACK TO STATUS
+                        </a>
+                        <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
+                            <span class="mr-2">⚡</span> SCENARIOS
+                        </a>
+                        <button class="btn btn-secondary" onclick="location.reload()">
+                            <span class="mr-2">↻</span> REFRESH
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto px-6 pb-12">
+            <!-- Presets Overview -->
+            <div class="mb-8 bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#8957e5] text-lg">📦</span>
+                    <h2 class="text-lg font-semibold text-[#8957e5] uppercase tracking-wider">Available Presets</h2>
+                    <span class="bg-[#8957e5] bg-opacity-20 text-[#8957e5] px-3 py-1 text-sm border border-[#8957e5]">{preset_count} PRESETS</span>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#8957e5] to-transparent"></div>
+                </div>
+                <p class="text-[#4a5568] text-sm mb-4">
+                    Load pre-configured resource presets to quickly set up your OpenStack environment.
+                    Presets include projects, networks, servers, volumes, and more.
+                </p>
+            </div>
+
+            <!-- Presets Content -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6 mb-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#00ff41] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Preset Configuration</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                {resource_presets_content}
+            </div>
+
+            <!-- Usage Info -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#00d4ff] text-lg">ℹ</span>
+                    <h2 class="text-lg font-semibold text-[#00d4ff] uppercase tracking-wider">Usage</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                <div class="text-[#8b949e] text-sm space-y-2">
+                    <p><strong class="text-[#c9d1d9]">CLI:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">openstack-emulator --preset development</code></p>
+                    <p><strong class="text-[#c9d1d9]">API:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">POST /presets/development</code></p>
+                    <p><strong class="text-[#c9d1d9]">Custom:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">openstack-emulator --preset-file /path/to/preset.yaml</code></p>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 text-center text-[#4a5568] text-xs">
+                <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
+                <div>OPENSTACK EMULATOR // RESOURCE PRESET SYSTEM</div>
+                <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
+                <div class="text-[#1e3a5f] mt-1">Resources are created in dependency order</div>
             </div>
         </div>
 
