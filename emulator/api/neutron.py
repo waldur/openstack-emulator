@@ -193,8 +193,12 @@ async def get_network(
     network_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get network details."""
-    network = db.get_network(network_id)
+    """Get network details.
+
+    Shared and external networks are accessible to all tenants.
+    """
+    project_id = _get_project_id(x_auth_token)
+    network = db.get_network(network_id, project_id=project_id)
     if not network:
         raise HTTPException(status_code=404, detail="Network not found")
     return {"network": network.to_dict()}
@@ -206,10 +210,15 @@ async def update_network(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a network."""
+    """Update a network.
+
+    Only allows updating networks owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("network", {})
     network = db.update_network(
         network_id=network_id,
+        project_id=project_id,
         name=data.get("name"),
         description=data.get("description"),
         admin_state_up=data.get("admin_state_up"),
@@ -226,8 +235,12 @@ async def delete_network(
     network_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a network."""
-    success = db.delete_network(network_id)
+    """Delete a network.
+
+    Only allows deleting networks owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_network(network_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete network (may have ports)")
     return Response(status_code=204)
@@ -278,8 +291,12 @@ async def get_subnet(
     subnet_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get subnet details."""
-    subnet = db.get_subnet(subnet_id)
+    """Get subnet details.
+
+    Subnets on shared/external networks are accessible to all tenants.
+    """
+    project_id = _get_project_id(x_auth_token)
+    subnet = db.get_subnet(subnet_id, project_id=project_id)
     if not subnet:
         raise HTTPException(status_code=404, detail="Subnet not found")
     return {"subnet": subnet.to_dict()}
@@ -291,10 +308,15 @@ async def update_subnet(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a subnet."""
+    """Update a subnet.
+
+    Only allows updating subnets owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("subnet", {})
     subnet = db.update_subnet(
         subnet_id=subnet_id,
+        project_id=project_id,
         name=data.get("name"),
         description=data.get("description"),
         gateway_ip=data.get("gateway_ip"),
@@ -312,8 +334,12 @@ async def delete_subnet(
     subnet_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a subnet."""
-    success = db.delete_subnet(subnet_id)
+    """Delete a subnet.
+
+    Only allows deleting subnets owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_subnet(subnet_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete subnet (may have ports)")
     return Response(status_code=204)
@@ -372,8 +398,12 @@ async def get_port(
     port_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get port details."""
-    port = db.get_port(port_id)
+    """Get port details.
+
+    Only returns ports owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    port = db.get_port(port_id, project_id=project_id)
     if not port:
         raise HTTPException(status_code=404, detail="Port not found")
     return {"port": port.to_dict()}
@@ -385,10 +415,15 @@ async def update_port(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a port."""
+    """Update a port.
+
+    Only allows updating ports owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("port", {})
     port = db.update_port(
         port_id=port_id,
+        project_id=project_id,
         name=data.get("name"),
         description=data.get("description"),
         admin_state_up=data.get("admin_state_up"),
@@ -407,8 +442,12 @@ async def delete_port(
     port_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a port."""
-    success = db.delete_port(port_id)
+    """Delete a port.
+
+    Only allows deleting ports owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_port(port_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Port not found")
     return Response(status_code=204)
@@ -451,8 +490,12 @@ async def get_router(
     router_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get router details."""
-    router = db.get_router(router_id)
+    """Get router details.
+
+    Only returns routers owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    router = db.get_router(router_id, project_id=project_id)
     if not router:
         raise HTTPException(status_code=404, detail="Router not found")
     return {"router": router.to_dict()}
@@ -464,10 +507,15 @@ async def update_router(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a router."""
+    """Update a router.
+
+    Only allows updating routers owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
     router = db.update_router(
         router_id=router_id,
+        project_id=project_id,
         name=data.get("name"),
         description=data.get("description"),
         admin_state_up=data.get("admin_state_up"),
@@ -484,8 +532,12 @@ async def delete_router(
     router_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a router."""
-    success = db.delete_router(router_id)
+    """Delete a router.
+
+    Only allows deleting routers owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_router(router_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete router (may have interfaces)")
     return Response(status_code=204)
@@ -497,9 +549,14 @@ async def add_router_interface(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Add interface to router."""
+    """Add interface to router.
+
+    Only allows modifying routers owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     result = db.add_router_interface(
         router_id=router_id,
+        project_id=project_id,
         subnet_id=request.get("subnet_id"),
         port_id=request.get("port_id"),
     )
@@ -514,9 +571,14 @@ async def remove_router_interface(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Remove interface from router."""
+    """Remove interface from router.
+
+    Only allows modifying routers owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     result = db.remove_router_interface(
         router_id=router_id,
+        project_id=project_id,
         subnet_id=request.get("subnet_id"),
         port_id=request.get("port_id"),
     )
@@ -571,8 +633,12 @@ async def get_floating_ip(
     floatingip_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Get floating IP details."""
-    fip = db.get_floating_ip(floatingip_id)
+    """Get floating IP details.
+
+    Only returns floating IPs owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    fip = db.get_floating_ip(floatingip_id, project_id=project_id)
     if not fip:
         raise HTTPException(status_code=404, detail="Floating IP not found")
     return {"floatingip": fip.to_dict()}
@@ -584,10 +650,15 @@ async def update_floating_ip(
     request: dict[str, Any],
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update a floating IP (associate/disassociate)."""
+    """Update a floating IP (associate/disassociate).
+
+    Only allows updating floating IPs owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
     data = request.get("floatingip", {})
     fip = db.update_floating_ip(
         floatingip_id=floatingip_id,
+        project_id=project_id,
         description=data.get("description"),
         port_id=data.get("port_id"),
     )
@@ -601,8 +672,12 @@ async def delete_floating_ip(
     floatingip_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete a floating IP."""
-    success = db.delete_floating_ip(floatingip_id)
+    """Delete a floating IP.
+
+    Only allows deleting floating IPs owned by the requesting tenant.
+    """
+    project_id = _get_project_id(x_auth_token)
+    success = db.delete_floating_ip(floatingip_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Floating IP not found")
     return Response(status_code=204)
