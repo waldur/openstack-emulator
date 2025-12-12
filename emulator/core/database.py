@@ -2120,10 +2120,23 @@ class Database:
             volume.status = VolumeStatus.AVAILABLE
             volume.updated_at = datetime.utcnow()
 
-    def get_volume(self, volume_id: str) -> Volume | None:
-        """Get a volume by ID."""
+    def get_volume(self, volume_id: str, project_id: str | None = None) -> Volume | None:
+        """Get a volume by ID.
+
+        Args:
+            volume_id: The volume ID to look up.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The volume if found and owned, else None.
+        """
         with self._lock:
-            return self._volumes.get(volume_id)
+            volume = self._volumes.get(volume_id)
+            if volume is None:
+                return None
+            if project_id is not None and volume.project_id != project_id:
+                return None
+            return volume
 
     def list_volumes(
         self,
@@ -2168,59 +2181,110 @@ class Database:
     def update_volume(
         self,
         volume_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
     ) -> Volume | None:
-        """Update a volume."""
+        """Update a volume.
+
+        Args:
+            volume_id: The volume ID to update.
+            project_id: If provided, verify ownership before updating.
+            Other args: Fields to update.
+
+        Returns:
+            The updated volume if found and owned, else None.
+        """
         with self._lock:
             volume = self._volumes.get(volume_id)
-            if volume:
-                if name is not None:
-                    volume.name = name
-                if description is not None:
-                    volume.description = description
-                if metadata is not None:
-                    volume.metadata = metadata
-                volume.updated_at = datetime.utcnow()
+            if not volume:
+                return None
+            if project_id is not None and volume.project_id != project_id:
+                return None
+            if name is not None:
+                volume.name = name
+            if description is not None:
+                volume.description = description
+            if metadata is not None:
+                volume.metadata = metadata
+            volume.updated_at = datetime.utcnow()
             return volume
 
-    def delete_volume(self, volume_id: str) -> bool:
-        """Delete a volume."""
-        with self._lock:
-            if volume_id in self._volumes:
-                volume = self._volumes[volume_id]
-                # Check if volume can be deleted
-                if volume.status == VolumeStatus.IN_USE:
-                    return False
-                if volume.attachments:
-                    return False
-                del self._volumes[volume_id]
-                return True
-            return False
+    def delete_volume(self, volume_id: str, project_id: str | None = None) -> bool:
+        """Delete a volume.
 
-    def extend_volume(self, volume_id: str, new_size: int) -> Volume | None:
-        """Extend a volume to a new size."""
+        Args:
+            volume_id: The volume ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found, not owned, or in use.
+        """
         with self._lock:
             volume = self._volumes.get(volume_id)
-            if volume and new_size > volume.size:
-                if volume.status == VolumeStatus.AVAILABLE:
-                    volume.size = new_size
-                    volume.updated_at = datetime.utcnow()
-                    return volume
+            if not volume:
+                return False
+            if project_id is not None and volume.project_id != project_id:
+                return False
+            # Check if volume can be deleted
+            if volume.status == VolumeStatus.IN_USE:
+                return False
+            if volume.attachments:
+                return False
+            del self._volumes[volume_id]
+            return True
+
+    def extend_volume(
+        self, volume_id: str, new_size: int, project_id: str | None = None
+    ) -> Volume | None:
+        """Extend a volume to a new size.
+
+        Args:
+            volume_id: The volume ID to extend.
+            new_size: The new size in GB.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The extended volume if successful, else None.
+        """
+        with self._lock:
+            volume = self._volumes.get(volume_id)
+            if not volume:
+                return None
+            if project_id is not None and volume.project_id != project_id:
+                return None
+            if new_size > volume.size and volume.status == VolumeStatus.AVAILABLE:
+                volume.size = new_size
+                volume.updated_at = datetime.utcnow()
+                return volume
             return None
 
     def attach_volume(
         self,
         volume_id: str,
         server_id: str,
+        project_id: str | None = None,
         device: str = "/dev/vdb",
         host_name: str = "compute-host-1",
     ) -> VolumeAttachment | None:
-        """Attach a volume to a server."""
+        """Attach a volume to a server.
+
+        Args:
+            volume_id: The volume ID to attach.
+            server_id: The server to attach to.
+            project_id: If provided, verify ownership.
+            device: The device path.
+            host_name: The compute host.
+
+        Returns:
+            The attachment if successful, else None.
+        """
         with self._lock:
             volume = self._volumes.get(volume_id)
             if not volume:
+                return None
+            if project_id is not None and volume.project_id != project_id:
                 return None
 
             if volume.status != VolumeStatus.AVAILABLE and not volume.multiattach:
@@ -2240,11 +2304,24 @@ class Database:
 
             return attachment
 
-    def detach_volume(self, volume_id: str, attachment_id: str) -> bool:
-        """Detach a volume from a server."""
+    def detach_volume(
+        self, volume_id: str, attachment_id: str, project_id: str | None = None
+    ) -> bool:
+        """Detach a volume from a server.
+
+        Args:
+            volume_id: The volume ID to detach.
+            attachment_id: The attachment ID.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            True if detached, False otherwise.
+        """
         with self._lock:
             volume = self._volumes.get(volume_id)
             if not volume:
+                return False
+            if project_id is not None and volume.project_id != project_id:
                 return False
 
             for i, attachment in enumerate(volume.attachments):
@@ -2256,13 +2333,27 @@ class Database:
                     return True
             return False
 
-    def set_volume_bootable(self, volume_id: str, bootable: bool) -> Volume | None:
-        """Set volume bootable flag."""
+    def set_volume_bootable(
+        self, volume_id: str, bootable: bool, project_id: str | None = None
+    ) -> Volume | None:
+        """Set volume bootable flag.
+
+        Args:
+            volume_id: The volume ID.
+            bootable: The bootable flag.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The updated volume if successful, else None.
+        """
         with self._lock:
             volume = self._volumes.get(volume_id)
-            if volume:
-                volume.bootable = bootable
-                volume.updated_at = datetime.utcnow()
+            if not volume:
+                return None
+            if project_id is not None and volume.project_id != project_id:
+                return None
+            volume.bootable = bootable
+            volume.updated_at = datetime.utcnow()
             return volume
 
     # Snapshot operations
@@ -2313,10 +2404,23 @@ class Database:
             snapshot.progress = "100%"
             snapshot.updated_at = datetime.utcnow()
 
-    def get_snapshot(self, snapshot_id: str) -> Snapshot | None:
-        """Get a snapshot by ID."""
+    def get_snapshot(self, snapshot_id: str, project_id: str | None = None) -> Snapshot | None:
+        """Get a snapshot by ID.
+
+        Args:
+            snapshot_id: The snapshot ID to look up.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The snapshot if found and owned, else None.
+        """
         with self._lock:
-            return self._snapshots.get(snapshot_id)
+            snapshot = self._snapshots.get(snapshot_id)
+            if snapshot is None:
+                return None
+            if project_id is not None and snapshot.project_id != project_id:
+                return None
+            return snapshot
 
     def list_snapshots(
         self,
@@ -2364,30 +2468,54 @@ class Database:
     def update_snapshot(
         self,
         snapshot_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         metadata: dict[str, str] | None = None,
     ) -> Snapshot | None:
-        """Update a snapshot."""
+        """Update a snapshot.
+
+        Args:
+            snapshot_id: The snapshot ID to update.
+            project_id: If provided, verify ownership before updating.
+            Other args: Fields to update.
+
+        Returns:
+            The updated snapshot if found and owned, else None.
+        """
         with self._lock:
             snapshot = self._snapshots.get(snapshot_id)
-            if snapshot:
-                if name is not None:
-                    snapshot.name = name
-                if description is not None:
-                    snapshot.description = description
-                if metadata is not None:
-                    snapshot.metadata = metadata
-                snapshot.updated_at = datetime.utcnow()
+            if not snapshot:
+                return None
+            if project_id is not None and snapshot.project_id != project_id:
+                return None
+            if name is not None:
+                snapshot.name = name
+            if description is not None:
+                snapshot.description = description
+            if metadata is not None:
+                snapshot.metadata = metadata
+            snapshot.updated_at = datetime.utcnow()
             return snapshot
 
-    def delete_snapshot(self, snapshot_id: str) -> bool:
-        """Delete a snapshot."""
+    def delete_snapshot(self, snapshot_id: str, project_id: str | None = None) -> bool:
+        """Delete a snapshot.
+
+        Args:
+            snapshot_id: The snapshot ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found or not owned.
+        """
         with self._lock:
-            if snapshot_id in self._snapshots:
-                del self._snapshots[snapshot_id]
-                return True
-            return False
+            snapshot = self._snapshots.get(snapshot_id)
+            if not snapshot:
+                return False
+            if project_id is not None and snapshot.project_id != project_id:
+                return False
+            del self._snapshots[snapshot_id]
+            return True
 
     # Volume type operations
     def create_volume_type(
@@ -4630,10 +4758,15 @@ class Database:
             self._load_balancers[lb_id] = lb
             return lb
 
-    def get_load_balancer(self, lb_id: str) -> LoadBalancer | None:
+    def get_load_balancer(self, lb_id: str, project_id: str | None = None) -> LoadBalancer | None:
         """Get a load balancer by ID."""
         with self._lock:
-            return self._load_balancers.get(lb_id)
+            lb = self._load_balancers.get(lb_id)
+            if lb is None:
+                return None
+            if project_id is not None and lb.project_id != project_id:
+                return None
+            return lb
 
     def list_load_balancers(
         self,
@@ -4666,6 +4799,7 @@ class Database:
     def update_load_balancer(
         self,
         lb_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
@@ -4675,6 +4809,8 @@ class Database:
         with self._lock:
             lb = self._load_balancers.get(lb_id)
             if not lb:
+                return None
+            if project_id is not None and lb.project_id != project_id:
                 return None
 
             if name is not None:
@@ -4688,11 +4824,15 @@ class Database:
 
             return lb
 
-    def delete_load_balancer(self, lb_id: str, cascade: bool = False) -> bool:
+    def delete_load_balancer(
+        self, lb_id: str, project_id: str | None = None, cascade: bool = False
+    ) -> bool:
         """Delete a load balancer."""
         with self._lock:
             lb = self._load_balancers.get(lb_id)
             if not lb:
+                return False
+            if project_id is not None and lb.project_id != project_id:
                 return False
 
             if cascade:
@@ -4762,10 +4902,15 @@ class Database:
             lb.listeners.append(listener)
             return listener
 
-    def get_listener(self, listener_id: str) -> Listener | None:
+    def get_listener(self, listener_id: str, project_id: str | None = None) -> Listener | None:
         """Get a listener by ID."""
         with self._lock:
-            return self._listeners.get(listener_id)
+            listener = self._listeners.get(listener_id)
+            if listener is None:
+                return None
+            if project_id is not None and listener.project_id != project_id:
+                return None
+            return listener
 
     def list_listeners(
         self,
@@ -4795,6 +4940,7 @@ class Database:
     def update_listener(
         self,
         listener_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
@@ -4814,6 +4960,8 @@ class Database:
         with self._lock:
             listener = self._listeners.get(listener_id)
             if not listener:
+                return None
+            if project_id is not None and listener.project_id != project_id:
                 return None
 
             if name is not None:
@@ -4847,11 +4995,15 @@ class Database:
 
             return listener
 
-    def delete_listener(self, listener_id: str, cascade: bool = False) -> bool:
+    def delete_listener(
+        self, listener_id: str, project_id: str | None = None, cascade: bool = False
+    ) -> bool:
         """Delete a listener."""
         with self._lock:
             listener = self._listeners.get(listener_id)
             if not listener:
+                return False
+            if project_id is not None and listener.project_id != project_id:
                 return False
 
             # Remove from load balancer
@@ -4931,10 +5083,15 @@ class Database:
 
             return pool
 
-    def get_pool(self, pool_id: str) -> Pool | None:
+    def get_pool(self, pool_id: str, project_id: str | None = None) -> Pool | None:
         """Get a pool by ID."""
         with self._lock:
-            return self._pools.get(pool_id)
+            pool = self._pools.get(pool_id)
+            if pool is None:
+                return None
+            if project_id is not None and pool.project_id != project_id:
+                return None
+            return pool
 
     def list_pools(
         self,
@@ -4964,6 +5121,7 @@ class Database:
     def update_pool(
         self,
         pool_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
@@ -4976,6 +5134,8 @@ class Database:
         with self._lock:
             pool = self._pools.get(pool_id)
             if not pool:
+                return None
+            if project_id is not None and pool.project_id != project_id:
                 return None
 
             if name is not None:
@@ -4995,11 +5155,13 @@ class Database:
 
             return pool
 
-    def delete_pool(self, pool_id: str) -> bool:
+    def delete_pool(self, pool_id: str, project_id: str | None = None) -> bool:
         """Delete a pool."""
         with self._lock:
             pool = self._pools.get(pool_id)
             if not pool:
+                return False
+            if project_id is not None and pool.project_id != project_id:
                 return False
 
             # Remove from load balancer
@@ -5070,10 +5232,17 @@ class Database:
             pool.members.append(member)
             return member
 
-    def get_pool_member(self, pool_id: str, member_id: str) -> PoolMember | None:
+    def get_pool_member(
+        self, pool_id: str, member_id: str, project_id: str | None = None
+    ) -> PoolMember | None:
         """Get a pool member by ID."""
         with self._lock:
-            return self._pool_members.get(f"{pool_id}:{member_id}")
+            member = self._pool_members.get(f"{pool_id}:{member_id}")
+            if member is None:
+                return None
+            if project_id is not None and member.project_id != project_id:
+                return None
+            return member
 
     def list_pool_members(
         self,
@@ -5100,6 +5269,7 @@ class Database:
         self,
         pool_id: str,
         member_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         weight: int | None = None,
         admin_state_up: bool | None = None,
@@ -5112,6 +5282,8 @@ class Database:
         with self._lock:
             member = self._pool_members.get(f"{pool_id}:{member_id}")
             if not member:
+                return None
+            if project_id is not None and member.project_id != project_id:
                 return None
 
             if name is not None:
@@ -5131,12 +5303,16 @@ class Database:
 
             return member
 
-    def delete_pool_member(self, pool_id: str, member_id: str) -> bool:
+    def delete_pool_member(
+        self, pool_id: str, member_id: str, project_id: str | None = None
+    ) -> bool:
         """Delete a pool member."""
         with self._lock:
             key = f"{pool_id}:{member_id}"
             member = self._pool_members.get(key)
             if not member:
+                return False
+            if project_id is not None and member.project_id != project_id:
                 return False
 
             pool = self._pools.get(pool_id)
@@ -5197,10 +5373,17 @@ class Database:
             pool.healthmonitor_id = monitor_id
             return monitor
 
-    def get_health_monitor(self, monitor_id: str) -> HealthMonitor | None:
+    def get_health_monitor(
+        self, monitor_id: str, project_id: str | None = None
+    ) -> HealthMonitor | None:
         """Get a health monitor by ID."""
         with self._lock:
-            return self._health_monitors.get(monitor_id)
+            monitor = self._health_monitors.get(monitor_id)
+            if monitor is None:
+                return None
+            if project_id is not None and monitor.project_id != project_id:
+                return None
+            return monitor
 
     def list_health_monitors(
         self,
@@ -5224,6 +5407,7 @@ class Database:
     def update_health_monitor(
         self,
         monitor_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         delay: int | None = None,
         timeout: int | None = None,
@@ -5239,6 +5423,8 @@ class Database:
         with self._lock:
             monitor = self._health_monitors.get(monitor_id)
             if not monitor:
+                return None
+            if project_id is not None and monitor.project_id != project_id:
                 return None
 
             if name is not None:
@@ -5264,11 +5450,13 @@ class Database:
 
             return monitor
 
-    def delete_health_monitor(self, monitor_id: str) -> bool:
+    def delete_health_monitor(self, monitor_id: str, project_id: str | None = None) -> bool:
         """Delete a health monitor."""
         with self._lock:
             monitor = self._health_monitors.get(monitor_id)
             if not monitor:
+                return False
+            if project_id is not None and monitor.project_id != project_id:
                 return False
 
             # Remove from pool
@@ -5324,10 +5512,15 @@ class Database:
             listener.l7policies.append(policy)
             return policy
 
-    def get_l7policy(self, policy_id: str) -> L7Policy | None:
+    def get_l7policy(self, policy_id: str, project_id: str | None = None) -> L7Policy | None:
         """Get an L7 policy by ID."""
         with self._lock:
-            return self._l7policies.get(policy_id)
+            policy = self._l7policies.get(policy_id)
+            if policy is None:
+                return None
+            if project_id is not None and policy.project_id != project_id:
+                return None
+            return policy
 
     def list_l7policies(
         self,
@@ -5351,6 +5544,7 @@ class Database:
     def update_l7policy(
         self,
         policy_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
@@ -5366,6 +5560,8 @@ class Database:
         with self._lock:
             policy = self._l7policies.get(policy_id)
             if not policy:
+                return None
+            if project_id is not None and policy.project_id != project_id:
                 return None
 
             if name is not None:
@@ -5391,11 +5587,13 @@ class Database:
 
             return policy
 
-    def delete_l7policy(self, policy_id: str) -> bool:
+    def delete_l7policy(self, policy_id: str, project_id: str | None = None) -> bool:
         """Delete an L7 policy."""
         with self._lock:
             policy = self._l7policies.get(policy_id)
             if not policy:
+                return False
+            if project_id is not None and policy.project_id != project_id:
                 return False
 
             # Remove from listener
@@ -5449,10 +5647,17 @@ class Database:
             policy.rules.append(rule)
             return rule
 
-    def get_l7rule(self, l7policy_id: str, rule_id: str) -> L7Rule | None:
+    def get_l7rule(
+        self, l7policy_id: str, rule_id: str, project_id: str | None = None
+    ) -> L7Rule | None:
         """Get an L7 rule by ID."""
         with self._lock:
-            return self._l7rules.get(f"{l7policy_id}:{rule_id}")
+            rule = self._l7rules.get(f"{l7policy_id}:{rule_id}")
+            if rule is None:
+                return None
+            if project_id is not None and rule.project_id != project_id:
+                return None
+            return rule
 
     def list_l7rules(
         self,
@@ -5476,6 +5681,7 @@ class Database:
         self,
         l7policy_id: str,
         rule_id: str,
+        project_id: str | None = None,
         type: str | None = None,
         compare_type: str | None = None,
         value: str | None = None,
@@ -5488,6 +5694,8 @@ class Database:
         with self._lock:
             rule = self._l7rules.get(f"{l7policy_id}:{rule_id}")
             if not rule:
+                return None
+            if project_id is not None and rule.project_id != project_id:
                 return None
 
             if type is not None:
@@ -5507,12 +5715,14 @@ class Database:
 
             return rule
 
-    def delete_l7rule(self, l7policy_id: str, rule_id: str) -> bool:
+    def delete_l7rule(self, l7policy_id: str, rule_id: str, project_id: str | None = None) -> bool:
         """Delete an L7 rule."""
         with self._lock:
             key = f"{l7policy_id}:{rule_id}"
             rule = self._l7rules.get(key)
             if not rule:
+                return False
+            if project_id is not None and rule.project_id != project_id:
                 return False
 
             policy = self._l7policies.get(l7policy_id)

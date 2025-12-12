@@ -2,12 +2,22 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
 
 router = APIRouter(tags=["octavia"])
+
+
+def _get_project_id(auth_token: str | None) -> str:
+    """Get project_id from auth token. Returns 'admin' if no token provided."""
+    if not auth_token:
+        return "admin"
+    token = db.validate_token(auth_token)
+    if not token:
+        return "admin"
+    return token.project_id
 
 
 # Pydantic models for request/response validation
@@ -378,11 +388,13 @@ async def list_loadbalancers(
 
 @router.post("/v2.0/lbaas/loadbalancers", status_code=201)
 @router.post("/v2/lbaas/loadbalancers", status_code=201)
-async def create_loadbalancer(body: LoadBalancerCreateBody) -> dict[str, Any]:
+async def create_loadbalancer(
+    body: LoadBalancerCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create a load balancer."""
     req = body.loadbalancer
-    # For emulator, use a default project_id
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     lb = db.create_load_balancer(
         name=req.name,
@@ -402,9 +414,13 @@ async def create_loadbalancer(body: LoadBalancerCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/loadbalancers/{lb_id}")
 @router.get("/v2/lbaas/loadbalancers/{lb_id}")
-async def get_loadbalancer(lb_id: str) -> dict[str, Any]:
+async def get_loadbalancer(
+    lb_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get a load balancer by ID."""
-    lb = db.get_load_balancer(lb_id)
+    project_id = _get_project_id(x_auth_token)
+    lb = db.get_load_balancer(lb_id, project_id=project_id)
     if not lb:
         raise HTTPException(status_code=404, detail="Load balancer not found")
     return {"loadbalancer": lb.to_dict()}
@@ -412,11 +428,17 @@ async def get_loadbalancer(lb_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/loadbalancers/{lb_id}")
 @router.put("/v2/lbaas/loadbalancers/{lb_id}")
-async def update_loadbalancer(lb_id: str, body: LoadBalancerUpdateBody) -> dict[str, Any]:
+async def update_loadbalancer(
+    lb_id: str,
+    body: LoadBalancerUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update a load balancer."""
+    project_id = _get_project_id(x_auth_token)
     req = body.loadbalancer
     lb = db.update_load_balancer(
         lb_id=lb_id,
+        project_id=project_id,
         name=req.name,
         description=req.description,
         admin_state_up=req.admin_state_up,
@@ -429,17 +451,26 @@ async def update_loadbalancer(lb_id: str, body: LoadBalancerUpdateBody) -> dict[
 
 @router.delete("/v2.0/lbaas/loadbalancers/{lb_id}", status_code=204)
 @router.delete("/v2/lbaas/loadbalancers/{lb_id}", status_code=204)
-async def delete_loadbalancer(lb_id: str, cascade: bool = Query(default=False)) -> None:
+async def delete_loadbalancer(
+    lb_id: str,
+    cascade: bool = Query(default=False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete a load balancer."""
-    if not db.delete_load_balancer(lb_id, cascade=cascade):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_load_balancer(lb_id, project_id=project_id, cascade=cascade):
         raise HTTPException(status_code=404, detail="Load balancer not found")
 
 
 @router.get("/v2.0/lbaas/loadbalancers/{lb_id}/stats")
 @router.get("/v2/lbaas/loadbalancers/{lb_id}/stats")
-async def get_loadbalancer_stats(lb_id: str) -> dict[str, Any]:
+async def get_loadbalancer_stats(
+    lb_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get load balancer statistics."""
-    lb = db.get_load_balancer(lb_id)
+    project_id = _get_project_id(x_auth_token)
+    lb = db.get_load_balancer(lb_id, project_id=project_id)
     if not lb:
         raise HTTPException(status_code=404, detail="Load balancer not found")
     # Return simulated stats
@@ -456,9 +487,13 @@ async def get_loadbalancer_stats(lb_id: str) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/loadbalancers/{lb_id}/status")
 @router.get("/v2/lbaas/loadbalancers/{lb_id}/status")
-async def get_loadbalancer_status(lb_id: str) -> dict[str, Any]:
+async def get_loadbalancer_status(
+    lb_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get load balancer status tree."""
-    lb = db.get_load_balancer(lb_id)
+    project_id = _get_project_id(x_auth_token)
+    lb = db.get_load_balancer(lb_id, project_id=project_id)
     if not lb:
         raise HTTPException(status_code=404, detail="Load balancer not found")
 
@@ -549,10 +584,13 @@ async def list_listeners(
 
 @router.post("/v2.0/lbaas/listeners", status_code=201)
 @router.post("/v2/lbaas/listeners", status_code=201)
-async def create_listener(body: ListenerCreateBody) -> dict[str, Any]:
+async def create_listener(
+    body: ListenerCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create a listener."""
     req = body.listener
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     listener = db.create_listener(
         loadbalancer_id=req.loadbalancer_id,
@@ -580,9 +618,13 @@ async def create_listener(body: ListenerCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/listeners/{listener_id}")
 @router.get("/v2/lbaas/listeners/{listener_id}")
-async def get_listener(listener_id: str) -> dict[str, Any]:
+async def get_listener(
+    listener_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get a listener by ID."""
-    listener = db.get_listener(listener_id)
+    project_id = _get_project_id(x_auth_token)
+    listener = db.get_listener(listener_id, project_id=project_id)
     if not listener:
         raise HTTPException(status_code=404, detail="Listener not found")
     return {"listener": listener.to_dict()}
@@ -590,11 +632,17 @@ async def get_listener(listener_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/listeners/{listener_id}")
 @router.put("/v2/lbaas/listeners/{listener_id}")
-async def update_listener(listener_id: str, body: ListenerUpdateBody) -> dict[str, Any]:
+async def update_listener(
+    listener_id: str,
+    body: ListenerUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update a listener."""
+    project_id = _get_project_id(x_auth_token)
     req = body.listener
     listener = db.update_listener(
         listener_id=listener_id,
+        project_id=project_id,
         name=req.name,
         description=req.description,
         admin_state_up=req.admin_state_up,
@@ -616,17 +664,25 @@ async def update_listener(listener_id: str, body: ListenerUpdateBody) -> dict[st
 
 @router.delete("/v2.0/lbaas/listeners/{listener_id}", status_code=204)
 @router.delete("/v2/lbaas/listeners/{listener_id}", status_code=204)
-async def delete_listener(listener_id: str) -> None:
+async def delete_listener(
+    listener_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete a listener."""
-    if not db.delete_listener(listener_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_listener(listener_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="Listener not found")
 
 
 @router.get("/v2.0/lbaas/listeners/{listener_id}/stats")
 @router.get("/v2/lbaas/listeners/{listener_id}/stats")
-async def get_listener_stats(listener_id: str) -> dict[str, Any]:
+async def get_listener_stats(
+    listener_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get listener statistics."""
-    listener = db.get_listener(listener_id)
+    project_id = _get_project_id(x_auth_token)
+    listener = db.get_listener(listener_id, project_id=project_id)
     if not listener:
         raise HTTPException(status_code=404, detail="Listener not found")
     return {
@@ -665,10 +721,13 @@ async def list_pools(
 
 @router.post("/v2.0/lbaas/pools", status_code=201)
 @router.post("/v2/lbaas/pools", status_code=201)
-async def create_pool(body: PoolCreateBody) -> dict[str, Any]:
+async def create_pool(
+    body: PoolCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create a pool."""
     req = body.pool
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     pool = db.create_pool(
         protocol=req.protocol,
@@ -690,9 +749,13 @@ async def create_pool(body: PoolCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/pools/{pool_id}")
 @router.get("/v2/lbaas/pools/{pool_id}")
-async def get_pool(pool_id: str) -> dict[str, Any]:
+async def get_pool(
+    pool_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get a pool by ID."""
-    pool = db.get_pool(pool_id)
+    project_id = _get_project_id(x_auth_token)
+    pool = db.get_pool(pool_id, project_id=project_id)
     if not pool:
         raise HTTPException(status_code=404, detail="Pool not found")
     return {"pool": pool.to_dict()}
@@ -700,11 +763,17 @@ async def get_pool(pool_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/pools/{pool_id}")
 @router.put("/v2/lbaas/pools/{pool_id}")
-async def update_pool(pool_id: str, body: PoolUpdateBody) -> dict[str, Any]:
+async def update_pool(
+    pool_id: str,
+    body: PoolUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update a pool."""
+    project_id = _get_project_id(x_auth_token)
     req = body.pool
     pool = db.update_pool(
         pool_id=pool_id,
+        project_id=project_id,
         name=req.name,
         description=req.description,
         admin_state_up=req.admin_state_up,
@@ -720,9 +789,13 @@ async def update_pool(pool_id: str, body: PoolUpdateBody) -> dict[str, Any]:
 
 @router.delete("/v2.0/lbaas/pools/{pool_id}", status_code=204)
 @router.delete("/v2/lbaas/pools/{pool_id}", status_code=204)
-async def delete_pool(pool_id: str) -> None:
+async def delete_pool(
+    pool_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete a pool."""
-    if not db.delete_pool(pool_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_pool(pool_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="Pool not found")
 
 
@@ -749,10 +822,14 @@ async def list_members(
 
 @router.post("/v2.0/lbaas/pools/{pool_id}/members", status_code=201)
 @router.post("/v2/lbaas/pools/{pool_id}/members", status_code=201)
-async def create_member(pool_id: str, body: MemberCreateBody) -> dict[str, Any]:
+async def create_member(
+    pool_id: str,
+    body: MemberCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create a pool member."""
     req = body.member
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     member = db.create_pool_member(
         pool_id=pool_id,
@@ -775,9 +852,14 @@ async def create_member(pool_id: str, body: MemberCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/pools/{pool_id}/members/{member_id}")
 @router.get("/v2/lbaas/pools/{pool_id}/members/{member_id}")
-async def get_member(pool_id: str, member_id: str) -> dict[str, Any]:
+async def get_member(
+    pool_id: str,
+    member_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get a pool member by ID."""
-    member = db.get_pool_member(pool_id, member_id)
+    project_id = _get_project_id(x_auth_token)
+    member = db.get_pool_member(pool_id, member_id, project_id=project_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     return {"member": member.to_dict()}
@@ -785,12 +867,19 @@ async def get_member(pool_id: str, member_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/pools/{pool_id}/members/{member_id}")
 @router.put("/v2/lbaas/pools/{pool_id}/members/{member_id}")
-async def update_member(pool_id: str, member_id: str, body: MemberUpdateBody) -> dict[str, Any]:
+async def update_member(
+    pool_id: str,
+    member_id: str,
+    body: MemberUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update a pool member."""
+    project_id = _get_project_id(x_auth_token)
     req = body.member
     member = db.update_pool_member(
         pool_id=pool_id,
         member_id=member_id,
+        project_id=project_id,
         name=req.name,
         weight=req.weight,
         admin_state_up=req.admin_state_up,
@@ -806,9 +895,14 @@ async def update_member(pool_id: str, member_id: str, body: MemberUpdateBody) ->
 
 @router.delete("/v2.0/lbaas/pools/{pool_id}/members/{member_id}", status_code=204)
 @router.delete("/v2/lbaas/pools/{pool_id}/members/{member_id}", status_code=204)
-async def delete_member(pool_id: str, member_id: str) -> None:
+async def delete_member(
+    pool_id: str,
+    member_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete a pool member."""
-    if not db.delete_pool_member(pool_id, member_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_pool_member(pool_id, member_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="Member not found")
 
 
@@ -833,10 +927,13 @@ async def list_healthmonitors(
 
 @router.post("/v2.0/lbaas/healthmonitors", status_code=201)
 @router.post("/v2/lbaas/healthmonitors", status_code=201)
-async def create_healthmonitor(body: HealthMonitorCreateBody) -> dict[str, Any]:
+async def create_healthmonitor(
+    body: HealthMonitorCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create a health monitor."""
     req = body.healthmonitor
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     monitor = db.create_health_monitor(
         pool_id=req.pool_id,
@@ -863,9 +960,13 @@ async def create_healthmonitor(body: HealthMonitorCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/healthmonitors/{healthmonitor_id}")
 @router.get("/v2/lbaas/healthmonitors/{healthmonitor_id}")
-async def get_healthmonitor(healthmonitor_id: str) -> dict[str, Any]:
+async def get_healthmonitor(
+    healthmonitor_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get a health monitor by ID."""
-    monitor = db.get_health_monitor(healthmonitor_id)
+    project_id = _get_project_id(x_auth_token)
+    monitor = db.get_health_monitor(healthmonitor_id, project_id=project_id)
     if not monitor:
         raise HTTPException(status_code=404, detail="Health monitor not found")
     return {"healthmonitor": monitor.to_dict()}
@@ -874,12 +975,16 @@ async def get_healthmonitor(healthmonitor_id: str) -> dict[str, Any]:
 @router.put("/v2.0/lbaas/healthmonitors/{healthmonitor_id}")
 @router.put("/v2/lbaas/healthmonitors/{healthmonitor_id}")
 async def update_healthmonitor(
-    healthmonitor_id: str, body: HealthMonitorUpdateBody
+    healthmonitor_id: str,
+    body: HealthMonitorUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a health monitor."""
+    project_id = _get_project_id(x_auth_token)
     req = body.healthmonitor
     monitor = db.update_health_monitor(
         monitor_id=healthmonitor_id,
+        project_id=project_id,
         name=req.name,
         delay=req.delay,
         timeout=req.timeout,
@@ -898,9 +1003,13 @@ async def update_healthmonitor(
 
 @router.delete("/v2.0/lbaas/healthmonitors/{healthmonitor_id}", status_code=204)
 @router.delete("/v2/lbaas/healthmonitors/{healthmonitor_id}", status_code=204)
-async def delete_healthmonitor(healthmonitor_id: str) -> None:
+async def delete_healthmonitor(
+    healthmonitor_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete a health monitor."""
-    if not db.delete_health_monitor(healthmonitor_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_health_monitor(healthmonitor_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="Health monitor not found")
 
 
@@ -925,10 +1034,13 @@ async def list_l7policies(
 
 @router.post("/v2.0/lbaas/l7policies", status_code=201)
 @router.post("/v2/lbaas/l7policies", status_code=201)
-async def create_l7policy(body: L7PolicyCreateBody) -> dict[str, Any]:
+async def create_l7policy(
+    body: L7PolicyCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create an L7 policy."""
     req = body.l7policy
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     policy = db.create_l7policy(
         listener_id=req.listener_id,
@@ -951,9 +1063,13 @@ async def create_l7policy(body: L7PolicyCreateBody) -> dict[str, Any]:
 
 @router.get("/v2.0/lbaas/l7policies/{l7policy_id}")
 @router.get("/v2/lbaas/l7policies/{l7policy_id}")
-async def get_l7policy(l7policy_id: str) -> dict[str, Any]:
+async def get_l7policy(
+    l7policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get an L7 policy by ID."""
-    policy = db.get_l7policy(l7policy_id)
+    project_id = _get_project_id(x_auth_token)
+    policy = db.get_l7policy(l7policy_id, project_id=project_id)
     if not policy:
         raise HTTPException(status_code=404, detail="L7 policy not found")
     return {"l7policy": policy.to_dict()}
@@ -961,11 +1077,17 @@ async def get_l7policy(l7policy_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/l7policies/{l7policy_id}")
 @router.put("/v2/lbaas/l7policies/{l7policy_id}")
-async def update_l7policy(l7policy_id: str, body: L7PolicyUpdateBody) -> dict[str, Any]:
+async def update_l7policy(
+    l7policy_id: str,
+    body: L7PolicyUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update an L7 policy."""
+    project_id = _get_project_id(x_auth_token)
     req = body.l7policy
     policy = db.update_l7policy(
         policy_id=l7policy_id,
+        project_id=project_id,
         name=req.name,
         description=req.description,
         action=req.action,
@@ -984,9 +1106,13 @@ async def update_l7policy(l7policy_id: str, body: L7PolicyUpdateBody) -> dict[st
 
 @router.delete("/v2.0/lbaas/l7policies/{l7policy_id}", status_code=204)
 @router.delete("/v2/lbaas/l7policies/{l7policy_id}", status_code=204)
-async def delete_l7policy(l7policy_id: str) -> None:
+async def delete_l7policy(
+    l7policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete an L7 policy."""
-    if not db.delete_l7policy(l7policy_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_l7policy(l7policy_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="L7 policy not found")
 
 
@@ -1011,10 +1137,14 @@ async def list_l7rules(
 
 @router.post("/v2.0/lbaas/l7policies/{l7policy_id}/rules", status_code=201)
 @router.post("/v2/lbaas/l7policies/{l7policy_id}/rules", status_code=201)
-async def create_l7rule(l7policy_id: str, body: L7RuleCreateBody) -> dict[str, Any]:
+async def create_l7rule(
+    l7policy_id: str,
+    body: L7RuleCreateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Create an L7 rule."""
     req = body.rule
-    project_id = "admin"
+    project_id = _get_project_id(x_auth_token)
 
     rule = db.create_l7rule(
         l7policy_id=l7policy_id,
@@ -1034,9 +1164,14 @@ async def create_l7rule(l7policy_id: str, body: L7RuleCreateBody) -> dict[str, A
 
 @router.get("/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
 @router.get("/v2/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
-async def get_l7rule(l7policy_id: str, rule_id: str) -> dict[str, Any]:
+async def get_l7rule(
+    l7policy_id: str,
+    rule_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Get an L7 rule by ID."""
-    rule = db.get_l7rule(l7policy_id, rule_id)
+    project_id = _get_project_id(x_auth_token)
+    rule = db.get_l7rule(l7policy_id, rule_id, project_id=project_id)
     if not rule:
         raise HTTPException(status_code=404, detail="L7 rule not found")
     return {"rule": rule.to_dict()}
@@ -1044,12 +1179,19 @@ async def get_l7rule(l7policy_id: str, rule_id: str) -> dict[str, Any]:
 
 @router.put("/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
 @router.put("/v2/lbaas/l7policies/{l7policy_id}/rules/{rule_id}")
-async def update_l7rule(l7policy_id: str, rule_id: str, body: L7RuleUpdateBody) -> dict[str, Any]:
+async def update_l7rule(
+    l7policy_id: str,
+    rule_id: str,
+    body: L7RuleUpdateBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
     """Update an L7 rule."""
+    project_id = _get_project_id(x_auth_token)
     req = body.rule
     rule = db.update_l7rule(
         l7policy_id=l7policy_id,
         rule_id=rule_id,
+        project_id=project_id,
         type=req.type,
         compare_type=req.compare_type,
         key=req.key,
@@ -1065,7 +1207,12 @@ async def update_l7rule(l7policy_id: str, rule_id: str, body: L7RuleUpdateBody) 
 
 @router.delete("/v2.0/lbaas/l7policies/{l7policy_id}/rules/{rule_id}", status_code=204)
 @router.delete("/v2/lbaas/l7policies/{l7policy_id}/rules/{rule_id}", status_code=204)
-async def delete_l7rule(l7policy_id: str, rule_id: str) -> None:
+async def delete_l7rule(
+    l7policy_id: str,
+    rule_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
     """Delete an L7 rule."""
-    if not db.delete_l7rule(l7policy_id, rule_id):
+    project_id = _get_project_id(x_auth_token)
+    if not db.delete_l7rule(l7policy_id, rule_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="L7 rule not found")
