@@ -474,9 +474,7 @@ class PresetLoader:
                     if image_cfg.container_format
                     else None
                 )
-                disk_format = (
-                    DiskFormat(image_cfg.disk_format) if image_cfg.disk_format else None
-                )
+                disk_format = DiskFormat(image_cfg.disk_format) if image_cfg.disk_format else None
 
                 image = self.db.create_glance_image(
                     name=image_cfg.name,
