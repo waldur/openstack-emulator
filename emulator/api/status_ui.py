@@ -3418,6 +3418,7 @@ async def status_page(
             <div class="mt-8 text-center text-[#4a5568] text-xs">
                 <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
                 <div>OPENSTACK EMULATOR // DEVELOPMENT &amp; TESTING ENVIRONMENT</div>
+                <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
                 <div class="text-[#1e3a5f] mt-1">Auto-refresh in 30 seconds</div>
             </div>
         </div>
@@ -3509,6 +3510,7 @@ async def scenarios_page(
             <div class="mt-8 text-center text-[#4a5568] text-xs">
                 <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
                 <div>OPENSTACK EMULATOR // SCENARIO INJECTION SYSTEM</div>
+                <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
                 <div class="text-[#1e3a5f] mt-1">Changes take effect immediately</div>
             </div>
         </div>
