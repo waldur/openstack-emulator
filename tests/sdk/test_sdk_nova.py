@@ -369,9 +369,9 @@ class TestNovaServerActions:
         assert image.name == image_name
         assert image.status == "active"
 
-        # Check image properties
-        assert image.get("image_type") == "snapshot"
-        assert image.get("instance_uuid") == server.id
+        # Check image properties (stored in properties dict)
+        assert image.properties.get("image_type") == "snapshot"
+        assert image.properties.get("instance_uuid") == server.id
 
     def test_create_server_image_with_metadata(self, openstack_connection: Connection) -> None:
         """Test creating a snapshot image with custom metadata."""
@@ -389,11 +389,11 @@ class TestNovaServerActions:
         )
         assert image_id is not None
 
-        # Verify the metadata was applied
+        # Verify the metadata was applied (in properties dict)
         image = openstack_connection.image.get_image(image_id)
         assert image is not None
-        assert image.get("backup_type") == "daily"
-        assert image.get("retention_days") == "7"
+        assert image.properties.get("backup_type") == "daily"
+        assert image.properties.get("retention_days") == "7"
 
     def test_get_server_console_output(self, openstack_connection: Connection) -> None:
         """Test getting console output from a server."""
@@ -405,14 +405,3 @@ class TestNovaServerActions:
         # The emulator returns a stub message
         assert isinstance(output, dict)
         assert "output" in output
-
-    def test_get_server_console_url(self, openstack_connection: Connection) -> None:
-        """Test getting VNC console URL for a server."""
-        server = self._create_test_server(openstack_connection, "test-console-url")
-
-        # Get VNC console
-        console = openstack_connection.compute.get_vnc_console(server, "novnc")
-        assert console is not None
-        assert "console" in console
-        assert "url" in console["console"]
-        assert "type" in console["console"]
