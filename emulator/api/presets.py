@@ -121,6 +121,7 @@ async def preview_preset(preset_name: str) -> dict[str, Any]:
         resource_counts["networks"] = len(neutron.get("networks", []))
         resource_counts["routers"] = len(neutron.get("routers", []))
         resource_counts["security_groups"] = len(neutron.get("security_groups", []))
+        resource_counts["floating_ips"] = len(neutron.get("floating_ips", []))
     if "nova" in config:
         resource_counts["servers"] = len(config["nova"].get("servers", []))
         resource_counts["keypairs"] = len(config["nova"].get("keypairs", []))

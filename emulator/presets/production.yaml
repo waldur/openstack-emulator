@@ -1,6 +1,49 @@
 name: production
 description: "Production-like environment with multiple projects, networks, servers, and load balancers"
 
+glance:
+  images:
+    - name: ubuntu-22.04-server
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 512
+      size: 2361393152
+      os_distro: ubuntu
+      os_version: "22.04"
+      architecture: x86_64
+    - name: ubuntu-20.04-server
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 512
+      size: 2147483648
+      os_distro: ubuntu
+      os_version: "20.04"
+      architecture: x86_64
+    - name: centos-9-stream
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 1024
+      size: 1073741824
+      os_distro: centos
+      os_version: "9-stream"
+      architecture: x86_64
+    - name: debian-12
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 8
+      min_ram: 512
+      size: 536870912
+      os_distro: debian
+      os_version: "12"
+      architecture: x86_64
+
 keystone:
   projects:
     - name: web-tier
@@ -148,7 +191,29 @@ neutron:
       interfaces:
         - subnet: monitoring-subnet
 
+  floating_ips:
+    - project: web-tier
+      floating_network: external
+      server: web-frontend-1
+    - project: web-tier
+      floating_network: external
+      server: web-frontend-2
+    - project: monitoring
+      floating_network: external
+      server: grafana
+
 nova:
+  keypairs:
+    - name: web-deploy-key
+      user: web-admin
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... web-deploy@example.com"
+    - name: dba-key
+      user: dba
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQD... dba@example.com"
+    - name: monitoring-key
+      user: monitor-user
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQE... monitor@example.com"
+
   servers:
     # Web tier - frontend
     - name: web-frontend-1
@@ -156,6 +221,7 @@ nova:
       flavor: m1.small
       image: ubuntu-22.04-server
       network: web-network
+      key_name: web-deploy-key
       security_groups: [web-frontend]
       metadata:
         tier: frontend
@@ -166,6 +232,7 @@ nova:
       flavor: m1.small
       image: ubuntu-22.04-server
       network: web-network
+      key_name: web-deploy-key
       security_groups: [web-frontend]
       metadata:
         tier: frontend
@@ -177,6 +244,7 @@ nova:
       flavor: m1.medium
       image: ubuntu-22.04-server
       network: web-network
+      key_name: web-deploy-key
       security_groups: [web-backend]
       metadata:
         tier: backend
@@ -187,6 +255,7 @@ nova:
       flavor: m1.medium
       image: ubuntu-22.04-server
       network: web-network
+      key_name: web-deploy-key
       security_groups: [web-backend]
       metadata:
         tier: backend
@@ -198,6 +267,7 @@ nova:
       flavor: m1.large
       image: ubuntu-22.04-server
       network: db-network
+      key_name: dba-key
       security_groups: [database]
       metadata:
         role: primary
@@ -208,6 +278,7 @@ nova:
       flavor: m1.large
       image: ubuntu-22.04-server
       network: db-network
+      key_name: dba-key
       security_groups: [database]
       metadata:
         role: replica
@@ -219,6 +290,7 @@ nova:
       flavor: m1.medium
       image: ubuntu-22.04-server
       network: monitoring-network
+      key_name: monitoring-key
       security_groups: [monitoring-agents]
       metadata:
         role: metrics
@@ -228,6 +300,7 @@ nova:
       flavor: m1.small
       image: ubuntu-22.04-server
       network: monitoring-network
+      key_name: monitoring-key
       security_groups: [monitoring-agents]
       metadata:
         role: dashboards
@@ -254,6 +327,20 @@ cinder:
       description: "Prometheus metrics storage"
       attach_to: prometheus
       device: "/dev/vdb"
+
+  snapshots:
+    - name: postgres-primary-baseline
+      volume: postgres-primary-data
+      project: database-tier
+      description: "Baseline snapshot of PostgreSQL primary"
+    - name: postgres-replica-baseline
+      volume: postgres-replica-data
+      project: database-tier
+      description: "Baseline snapshot of PostgreSQL replica"
+    - name: prometheus-config-backup
+      volume: prometheus-data
+      project: monitoring
+      description: "Prometheus configuration backup"
 
 octavia:
   load_balancers:
