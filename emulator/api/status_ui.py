@@ -1224,6 +1224,21 @@ def build_project_map() -> dict[str, str]:
     return {p.id: p.name for p in projects}
 
 
+def format_project_cell(project_id: str | None, project_map: dict[str, str]) -> str:
+    """Format a project cell with name lookup and tooltip for unknown projects."""
+    if not project_id:
+        return "-"
+    project_name = project_map.get(project_id)
+    if project_name:
+        # Known project - show full name with tooltip showing project ID
+        return f'<span title="{project_id}">{project_name}</span>'
+    else:
+        # Unknown project - show truncated ID with tooltip showing full ID
+        if len(project_id) > 13:
+            return f'<span class="uuid-value" title="{project_id}">{project_id[:13]}...</span>'
+        return f'<span title="{project_id}">{project_id}</span>'
+
+
 def render_servers_table(
     servers: list, authenticated: bool, project_map: dict[str, str] | None = None
 ) -> str:
@@ -1240,7 +1255,7 @@ def render_servers_table(
         created_str = created.strftime("%Y-%m-%d %H:%M:%S") if created else "-"
         # Nova uses tenant_id instead of project_id
         project_id = getattr(server, "tenant_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1258,7 +1273,7 @@ def render_servers_table(
             <td>{server.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{server.flavor_id}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             <td>{created_str}</td>
             {actions}
         </tr>
@@ -1296,7 +1311,7 @@ def render_volumes_table(
         status = volume.status.value if hasattr(volume.status, "value") else str(volume.status)
         status_class = get_status_class(status)
         project_id = getattr(volume, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1313,7 +1328,7 @@ def render_volumes_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
             <td>{volume.volume_type or 'default'}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1355,7 +1370,7 @@ def render_images_table(
         size_mb = (image.size or 0) // (1024 * 1024)
         # Glance uses owner instead of project_id
         owner_id = getattr(image, "owner", None) or ""
-        owner_name = project_map.get(owner_id, owner_id[:8] + "..." if owner_id else "-")
+        owner_cell = format_project_cell(owner_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1372,7 +1387,7 @@ def render_images_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{visibility}</td>
             <td>{size_mb} MB</td>
-            <td>{owner_name}</td>
+            <td>{owner_cell}</td>
             {actions}
         </tr>
         """
@@ -1410,7 +1425,7 @@ def render_networks_table(
         status_class = get_status_class(status)
         external = "Yes" if network.external else "No"
         project_id = getattr(network, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1427,7 +1442,7 @@ def render_networks_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
             <td>{'Yes' if network.shared else 'No'}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1462,7 +1477,7 @@ def render_subnets_table(
     rows = ""
     for subnet in subnets:
         project_id = getattr(subnet, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1479,7 +1494,7 @@ def render_subnets_table(
             <td>{subnet.cidr}</td>
             <td>{subnet.gateway_ip or '-'}</td>
             <td>{'Yes' if subnet.enable_dhcp else 'No'}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1517,7 +1532,7 @@ def render_ports_table(
         status_class = get_status_class(status)
         fixed_ips = ", ".join([ip.ip_address for ip in port.fixed_ips]) if port.fixed_ips else "-"
         project_id = getattr(port, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1534,7 +1549,7 @@ def render_ports_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
             <td>{fixed_ips}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1572,7 +1587,7 @@ def render_routers_table(
         status_class = get_status_class(status)
         ext_gateway = "Yes" if router.external_gateway_info else "No"
         project_id = getattr(router, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1589,7 +1604,7 @@ def render_routers_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{'Yes' if router.admin_state_up else 'No'}</td>
             <td>{ext_gateway}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1626,7 +1641,7 @@ def render_floating_ips_table(
         status = fip.status.value if hasattr(fip.status, "value") else str(fip.status)
         status_class = get_status_class(status)
         project_id = getattr(fip, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1654,7 +1669,7 @@ def render_floating_ips_table(
             <td>{fip.fixed_ip_address or '-'}</td>
             <td class="uuid">{floating_port_cell}</td>
             <td class="uuid">{internal_port_cell}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1691,7 +1706,7 @@ def render_security_groups_table(
     for sg in security_groups:
         rule_count = len(db.list_security_group_rules(security_group_id=sg.id))
         project_id = getattr(sg, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1707,7 +1722,7 @@ def render_security_groups_table(
             <td>{sg.name}</td>
             <td>{sg.description or '-'}</td>
             <td>{rule_count}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1917,7 +1932,7 @@ def render_snapshots_table(
         )
         status_class = get_status_class(status)
         project_id = getattr(snapshot, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1934,7 +1949,7 @@ def render_snapshots_table(
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
             <td class="uuid"><span class="uuid-value" data-full="{snapshot.volume_id}" onclick="copyUuid(this)">{snapshot.volume_id[:13]}...</span></td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -1981,7 +1996,7 @@ def render_load_balancers_table(
         prov_class = get_status_class(prov_status)
         op_class = get_status_class(op_status)
         project_id = getattr(lb, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -1999,7 +2014,7 @@ def render_load_balancers_table(
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td><span class="status-badge {op_class}">{op_status}</span></td>
             <td>{lb.provider}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -2046,7 +2061,7 @@ def render_listeners_table(
             else str(listener.protocol)
         )
         project_id = getattr(listener, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -2064,7 +2079,7 @@ def render_listeners_table(
             <td>{listener.protocol_port}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td class="uuid"><span class="uuid-value" data-full="{listener.loadbalancer_id}" onclick="copyUuid(this)">{listener.loadbalancer_id[:13]}...</span></td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -2112,7 +2127,7 @@ def render_pools_table(
             else str(pool.lb_algorithm)
         )
         project_id = getattr(pool, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -2130,7 +2145,7 @@ def render_pools_table(
             <td>{lb_algorithm}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td>{len(pool.members)}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
@@ -2173,7 +2188,7 @@ def render_health_monitors_table(
         prov_class = get_status_class(prov_status)
         mon_type = monitor.type.value if hasattr(monitor.type, "value") else str(monitor.type)
         project_id = getattr(monitor, "project_id", None) or ""
-        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+        project_cell = format_project_cell(project_id, project_map)
 
         actions = ""
         if authenticated:
@@ -2199,7 +2214,7 @@ def render_health_monitors_table(
             <td>{monitor.timeout}s</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td class="uuid">{pool_cell}</td>
-            <td>{project_name}</td>
+            <td>{project_cell}</td>
             {actions}
         </tr>
         """
