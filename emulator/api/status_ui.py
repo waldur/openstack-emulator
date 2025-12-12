@@ -605,6 +605,66 @@ tailwind.config = {
         padding-top: 20px;
         border-top: 1px solid #1e3a5f;
     }
+    /* Pagination styles */
+    .paginated-table {
+        position: relative;
+    }
+    .pagination-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 16px;
+        padding: 12px 16px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid #1e3a5f;
+        border-top: none;
+    }
+    .pagination-info {
+        color: #4a5568;
+        font-size: 0.8rem;
+    }
+    .pagination-info span {
+        color: #00d4ff;
+    }
+    .pagination-buttons {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .pagination-btn {
+        padding: 6px 12px;
+        background: rgba(0, 212, 255, 0.1);
+        border: 1px solid #1e3a5f;
+        color: #00d4ff;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .pagination-btn:hover:not(:disabled) {
+        background: rgba(0, 212, 255, 0.2);
+        border-color: #00d4ff;
+    }
+    .pagination-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+    .pagination-btn.active {
+        background: #00d4ff;
+        color: #0a0a0f;
+        border-color: #00d4ff;
+    }
+    .page-size-select {
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid #1e3a5f;
+        color: #00d4ff;
+        font-size: 0.75rem;
+        cursor: pointer;
+    }
+    .page-size-select:focus {
+        outline: none;
+        border-color: #00d4ff;
+    }
     /* Form styles */
     .form-group {
         margin-bottom: 20px;
@@ -935,6 +995,135 @@ tailwind.config = {
 # JavaScript for interactivity
 JS_SCRIPT = """
 <script>
+    // Pagination state management
+    const paginationState = {};
+
+    function initPagination(tableId, defaultPageSize = 10) {
+        const container = document.getElementById(tableId);
+        if (!container) return;
+
+        const table = container.querySelector('table');
+        if (!table) return;
+
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const totalRows = rows.length;
+
+        // Only paginate if there are more rows than default page size
+        if (totalRows <= defaultPageSize) {
+            // Hide pagination controls if not enough rows
+            const controls = container.querySelector('.pagination-controls');
+            if (controls) controls.style.display = 'none';
+            return;
+        }
+
+        // Initialize state
+        paginationState[tableId] = {
+            currentPage: 1,
+            pageSize: defaultPageSize,
+            totalRows: totalRows,
+            rows: rows
+        };
+
+        updatePagination(tableId);
+    }
+
+    function updatePagination(tableId) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        const { currentPage, pageSize, totalRows, rows } = state;
+        const totalPages = Math.ceil(totalRows / pageSize);
+        const startIdx = (currentPage - 1) * pageSize;
+        const endIdx = Math.min(startIdx + pageSize, totalRows);
+
+        // Show/hide rows
+        rows.forEach((row, idx) => {
+            row.style.display = (idx >= startIdx && idx < endIdx) ? '' : 'none';
+        });
+
+        // Update info text
+        const infoEl = document.querySelector('#' + tableId + ' .pagination-info');
+        if (infoEl) {
+            infoEl.innerHTML = 'Showing <span>' + (startIdx + 1) + '-' + endIdx + '</span> of <span>' + totalRows + '</span>';
+        }
+
+        // Update buttons
+        const prevBtn = document.querySelector('#' + tableId + ' .pagination-prev');
+        const nextBtn = document.querySelector('#' + tableId + ' .pagination-next');
+        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+        // Update page numbers
+        updatePageNumbers(tableId, currentPage, totalPages);
+    }
+
+    function updatePageNumbers(tableId, currentPage, totalPages) {
+        const numbersContainer = document.querySelector('#' + tableId + ' .page-numbers');
+        if (!numbersContainer) return;
+
+        let html = '';
+        const maxVisible = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+        if (endPage - startPage < maxVisible - 1) {
+            startPage = Math.max(1, endPage - maxVisible + 1);
+        }
+
+        if (startPage > 1) {
+            html += '<button class="pagination-btn" onclick="goToPage(\\'' + tableId + '\\', 1)">1</button>';
+            if (startPage > 2) html += '<span style="color: #4a5568;">...</span>';
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const activeClass = i === currentPage ? ' active' : '';
+            html += '<button class="pagination-btn' + activeClass + '" onclick="goToPage(\\'' + tableId + '\\', ' + i + ')">' + i + '</button>';
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) html += '<span style="color: #4a5568;">...</span>';
+            html += '<button class="pagination-btn" onclick="goToPage(\\'' + tableId + '\\', ' + totalPages + ')">' + totalPages + '</button>';
+        }
+
+        numbersContainer.innerHTML = html;
+    }
+
+    function goToPage(tableId, page) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        const totalPages = Math.ceil(state.totalRows / state.pageSize);
+        state.currentPage = Math.max(1, Math.min(page, totalPages));
+        updatePagination(tableId);
+    }
+
+    function prevPage(tableId) {
+        goToPage(tableId, (paginationState[tableId]?.currentPage || 1) - 1);
+    }
+
+    function nextPage(tableId) {
+        goToPage(tableId, (paginationState[tableId]?.currentPage || 1) + 1);
+    }
+
+    function changePageSize(tableId, newSize) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        state.pageSize = parseInt(newSize);
+        state.currentPage = 1;
+        updatePagination(tableId);
+    }
+
+    // Initialize all paginated tables on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('.paginated-table').forEach(container => {
+            initPagination(container.id);
+        });
+    });
+
     // Tab switching with persistence
     function switchTab(tabName) {
         document.querySelectorAll('.tab-content').forEach(el => {
@@ -1385,6 +1574,44 @@ def format_project_cell(project_id: str | None, project_map: dict[str, str]) -> 
         return f'<span title="{project_id}">{project_id}</span>'
 
 
+def wrap_table_with_pagination(table_html: str, table_id: str, total_count: int) -> str:
+    """Wrap a table with pagination controls.
+
+    Args:
+        table_html: The rendered table HTML
+        table_id: Unique ID for this table (used for pagination state)
+        total_count: Total number of rows in the table
+
+    Returns:
+        HTML with pagination controls wrapped around the table
+    """
+    if total_count == 0:
+        return table_html
+
+    return f"""
+    <div id="{table_id}" class="paginated-table">
+        {table_html}
+        <div class="pagination-controls">
+            <div class="pagination-info">
+                Showing <span>1-{min(10, total_count)}</span> of <span>{total_count}</span>
+            </div>
+            <div class="pagination-buttons">
+                <span style="color: #4a5568; font-size: 0.75rem; margin-right: 8px;">Rows:</span>
+                <select class="page-size-select" onchange="changePageSize('{table_id}', this.value)">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                <button class="pagination-btn pagination-prev" onclick="prevPage('{table_id}')" disabled>◀ Prev</button>
+                <div class="page-numbers" style="display: flex; gap: 4px;"></div>
+                <button class="pagination-btn pagination-next" onclick="nextPage('{table_id}')">Next ▶</button>
+            </div>
+        </div>
+    </div>
+    """
+
+
 def render_servers_table(
     servers: list, authenticated: bool, project_map: dict[str, str] | None = None
 ) -> str:
@@ -1426,7 +1653,7 @@ def render_servers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1442,6 +1669,7 @@ def render_servers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "servers-table", len(servers))
 
 
 def render_volumes_table(
@@ -1480,7 +1708,7 @@ def render_volumes_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1496,6 +1724,7 @@ def render_volumes_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "volumes-table", len(volumes))
 
 
 def render_images_table(
@@ -1539,7 +1768,7 @@ def render_images_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1555,6 +1784,7 @@ def render_images_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "images-table", len(images))
 
 
 def render_networks_table(
@@ -1594,7 +1824,7 @@ def render_networks_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1610,6 +1840,7 @@ def render_networks_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "networks-table", len(networks))
 
 
 def render_subnets_table(
@@ -1646,7 +1877,7 @@ def render_subnets_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1662,6 +1893,7 @@ def render_subnets_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "subnets-table", len(subnets))
 
 
 def render_ports_table(
@@ -1701,7 +1933,7 @@ def render_ports_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1717,6 +1949,7 @@ def render_ports_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "ports-table", len(ports))
 
 
 def render_routers_table(
@@ -1756,7 +1989,7 @@ def render_routers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1772,6 +2005,7 @@ def render_routers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "routers-table", len(routers))
 
 
 def render_floating_ips_table(
@@ -1821,7 +2055,7 @@ def render_floating_ips_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1838,6 +2072,7 @@ def render_floating_ips_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "floating-ips-table", len(floating_ips))
 
 
 def render_security_groups_table(
@@ -1874,7 +2109,7 @@ def render_security_groups_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1889,6 +2124,7 @@ def render_security_groups_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "security-groups-table", len(security_groups))
 
 
 def render_projects_table(projects: list, authenticated: bool) -> str:
@@ -1917,7 +2153,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1931,6 +2167,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "projects-table", len(projects))
 
 
 def render_users_table(users: list, authenticated: bool) -> str:
@@ -1959,7 +2196,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1973,6 +2210,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "users-table", len(users))
 
 
 def render_flavors_table(flavors: list, authenticated: bool) -> str:
@@ -2002,7 +2240,7 @@ def render_flavors_table(flavors: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2017,6 +2255,7 @@ def render_flavors_table(flavors: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "flavors-table", len(flavors))
 
 
 def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
@@ -2047,7 +2286,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2061,6 +2300,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "keypairs-table", len(keypairs))
 
 
 def render_snapshots_table(
@@ -2101,7 +2341,7 @@ def render_snapshots_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2117,6 +2357,7 @@ def render_snapshots_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "snapshots-table", len(snapshots))
 
 
 def render_load_balancers_table(
@@ -2166,7 +2407,7 @@ def render_load_balancers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2183,6 +2424,7 @@ def render_load_balancers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "load-balancers-table", len(load_balancers))
 
 
 def render_listeners_table(
@@ -2231,7 +2473,7 @@ def render_listeners_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2248,6 +2490,7 @@ def render_listeners_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "listeners-table", len(listeners))
 
 
 def render_pools_table(
@@ -2297,7 +2540,7 @@ def render_pools_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2314,6 +2557,7 @@ def render_pools_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "pools-table", len(pools))
 
 
 def render_health_monitors_table(
@@ -2366,7 +2610,7 @@ def render_health_monitors_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2384,6 +2628,7 @@ def render_health_monitors_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "health-monitors-table", len(health_monitors))
 
 
 def build_scenarios_content(
