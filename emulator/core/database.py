@@ -3072,10 +3072,26 @@ class Database:
             self._networks[network.id] = network
             return network
 
-    def get_network(self, network_id: str) -> Network | None:
-        """Get a network by ID."""
+    def get_network(self, network_id: str, project_id: str | None = None) -> Network | None:
+        """Get a network by ID.
+
+        Args:
+            network_id: The network ID to look up.
+            project_id: If provided, verify ownership (shared/external networks
+                        are always accessible).
+
+        Returns:
+            The network if found and accessible, else None.
+        """
         with self._lock:
-            return self._networks.get(network_id)
+            network = self._networks.get(network_id)
+            if network is None:
+                return None
+            # Shared and external networks are accessible to all
+            if project_id is not None and not network.shared and not network.external:
+                if network.project_id != project_id:
+                    return None
+            return network
 
     def list_networks(
         self,
@@ -3103,16 +3119,32 @@ class Database:
     def update_network(
         self,
         network_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
         shared: bool | None = None,
         port_security_enabled: bool | None = None,
     ) -> Network | None:
-        """Update a network."""
+        """Update a network.
+
+        Args:
+            network_id: The network ID to update.
+            project_id: If provided, verify ownership before updating.
+            name: New name for the network.
+            description: New description.
+            admin_state_up: New admin state.
+            shared: New shared setting.
+            port_security_enabled: New port security setting.
+
+        Returns:
+            The updated network if found and owned, else None.
+        """
         with self._lock:
             network = self._networks.get(network_id)
             if not network:
+                return None
+            if project_id is not None and network.project_id != project_id:
                 return None
             if name is not None:
                 network.name = name
@@ -3127,10 +3159,21 @@ class Database:
             network.updated_at = datetime.utcnow()
             return network
 
-    def delete_network(self, network_id: str) -> bool:
-        """Delete a network."""
+    def delete_network(self, network_id: str, project_id: str | None = None) -> bool:
+        """Delete a network.
+
+        Args:
+            network_id: The network ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found, not owned, or has ports.
+        """
         with self._lock:
-            if network_id not in self._networks:
+            network = self._networks.get(network_id)
+            if not network:
+                return False
+            if project_id is not None and network.project_id != project_id:
                 return False
             # Check for ports
             for port in self._ports.values():
@@ -3193,10 +3236,29 @@ class Database:
             network.subnets.append(subnet.id)
             return subnet
 
-    def get_subnet(self, subnet_id: str) -> Subnet | None:
-        """Get a subnet by ID."""
+    def get_subnet(self, subnet_id: str, project_id: str | None = None) -> Subnet | None:
+        """Get a subnet by ID.
+
+        Args:
+            subnet_id: The subnet ID to look up.
+            project_id: If provided, verify ownership (subnets on shared networks
+                        are accessible to all).
+
+        Returns:
+            The subnet if found and accessible, else None.
+        """
         with self._lock:
-            return self._subnets.get(subnet_id)
+            subnet = self._subnets.get(subnet_id)
+            if subnet is None:
+                return None
+            if project_id is not None:
+                # Check if subnet's network is shared
+                network = self._networks.get(subnet.network_id)
+                if network and (network.shared or network.external):
+                    return subnet
+                if subnet.project_id != project_id:
+                    return None
+            return subnet
 
     def list_subnets(
         self,
@@ -3218,6 +3280,7 @@ class Database:
     def update_subnet(
         self,
         subnet_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         gateway_ip: str | None = None,
@@ -3225,10 +3288,21 @@ class Database:
         host_routes: list[dict[str, str]] | None = None,
         enable_dhcp: bool | None = None,
     ) -> Subnet | None:
-        """Update a subnet."""
+        """Update a subnet.
+
+        Args:
+            subnet_id: The subnet ID to update.
+            project_id: If provided, verify ownership before updating.
+            Other args: Fields to update.
+
+        Returns:
+            The updated subnet if found and owned, else None.
+        """
         with self._lock:
             subnet = self._subnets.get(subnet_id)
             if not subnet:
+                return None
+            if project_id is not None and subnet.project_id != project_id:
                 return None
             if name is not None:
                 subnet.name = name
@@ -3245,11 +3319,21 @@ class Database:
             subnet.updated_at = datetime.utcnow()
             return subnet
 
-    def delete_subnet(self, subnet_id: str) -> bool:
-        """Delete a subnet."""
+    def delete_subnet(self, subnet_id: str, project_id: str | None = None) -> bool:
+        """Delete a subnet.
+
+        Args:
+            subnet_id: The subnet ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found, not owned, or has ports.
+        """
         with self._lock:
             subnet = self._subnets.get(subnet_id)
             if not subnet:
+                return False
+            if project_id is not None and subnet.project_id != project_id:
                 return False
             # Check for ports using this subnet
             for port in self._ports.values():
@@ -3325,10 +3409,23 @@ class Database:
             self._ports[port.id] = port
             return port
 
-    def get_port(self, port_id: str) -> Port | None:
-        """Get a port by ID."""
+    def get_port(self, port_id: str, project_id: str | None = None) -> Port | None:
+        """Get a port by ID.
+
+        Args:
+            port_id: The port ID to look up.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The port if found and owned, else None.
+        """
         with self._lock:
-            return self._ports.get(port_id)
+            port = self._ports.get(port_id)
+            if port is None:
+                return None
+            if project_id is not None and port.project_id != project_id:
+                return None
+            return port
 
     def list_ports(
         self,
@@ -3356,6 +3453,7 @@ class Database:
     def update_port(
         self,
         port_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
@@ -3364,10 +3462,21 @@ class Database:
         security_groups: list[str] | None = None,
         port_security_enabled: bool | None = None,
     ) -> Port | None:
-        """Update a port."""
+        """Update a port.
+
+        Args:
+            port_id: The port ID to update.
+            project_id: If provided, verify ownership before updating.
+            Other args: Fields to update.
+
+        Returns:
+            The updated port if found and owned, else None.
+        """
         with self._lock:
             port = self._ports.get(port_id)
             if not port:
+                return None
+            if project_id is not None and port.project_id != project_id:
                 return None
             if name is not None:
                 port.name = name
@@ -3386,10 +3495,21 @@ class Database:
             port.updated_at = datetime.utcnow()
             return port
 
-    def delete_port(self, port_id: str) -> bool:
-        """Delete a port."""
+    def delete_port(self, port_id: str, project_id: str | None = None) -> bool:
+        """Delete a port.
+
+        Args:
+            port_id: The port ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found or not owned.
+        """
         with self._lock:
-            if port_id not in self._ports:
+            port = self._ports.get(port_id)
+            if not port:
+                return False
+            if project_id is not None and port.project_id != project_id:
                 return False
             del self._ports[port_id]
             return True
@@ -3424,10 +3544,23 @@ class Database:
             self._routers[router.id] = router
             return router
 
-    def get_router(self, router_id: str) -> Router | None:
-        """Get a router by ID."""
+    def get_router(self, router_id: str, project_id: str | None = None) -> Router | None:
+        """Get a router by ID.
+
+        Args:
+            router_id: The router ID to look up.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The router if found and owned, else None.
+        """
         with self._lock:
-            return self._routers.get(router_id)
+            router = self._routers.get(router_id)
+            if router is None:
+                return None
+            if project_id is not None and router.project_id != project_id:
+                return None
+            return router
 
     def list_routers(
         self,
@@ -3449,16 +3582,28 @@ class Database:
     def update_router(
         self,
         router_id: str,
+        project_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         admin_state_up: bool | None = None,
         external_gateway_info: dict[str, Any] | None = None,
         routes: list[dict[str, str]] | None = None,
     ) -> Router | None:
-        """Update a router."""
+        """Update a router.
+
+        Args:
+            router_id: The router ID to update.
+            project_id: If provided, verify ownership before updating.
+            Other args: Fields to update.
+
+        Returns:
+            The updated router if found and owned, else None.
+        """
         with self._lock:
             router = self._routers.get(router_id)
             if not router:
+                return None
+            if project_id is not None and router.project_id != project_id:
                 return None
             if name is not None:
                 router.name = name
@@ -3480,10 +3625,21 @@ class Database:
             router.updated_at = datetime.utcnow()
             return router
 
-    def delete_router(self, router_id: str) -> bool:
-        """Delete a router."""
+    def delete_router(self, router_id: str, project_id: str | None = None) -> bool:
+        """Delete a router.
+
+        Args:
+            router_id: The router ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found, not owned, or has interfaces.
+        """
         with self._lock:
-            if router_id not in self._routers:
+            router = self._routers.get(router_id)
+            if not router:
+                return False
+            if project_id is not None and router.project_id != project_id:
                 return False
             # Check for interfaces
             for port in self._ports.values():
@@ -3493,12 +3649,28 @@ class Database:
             return True
 
     def add_router_interface(
-        self, router_id: str, subnet_id: str | None = None, port_id: str | None = None
+        self,
+        router_id: str,
+        project_id: str | None = None,
+        subnet_id: str | None = None,
+        port_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Add an interface to a router."""
+        """Add an interface to a router.
+
+        Args:
+            router_id: The router ID to add interface to.
+            project_id: If provided, verify ownership before adding.
+            subnet_id: The subnet to attach.
+            port_id: The port to attach.
+
+        Returns:
+            Interface info if successful, None if router not found or not owned.
+        """
         with self._lock:
             router = self._routers.get(router_id)
             if not router:
+                return None
+            if project_id is not None and router.project_id != project_id:
                 return None
 
             if port_id:
@@ -3532,12 +3704,28 @@ class Database:
             }
 
     def remove_router_interface(
-        self, router_id: str, subnet_id: str | None = None, port_id: str | None = None
+        self,
+        router_id: str,
+        project_id: str | None = None,
+        subnet_id: str | None = None,
+        port_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Remove an interface from a router."""
+        """Remove an interface from a router.
+
+        Args:
+            router_id: The router ID to remove interface from.
+            project_id: If provided, verify ownership before removing.
+            subnet_id: The subnet to detach.
+            port_id: The port to detach.
+
+        Returns:
+            Interface info if successful, None if router not found or not owned.
+        """
         with self._lock:
             router = self._routers.get(router_id)
             if not router:
+                return None
+            if project_id is not None and router.project_id != project_id:
                 return None
 
             if port_id:
@@ -3602,10 +3790,25 @@ class Database:
             self._floating_ips[fip.id] = fip
             return fip
 
-    def get_floating_ip(self, floatingip_id: str) -> FloatingIP | None:
-        """Get a floating IP by ID."""
+    def get_floating_ip(
+        self, floatingip_id: str, project_id: str | None = None
+    ) -> FloatingIP | None:
+        """Get a floating IP by ID.
+
+        Args:
+            floatingip_id: The floating IP ID to look up.
+            project_id: If provided, verify ownership.
+
+        Returns:
+            The floating IP if found and owned, else None.
+        """
         with self._lock:
-            return self._floating_ips.get(floatingip_id)
+            fip = self._floating_ips.get(floatingip_id)
+            if fip is None:
+                return None
+            if project_id is not None and fip.project_id != project_id:
+                return None
+            return fip
 
     def list_floating_ips(
         self,
@@ -3630,13 +3833,26 @@ class Database:
     def update_floating_ip(
         self,
         floatingip_id: str,
+        project_id: str | None = None,
         description: str | None = None,
         port_id: str | None = None,
     ) -> FloatingIP | None:
-        """Update a floating IP (associate/disassociate)."""
+        """Update a floating IP (associate/disassociate).
+
+        Args:
+            floatingip_id: The floating IP ID to update.
+            project_id: If provided, verify ownership before updating.
+            description: New description.
+            port_id: Port to associate (or empty string to disassociate).
+
+        Returns:
+            The updated floating IP if found and owned, else None.
+        """
         with self._lock:
             fip = self._floating_ips.get(floatingip_id)
             if not fip:
+                return None
+            if project_id is not None and fip.project_id != project_id:
                 return None
             if description is not None:
                 fip.description = description
@@ -3653,10 +3869,21 @@ class Database:
             fip.updated_at = datetime.utcnow()
             return fip
 
-    def delete_floating_ip(self, floatingip_id: str) -> bool:
-        """Delete a floating IP."""
+    def delete_floating_ip(self, floatingip_id: str, project_id: str | None = None) -> bool:
+        """Delete a floating IP.
+
+        Args:
+            floatingip_id: The floating IP ID to delete.
+            project_id: If provided, verify ownership before deleting.
+
+        Returns:
+            True if deleted, False if not found or not owned.
+        """
         with self._lock:
-            if floatingip_id not in self._floating_ips:
+            fip = self._floating_ips.get(floatingip_id)
+            if not fip:
+                return False
+            if project_id is not None and fip.project_id != project_id:
                 return False
             del self._floating_ips[floatingip_id]
             return True
