@@ -2336,7 +2336,7 @@ def render_create_modals(
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
-                    <input type="password" id="password" name="password" required placeholder="password">
+                    <input type="password" id="password" name="password" required placeholder="s4l4dus">
                 </div>
                 <div class="form-group">
                     <label for="project_name">Project (optional)</label>
