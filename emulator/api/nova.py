@@ -443,10 +443,13 @@ async def get_server_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get server metadata."""
-    get_token_or_raise(x_auth_token)
+    token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
     if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    if server.tenant_id != token.project_id:
         raise HTTPException(status_code=404, detail="Server not found")
 
     return {"metadata": server.metadata}
@@ -459,10 +462,13 @@ async def update_server_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update server metadata."""
-    get_token_or_raise(x_auth_token)
+    token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
     if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    if server.tenant_id != token.project_id:
         raise HTTPException(status_code=404, detail="Server not found")
 
     body = await request.json()
@@ -905,10 +911,13 @@ async def get_server_group(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a server group by ID."""
-    get_token_or_raise(x_auth_token)
+    token = get_token_or_raise(x_auth_token)
 
     group = db.get_server_group(server_group_id)
     if not group:
+        raise HTTPException(status_code=404, detail="Server group not found")
+
+    if group.project_id != token.project_id:
         raise HTTPException(status_code=404, detail="Server group not found")
 
     return {"server_group": group.to_dict()}
@@ -920,7 +929,14 @@ async def delete_server_group(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a server group."""
-    get_token_or_raise(x_auth_token)
+    token = get_token_or_raise(x_auth_token)
+
+    group = db.get_server_group(server_group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Server group not found")
+
+    if group.project_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server group not found")
 
     if not db.delete_server_group(server_group_id):
         raise HTTPException(status_code=404, detail="Server group not found")
