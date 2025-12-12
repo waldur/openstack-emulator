@@ -1,0 +1,873 @@
+name: enterprise
+description: "Large enterprise environment with multiple departments, complex networking, DMZ, and shared services"
+
+keystone:
+  projects:
+    # Core infrastructure
+    - name: infrastructure
+      description: "Core infrastructure services"
+      users:
+        - name: infra-admin
+          password: infra-admin-2024
+          email: infra-admin@enterprise.local
+          roles: [admin, member]
+        - name: infra-ops
+          password: infra-ops-2024
+          email: infra-ops@enterprise.local
+          roles: [member]
+
+    # Development department
+    - name: dev-team-alpha
+      description: "Development Team Alpha"
+      users:
+        - name: alpha-lead
+          password: alpha-lead-2024
+          email: alpha-lead@enterprise.local
+          roles: [admin, member]
+        - name: alpha-dev-1
+          password: alpha-dev1-2024
+          email: alpha-dev1@enterprise.local
+          roles: [member]
+        - name: alpha-dev-2
+          password: alpha-dev2-2024
+          email: alpha-dev2@enterprise.local
+          roles: [member]
+
+    - name: dev-team-beta
+      description: "Development Team Beta"
+      users:
+        - name: beta-lead
+          password: beta-lead-2024
+          email: beta-lead@enterprise.local
+          roles: [admin, member]
+        - name: beta-dev-1
+          password: beta-dev1-2024
+          email: beta-dev1@enterprise.local
+          roles: [member]
+
+    # QA department
+    - name: qa-testing
+      description: "QA and Testing Environment"
+      users:
+        - name: qa-manager
+          password: qa-mgr-2024
+          email: qa-manager@enterprise.local
+          roles: [admin, member]
+        - name: qa-engineer-1
+          password: qa-eng1-2024
+          email: qa-eng1@enterprise.local
+          roles: [member]
+        - name: qa-engineer-2
+          password: qa-eng2-2024
+          email: qa-eng2@enterprise.local
+          roles: [member]
+
+    # Production
+    - name: prod-frontend
+      description: "Production Frontend Services"
+      users:
+        - name: prod-fe-admin
+          password: prod-fe-2024
+          email: prod-fe@enterprise.local
+          roles: [admin, member]
+
+    - name: prod-backend
+      description: "Production Backend Services"
+      users:
+        - name: prod-be-admin
+          password: prod-be-2024
+          email: prod-be@enterprise.local
+          roles: [admin, member]
+
+    - name: prod-data
+      description: "Production Data Services"
+      users:
+        - name: prod-data-admin
+          password: prod-data-2024
+          email: prod-data@enterprise.local
+          roles: [admin, member]
+
+    # Shared services
+    - name: shared-services
+      description: "Shared enterprise services (DNS, LDAP, etc.)"
+      users:
+        - name: shared-admin
+          password: shared-2024
+          email: shared@enterprise.local
+          roles: [admin, member]
+
+glance:
+  images:
+    - name: rhel-8.8-server
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 10
+      min_ram: 2048
+      os_distro: rhel
+      os_version: "8.8"
+
+    - name: rhel-9.2-server
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 10
+      min_ram: 2048
+      os_distro: rhel
+      os_version: "9.2"
+
+    - name: windows-server-2022
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 40
+      min_ram: 4096
+      os_distro: windows
+      os_version: "2022"
+
+    - name: centos-stream-9
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 10
+      min_ram: 1024
+      os_distro: centos
+      os_version: "stream9"
+
+neutron:
+  networks:
+    # DMZ Network - public facing
+    - name: dmz-network
+      project: infrastructure
+      external: false
+      shared: true
+      subnets:
+        - name: dmz-subnet
+          cidr: "172.16.0.0/24"
+          gateway: "172.16.0.1"
+          dns_nameservers:
+            - "10.0.1.10"
+            - "10.0.1.11"
+          allocation_pools:
+            - start: "172.16.0.50"
+              end: "172.16.0.200"
+
+    # Management Network
+    - name: mgmt-network
+      project: infrastructure
+      shared: true
+      subnets:
+        - name: mgmt-subnet
+          cidr: "10.0.1.0/24"
+          gateway: "10.0.1.1"
+          dns_nameservers:
+            - "10.0.1.10"
+            - "10.0.1.11"
+
+    # Shared Services Network
+    - name: shared-services-network
+      project: shared-services
+      shared: true
+      subnets:
+        - name: shared-services-subnet
+          cidr: "10.0.10.0/24"
+          gateway: "10.0.10.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # Dev Team Alpha Network
+    - name: alpha-dev-network
+      project: dev-team-alpha
+      subnets:
+        - name: alpha-dev-subnet
+          cidr: "10.10.1.0/24"
+          gateway: "10.10.1.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # Dev Team Beta Network
+    - name: beta-dev-network
+      project: dev-team-beta
+      subnets:
+        - name: beta-dev-subnet
+          cidr: "10.10.2.0/24"
+          gateway: "10.10.2.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # QA Network
+    - name: qa-network
+      project: qa-testing
+      subnets:
+        - name: qa-subnet
+          cidr: "10.20.0.0/24"
+          gateway: "10.20.0.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # Production Frontend Network
+    - name: prod-fe-network
+      project: prod-frontend
+      subnets:
+        - name: prod-fe-subnet
+          cidr: "10.100.1.0/24"
+          gateway: "10.100.1.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # Production Backend Network
+    - name: prod-be-network
+      project: prod-backend
+      subnets:
+        - name: prod-be-subnet
+          cidr: "10.100.2.0/24"
+          gateway: "10.100.2.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+    # Production Data Network (isolated)
+    - name: prod-data-network
+      project: prod-data
+      subnets:
+        - name: prod-data-subnet
+          cidr: "10.100.100.0/24"
+          gateway: "10.100.100.1"
+          dns_nameservers:
+            - "10.0.1.10"
+
+  security_groups:
+    # DMZ Security Group
+    - name: dmz-public
+      description: "DMZ public-facing servers"
+      project: infrastructure
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "0.0.0.0/0"
+
+    # Management access
+    - name: mgmt-access
+      description: "Management network access"
+      project: infrastructure
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3389
+          port_range_max: 3389
+          remote_ip_prefix: "10.0.1.0/24"
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Shared services
+    - name: dns-servers
+      description: "DNS servers"
+      project: shared-services
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 53
+          port_range_max: 53
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: udp
+          port_range_min: 53
+          port_range_max: 53
+          remote_ip_prefix: "10.0.0.0/8"
+
+    - name: ldap-servers
+      description: "LDAP/AD servers"
+      project: shared-services
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 389
+          port_range_max: 389
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 636
+          port_range_max: 636
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Dev environment
+    - name: dev-servers
+      description: "Development servers"
+      project: dev-team-alpha
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3000
+          port_range_max: 9999
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # QA environment
+    - name: qa-servers
+      description: "QA test servers"
+      project: qa-testing
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5000
+          port_range_max: 9000
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Production frontend
+    - name: prod-web
+      description: "Production web servers"
+      project: prod-frontend
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "172.16.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "172.16.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.1.0/24"
+
+    # Production backend
+    - name: prod-api
+      description: "Production API servers"
+      project: prod-backend
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.100.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8443
+          port_range_max: 8443
+          remote_ip_prefix: "10.100.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.1.0/24"
+
+    # Production data
+    - name: prod-database
+      description: "Production database servers"
+      project: prod-data
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.100.2.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+          remote_ip_prefix: "10.100.2.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 6379
+          port_range_max: 6379
+          remote_ip_prefix: "10.100.2.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.1.0/24"
+
+  routers:
+    - name: dmz-router
+      project: infrastructure
+      external_network: external
+      interfaces:
+        - subnet: dmz-subnet
+
+    - name: mgmt-router
+      project: infrastructure
+      external_network: external
+      interfaces:
+        - subnet: mgmt-subnet
+
+    - name: shared-router
+      project: shared-services
+      external_network: external
+      interfaces:
+        - subnet: shared-services-subnet
+
+    - name: alpha-dev-router
+      project: dev-team-alpha
+      external_network: external
+      interfaces:
+        - subnet: alpha-dev-subnet
+
+    - name: beta-dev-router
+      project: dev-team-beta
+      external_network: external
+      interfaces:
+        - subnet: beta-dev-subnet
+
+    - name: qa-router
+      project: qa-testing
+      external_network: external
+      interfaces:
+        - subnet: qa-subnet
+
+    - name: prod-fe-router
+      project: prod-frontend
+      external_network: external
+      interfaces:
+        - subnet: prod-fe-subnet
+
+    - name: prod-be-router
+      project: prod-backend
+      external_network: external
+      interfaces:
+        - subnet: prod-be-subnet
+
+    - name: prod-data-router
+      project: prod-data
+      external_network: external
+      interfaces:
+        - subnet: prod-data-subnet
+
+nova:
+  servers:
+    # Infrastructure - Jump hosts
+    - name: jump-host-1
+      project: infrastructure
+      flavor: m1.small
+      image: rhel-8.8-server
+      network: mgmt-network
+      security_groups: [mgmt-access]
+      metadata:
+        role: jumphost
+        environment: infrastructure
+
+    - name: jump-host-2
+      project: infrastructure
+      flavor: m1.small
+      image: rhel-8.8-server
+      network: mgmt-network
+      security_groups: [mgmt-access]
+      metadata:
+        role: jumphost
+        environment: infrastructure
+
+    # Shared Services - DNS
+    - name: dns-primary
+      project: shared-services
+      flavor: m1.small
+      image: rhel-8.8-server
+      network: shared-services-network
+      security_groups: [dns-servers]
+      metadata:
+        role: dns
+        type: primary
+
+    - name: dns-secondary
+      project: shared-services
+      flavor: m1.small
+      image: rhel-8.8-server
+      network: shared-services-network
+      security_groups: [dns-servers]
+      metadata:
+        role: dns
+        type: secondary
+
+    # Shared Services - LDAP
+    - name: ldap-primary
+      project: shared-services
+      flavor: m1.medium
+      image: rhel-8.8-server
+      network: shared-services-network
+      security_groups: [ldap-servers]
+      metadata:
+        role: ldap
+        type: primary
+
+    - name: ldap-replica
+      project: shared-services
+      flavor: m1.medium
+      image: rhel-8.8-server
+      network: shared-services-network
+      security_groups: [ldap-servers]
+      metadata:
+        role: ldap
+        type: replica
+
+    # Dev Team Alpha
+    - name: alpha-dev-vm-1
+      project: dev-team-alpha
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: alpha-dev-network
+      security_groups: [dev-servers]
+      metadata:
+        team: alpha
+        environment: development
+
+    - name: alpha-dev-vm-2
+      project: dev-team-alpha
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: alpha-dev-network
+      security_groups: [dev-servers]
+      metadata:
+        team: alpha
+        environment: development
+
+    - name: alpha-dev-vm-3
+      project: dev-team-alpha
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: alpha-dev-network
+      security_groups: [dev-servers]
+      metadata:
+        team: alpha
+        environment: development
+
+    # Dev Team Beta
+    - name: beta-dev-vm-1
+      project: dev-team-beta
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: beta-dev-network
+      security_groups: [dev-servers]
+      metadata:
+        team: beta
+        environment: development
+
+    - name: beta-dev-vm-2
+      project: dev-team-beta
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: beta-dev-network
+      security_groups: [dev-servers]
+      metadata:
+        team: beta
+        environment: development
+
+    # QA Environment
+    - name: qa-web-1
+      project: qa-testing
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: qa-network
+      security_groups: [qa-servers]
+      metadata:
+        role: web
+        environment: qa
+
+    - name: qa-web-2
+      project: qa-testing
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: qa-network
+      security_groups: [qa-servers]
+      metadata:
+        role: web
+        environment: qa
+
+    - name: qa-api-1
+      project: qa-testing
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: qa-network
+      security_groups: [qa-servers]
+      metadata:
+        role: api
+        environment: qa
+
+    - name: qa-db-1
+      project: qa-testing
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: qa-network
+      security_groups: [qa-servers]
+      metadata:
+        role: database
+        environment: qa
+
+    # Production Frontend
+    - name: prod-web-1
+      project: prod-frontend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-fe-network
+      security_groups: [prod-web]
+      metadata:
+        role: web
+        environment: production
+
+    - name: prod-web-2
+      project: prod-frontend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-fe-network
+      security_groups: [prod-web]
+      metadata:
+        role: web
+        environment: production
+
+    - name: prod-web-3
+      project: prod-frontend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-fe-network
+      security_groups: [prod-web]
+      metadata:
+        role: web
+        environment: production
+
+    - name: prod-web-4
+      project: prod-frontend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-fe-network
+      security_groups: [prod-web]
+      metadata:
+        role: web
+        environment: production
+
+    # Production Backend
+    - name: prod-api-1
+      project: prod-backend
+      flavor: m1.large
+      image: rhel-9.2-server
+      network: prod-be-network
+      security_groups: [prod-api]
+      metadata:
+        role: api
+        environment: production
+
+    - name: prod-api-2
+      project: prod-backend
+      flavor: m1.large
+      image: rhel-9.2-server
+      network: prod-be-network
+      security_groups: [prod-api]
+      metadata:
+        role: api
+        environment: production
+
+    - name: prod-api-3
+      project: prod-backend
+      flavor: m1.large
+      image: rhel-9.2-server
+      network: prod-be-network
+      security_groups: [prod-api]
+      metadata:
+        role: api
+        environment: production
+
+    - name: prod-worker-1
+      project: prod-backend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-be-network
+      security_groups: [prod-api]
+      metadata:
+        role: worker
+        environment: production
+
+    - name: prod-worker-2
+      project: prod-backend
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-be-network
+      security_groups: [prod-api]
+      metadata:
+        role: worker
+        environment: production
+
+    # Production Data
+    - name: prod-postgres-1
+      project: prod-data
+      flavor: m1.xlarge
+      image: rhel-9.2-server
+      network: prod-data-network
+      security_groups: [prod-database]
+      metadata:
+        role: postgresql
+        type: primary
+        environment: production
+
+    - name: prod-postgres-2
+      project: prod-data
+      flavor: m1.xlarge
+      image: rhel-9.2-server
+      network: prod-data-network
+      security_groups: [prod-database]
+      metadata:
+        role: postgresql
+        type: replica
+        environment: production
+
+    - name: prod-redis-1
+      project: prod-data
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-data-network
+      security_groups: [prod-database]
+      metadata:
+        role: redis
+        type: primary
+        environment: production
+
+    - name: prod-redis-2
+      project: prod-data
+      flavor: m1.medium
+      image: rhel-9.2-server
+      network: prod-data-network
+      security_groups: [prod-database]
+      metadata:
+        role: redis
+        type: replica
+        environment: production
+
+cinder:
+  volumes:
+    # Shared services
+    - name: ldap-data
+      project: shared-services
+      size: 100
+      description: "LDAP directory data"
+      attach_to: ldap-primary
+      device: "/dev/vdb"
+
+    # Dev volumes
+    - name: alpha-dev-data
+      project: dev-team-alpha
+      size: 200
+      description: "Alpha team development data"
+      attach_to: alpha-dev-vm-1
+      device: "/dev/vdb"
+
+    - name: beta-dev-data
+      project: dev-team-beta
+      size: 200
+      description: "Beta team development data"
+      attach_to: beta-dev-vm-1
+      device: "/dev/vdb"
+
+    # QA volumes
+    - name: qa-db-data
+      project: qa-testing
+      size: 100
+      description: "QA database data"
+      attach_to: qa-db-1
+      device: "/dev/vdb"
+
+    # Production volumes
+    - name: prod-postgres-1-data
+      project: prod-data
+      size: 500
+      description: "Production PostgreSQL primary data"
+      volume_type: high-iops
+      attach_to: prod-postgres-1
+      device: "/dev/vdb"
+
+    - name: prod-postgres-1-wal
+      project: prod-data
+      size: 100
+      description: "Production PostgreSQL primary WAL"
+      volume_type: high-iops
+      attach_to: prod-postgres-1
+      device: "/dev/vdc"
+
+    - name: prod-postgres-2-data
+      project: prod-data
+      size: 500
+      description: "Production PostgreSQL replica data"
+      volume_type: high-iops
+      attach_to: prod-postgres-2
+      device: "/dev/vdb"
+
+    - name: prod-redis-data
+      project: prod-data
+      size: 50
+      description: "Production Redis data"
+      attach_to: prod-redis-1
+      device: "/dev/vdb"
+
+octavia:
+  load_balancers:
+    - name: prod-web-lb
+      project: prod-frontend
+      vip_subnet: prod-fe-subnet
+      listeners:
+        - name: prod-https
+          protocol: HTTPS
+          port: 443
+          pool:
+            name: prod-web-pool
+            protocol: HTTPS
+            lb_algorithm: LEAST_CONNECTIONS
+            members:
+              - server: prod-web-1
+                port: 443
+              - server: prod-web-2
+                port: 443
+              - server: prod-web-3
+                port: 443
+              - server: prod-web-4
+                port: 443
+
+    - name: prod-api-lb
+      project: prod-backend
+      vip_subnet: prod-be-subnet
+      listeners:
+        - name: prod-api-https
+          protocol: HTTPS
+          port: 8443
+          pool:
+            name: prod-api-pool
+            protocol: HTTPS
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: prod-api-1
+                port: 8443
+              - server: prod-api-2
+                port: 8443
+              - server: prod-api-3
+                port: 8443

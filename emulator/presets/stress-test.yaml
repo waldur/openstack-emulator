@@ -1,0 +1,1437 @@
+name: stress-test
+description: "High-volume stress test with 100+ servers, 50+ volumes, multiple networks - for performance and scale testing"
+
+keystone:
+  projects:
+    - name: stress-compute
+      description: "Compute stress test project"
+      users:
+        - name: stress-admin
+          password: stress-2024
+          email: stress@test.local
+          roles: [admin, member]
+
+    - name: stress-storage
+      description: "Storage stress test project"
+      users:
+        - name: storage-admin
+          password: storage-2024
+          email: storage@test.local
+          roles: [admin, member]
+
+    - name: stress-network
+      description: "Network stress test project"
+      users:
+        - name: network-admin
+          password: network-2024
+          email: network@test.local
+          roles: [admin, member]
+
+glance:
+  images:
+    - name: stress-image-small
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 1
+      min_ram: 256
+
+    - name: stress-image-medium
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 10
+      min_ram: 1024
+
+    - name: stress-image-large
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 20
+      min_ram: 2048
+
+neutron:
+  networks:
+    # 10 networks for compute stress test
+    - name: stress-net-01
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-01
+          cidr: "10.1.0.0/24"
+          gateway: "10.1.0.1"
+
+    - name: stress-net-02
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-02
+          cidr: "10.2.0.0/24"
+          gateway: "10.2.0.1"
+
+    - name: stress-net-03
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-03
+          cidr: "10.3.0.0/24"
+          gateway: "10.3.0.1"
+
+    - name: stress-net-04
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-04
+          cidr: "10.4.0.0/24"
+          gateway: "10.4.0.1"
+
+    - name: stress-net-05
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-05
+          cidr: "10.5.0.0/24"
+          gateway: "10.5.0.1"
+
+    - name: stress-net-06
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-06
+          cidr: "10.6.0.0/24"
+          gateway: "10.6.0.1"
+
+    - name: stress-net-07
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-07
+          cidr: "10.7.0.0/24"
+          gateway: "10.7.0.1"
+
+    - name: stress-net-08
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-08
+          cidr: "10.8.0.0/24"
+          gateway: "10.8.0.1"
+
+    - name: stress-net-09
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-09
+          cidr: "10.9.0.0/24"
+          gateway: "10.9.0.1"
+
+    - name: stress-net-10
+      project: stress-compute
+      subnets:
+        - name: stress-subnet-10
+          cidr: "10.10.0.0/24"
+          gateway: "10.10.0.1"
+
+    # Storage network
+    - name: storage-net-01
+      project: stress-storage
+      subnets:
+        - name: storage-subnet-01
+          cidr: "10.100.1.0/24"
+          gateway: "10.100.1.1"
+
+    - name: storage-net-02
+      project: stress-storage
+      subnets:
+        - name: storage-subnet-02
+          cidr: "10.100.2.0/24"
+          gateway: "10.100.2.1"
+
+    # Network test networks
+    - name: nettest-net-01
+      project: stress-network
+      subnets:
+        - name: nettest-subnet-01
+          cidr: "10.200.1.0/24"
+          gateway: "10.200.1.1"
+
+    - name: nettest-net-02
+      project: stress-network
+      subnets:
+        - name: nettest-subnet-02
+          cidr: "10.200.2.0/24"
+          gateway: "10.200.2.1"
+
+    - name: nettest-net-03
+      project: stress-network
+      subnets:
+        - name: nettest-subnet-03
+          cidr: "10.200.3.0/24"
+          gateway: "10.200.3.1"
+
+  security_groups:
+    - name: stress-allow-all
+      description: "Allow all for stress testing"
+      project: stress-compute
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 1
+          port_range_max: 65535
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: udp
+          port_range_min: 1
+          port_range_max: 65535
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: "0.0.0.0/0"
+
+  routers:
+    - name: stress-router-01
+      project: stress-compute
+      external_network: external
+      interfaces:
+        - subnet: stress-subnet-01
+        - subnet: stress-subnet-02
+
+    - name: stress-router-02
+      project: stress-compute
+      external_network: external
+      interfaces:
+        - subnet: stress-subnet-03
+        - subnet: stress-subnet-04
+
+    - name: stress-router-03
+      project: stress-compute
+      external_network: external
+      interfaces:
+        - subnet: stress-subnet-05
+        - subnet: stress-subnet-06
+
+    - name: stress-router-04
+      project: stress-compute
+      external_network: external
+      interfaces:
+        - subnet: stress-subnet-07
+        - subnet: stress-subnet-08
+
+    - name: stress-router-05
+      project: stress-compute
+      external_network: external
+      interfaces:
+        - subnet: stress-subnet-09
+        - subnet: stress-subnet-10
+
+    - name: storage-router
+      project: stress-storage
+      external_network: external
+      interfaces:
+        - subnet: storage-subnet-01
+        - subnet: storage-subnet-02
+
+    - name: nettest-router
+      project: stress-network
+      external_network: external
+      interfaces:
+        - subnet: nettest-subnet-01
+        - subnet: nettest-subnet-02
+        - subnet: nettest-subnet-03
+
+nova:
+  servers:
+    # Batch 1: Network 01 (20 servers)
+    - name: stress-vm-001
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "001"}
+
+    - name: stress-vm-002
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "002"}
+
+    - name: stress-vm-003
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "003"}
+
+    - name: stress-vm-004
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "004"}
+
+    - name: stress-vm-005
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "005"}
+
+    - name: stress-vm-006
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "006"}
+
+    - name: stress-vm-007
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "007"}
+
+    - name: stress-vm-008
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "008"}
+
+    - name: stress-vm-009
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "009"}
+
+    - name: stress-vm-010
+      project: stress-compute
+      flavor: m1.tiny
+      image: stress-image-small
+      network: stress-net-01
+      security_groups: [stress-allow-all]
+      metadata: {batch: "1", index: "010"}
+
+    # Batch 2: Network 02 (20 servers)
+    - name: stress-vm-011
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "011"}
+
+    - name: stress-vm-012
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "012"}
+
+    - name: stress-vm-013
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "013"}
+
+    - name: stress-vm-014
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "014"}
+
+    - name: stress-vm-015
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "015"}
+
+    - name: stress-vm-016
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "016"}
+
+    - name: stress-vm-017
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "017"}
+
+    - name: stress-vm-018
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "018"}
+
+    - name: stress-vm-019
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "019"}
+
+    - name: stress-vm-020
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-small
+      network: stress-net-02
+      security_groups: [stress-allow-all]
+      metadata: {batch: "2", index: "020"}
+
+    # Batch 3: Network 03 (20 servers)
+    - name: stress-vm-021
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "021"}
+
+    - name: stress-vm-022
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "022"}
+
+    - name: stress-vm-023
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "023"}
+
+    - name: stress-vm-024
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "024"}
+
+    - name: stress-vm-025
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "025"}
+
+    - name: stress-vm-026
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "026"}
+
+    - name: stress-vm-027
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "027"}
+
+    - name: stress-vm-028
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "028"}
+
+    - name: stress-vm-029
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "029"}
+
+    - name: stress-vm-030
+      project: stress-compute
+      flavor: m1.small
+      image: stress-image-medium
+      network: stress-net-03
+      security_groups: [stress-allow-all]
+      metadata: {batch: "3", index: "030"}
+
+    # Batch 4: Network 04 (15 servers)
+    - name: stress-vm-031
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "031"}
+
+    - name: stress-vm-032
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "032"}
+
+    - name: stress-vm-033
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "033"}
+
+    - name: stress-vm-034
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "034"}
+
+    - name: stress-vm-035
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "035"}
+
+    - name: stress-vm-036
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "036"}
+
+    - name: stress-vm-037
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "037"}
+
+    - name: stress-vm-038
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "038"}
+
+    - name: stress-vm-039
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "039"}
+
+    - name: stress-vm-040
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "040"}
+
+    - name: stress-vm-041
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "041"}
+
+    - name: stress-vm-042
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "042"}
+
+    - name: stress-vm-043
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "043"}
+
+    - name: stress-vm-044
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "044"}
+
+    - name: stress-vm-045
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-medium
+      network: stress-net-04
+      security_groups: [stress-allow-all]
+      metadata: {batch: "4", index: "045"}
+
+    # Batch 5: Network 05 (15 servers)
+    - name: stress-vm-046
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "046"}
+
+    - name: stress-vm-047
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "047"}
+
+    - name: stress-vm-048
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "048"}
+
+    - name: stress-vm-049
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "049"}
+
+    - name: stress-vm-050
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "050"}
+
+    - name: stress-vm-051
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "051"}
+
+    - name: stress-vm-052
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "052"}
+
+    - name: stress-vm-053
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "053"}
+
+    - name: stress-vm-054
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "054"}
+
+    - name: stress-vm-055
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "055"}
+
+    - name: stress-vm-056
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "056"}
+
+    - name: stress-vm-057
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "057"}
+
+    - name: stress-vm-058
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "058"}
+
+    - name: stress-vm-059
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "059"}
+
+    - name: stress-vm-060
+      project: stress-compute
+      flavor: m1.medium
+      image: stress-image-large
+      network: stress-net-05
+      security_groups: [stress-allow-all]
+      metadata: {batch: "5", index: "060"}
+
+    # Batch 6: Networks 06-10 (40 servers distributed)
+    - name: stress-vm-061
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "061"}
+
+    - name: stress-vm-062
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "062"}
+
+    - name: stress-vm-063
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "063"}
+
+    - name: stress-vm-064
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "064"}
+
+    - name: stress-vm-065
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "065"}
+
+    - name: stress-vm-066
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "066"}
+
+    - name: stress-vm-067
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "067"}
+
+    - name: stress-vm-068
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-06
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "068"}
+
+    - name: stress-vm-069
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "069"}
+
+    - name: stress-vm-070
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "070"}
+
+    - name: stress-vm-071
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "071"}
+
+    - name: stress-vm-072
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "072"}
+
+    - name: stress-vm-073
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "073"}
+
+    - name: stress-vm-074
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "074"}
+
+    - name: stress-vm-075
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "075"}
+
+    - name: stress-vm-076
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-07
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "076"}
+
+    - name: stress-vm-077
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "077"}
+
+    - name: stress-vm-078
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "078"}
+
+    - name: stress-vm-079
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "079"}
+
+    - name: stress-vm-080
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "080"}
+
+    - name: stress-vm-081
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "081"}
+
+    - name: stress-vm-082
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "082"}
+
+    - name: stress-vm-083
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "083"}
+
+    - name: stress-vm-084
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-08
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "084"}
+
+    - name: stress-vm-085
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "085"}
+
+    - name: stress-vm-086
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "086"}
+
+    - name: stress-vm-087
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "087"}
+
+    - name: stress-vm-088
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "088"}
+
+    - name: stress-vm-089
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "089"}
+
+    - name: stress-vm-090
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "090"}
+
+    - name: stress-vm-091
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "091"}
+
+    - name: stress-vm-092
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-09
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "092"}
+
+    - name: stress-vm-093
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "093"}
+
+    - name: stress-vm-094
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "094"}
+
+    - name: stress-vm-095
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "095"}
+
+    - name: stress-vm-096
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "096"}
+
+    - name: stress-vm-097
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "097"}
+
+    - name: stress-vm-098
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "098"}
+
+    - name: stress-vm-099
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "099"}
+
+    - name: stress-vm-100
+      project: stress-compute
+      flavor: m1.large
+      image: stress-image-large
+      network: stress-net-10
+      security_groups: [stress-allow-all]
+      metadata: {batch: "6", index: "100"}
+
+    # Storage test servers
+    - name: storage-server-01
+      project: stress-storage
+      flavor: m1.medium
+      image: stress-image-medium
+      network: storage-net-01
+      metadata: {role: storage-test}
+
+    - name: storage-server-02
+      project: stress-storage
+      flavor: m1.medium
+      image: stress-image-medium
+      network: storage-net-01
+      metadata: {role: storage-test}
+
+    - name: storage-server-03
+      project: stress-storage
+      flavor: m1.medium
+      image: stress-image-medium
+      network: storage-net-02
+      metadata: {role: storage-test}
+
+    - name: storage-server-04
+      project: stress-storage
+      flavor: m1.medium
+      image: stress-image-medium
+      network: storage-net-02
+      metadata: {role: storage-test}
+
+    # Network test servers
+    - name: nettest-server-01
+      project: stress-network
+      flavor: m1.small
+      image: stress-image-small
+      network: nettest-net-01
+      metadata: {role: network-test}
+
+    - name: nettest-server-02
+      project: stress-network
+      flavor: m1.small
+      image: stress-image-small
+      network: nettest-net-02
+      metadata: {role: network-test}
+
+    - name: nettest-server-03
+      project: stress-network
+      flavor: m1.small
+      image: stress-image-small
+      network: nettest-net-03
+      metadata: {role: network-test}
+
+cinder:
+  volumes:
+    # 50 volumes for stress testing
+    - name: stress-vol-001
+      project: stress-compute
+      size: 10
+      attach_to: stress-vm-001
+      device: "/dev/vdb"
+
+    - name: stress-vol-002
+      project: stress-compute
+      size: 10
+      attach_to: stress-vm-002
+      device: "/dev/vdb"
+
+    - name: stress-vol-003
+      project: stress-compute
+      size: 10
+      attach_to: stress-vm-003
+      device: "/dev/vdb"
+
+    - name: stress-vol-004
+      project: stress-compute
+      size: 10
+      attach_to: stress-vm-004
+      device: "/dev/vdb"
+
+    - name: stress-vol-005
+      project: stress-compute
+      size: 10
+      attach_to: stress-vm-005
+      device: "/dev/vdb"
+
+    - name: stress-vol-006
+      project: stress-compute
+      size: 20
+      attach_to: stress-vm-011
+      device: "/dev/vdb"
+
+    - name: stress-vol-007
+      project: stress-compute
+      size: 20
+      attach_to: stress-vm-012
+      device: "/dev/vdb"
+
+    - name: stress-vol-008
+      project: stress-compute
+      size: 20
+      attach_to: stress-vm-013
+      device: "/dev/vdb"
+
+    - name: stress-vol-009
+      project: stress-compute
+      size: 20
+      attach_to: stress-vm-014
+      device: "/dev/vdb"
+
+    - name: stress-vol-010
+      project: stress-compute
+      size: 20
+      attach_to: stress-vm-015
+      device: "/dev/vdb"
+
+    - name: stress-vol-011
+      project: stress-compute
+      size: 50
+      attach_to: stress-vm-031
+      device: "/dev/vdb"
+
+    - name: stress-vol-012
+      project: stress-compute
+      size: 50
+      attach_to: stress-vm-032
+      device: "/dev/vdb"
+
+    - name: stress-vol-013
+      project: stress-compute
+      size: 50
+      attach_to: stress-vm-033
+      device: "/dev/vdb"
+
+    - name: stress-vol-014
+      project: stress-compute
+      size: 50
+      attach_to: stress-vm-034
+      device: "/dev/vdb"
+
+    - name: stress-vol-015
+      project: stress-compute
+      size: 50
+      attach_to: stress-vm-035
+      device: "/dev/vdb"
+
+    - name: stress-vol-016
+      project: stress-compute
+      size: 100
+      attach_to: stress-vm-061
+      device: "/dev/vdb"
+
+    - name: stress-vol-017
+      project: stress-compute
+      size: 100
+      attach_to: stress-vm-062
+      device: "/dev/vdb"
+
+    - name: stress-vol-018
+      project: stress-compute
+      size: 100
+      attach_to: stress-vm-063
+      device: "/dev/vdb"
+
+    - name: stress-vol-019
+      project: stress-compute
+      size: 100
+      attach_to: stress-vm-064
+      device: "/dev/vdb"
+
+    - name: stress-vol-020
+      project: stress-compute
+      size: 100
+      attach_to: stress-vm-065
+      device: "/dev/vdb"
+
+    # Unattached volumes for testing
+    - name: stress-vol-unattached-01
+      project: stress-compute
+      size: 50
+      description: "Unattached test volume 1"
+
+    - name: stress-vol-unattached-02
+      project: stress-compute
+      size: 50
+      description: "Unattached test volume 2"
+
+    - name: stress-vol-unattached-03
+      project: stress-compute
+      size: 50
+      description: "Unattached test volume 3"
+
+    - name: stress-vol-unattached-04
+      project: stress-compute
+      size: 50
+      description: "Unattached test volume 4"
+
+    - name: stress-vol-unattached-05
+      project: stress-compute
+      size: 50
+      description: "Unattached test volume 5"
+
+    - name: stress-vol-unattached-06
+      project: stress-compute
+      size: 100
+      description: "Unattached test volume 6"
+
+    - name: stress-vol-unattached-07
+      project: stress-compute
+      size: 100
+      description: "Unattached test volume 7"
+
+    - name: stress-vol-unattached-08
+      project: stress-compute
+      size: 100
+      description: "Unattached test volume 8"
+
+    - name: stress-vol-unattached-09
+      project: stress-compute
+      size: 100
+      description: "Unattached test volume 9"
+
+    - name: stress-vol-unattached-10
+      project: stress-compute
+      size: 100
+      description: "Unattached test volume 10"
+
+    # Storage project volumes
+    - name: storage-vol-001
+      project: stress-storage
+      size: 500
+      description: "Large storage test volume 1"
+      attach_to: storage-server-01
+      device: "/dev/vdb"
+
+    - name: storage-vol-002
+      project: stress-storage
+      size: 500
+      description: "Large storage test volume 2"
+      attach_to: storage-server-02
+      device: "/dev/vdb"
+
+    - name: storage-vol-003
+      project: stress-storage
+      size: 500
+      description: "Large storage test volume 3"
+      attach_to: storage-server-03
+      device: "/dev/vdb"
+
+    - name: storage-vol-004
+      project: stress-storage
+      size: 500
+      description: "Large storage test volume 4"
+      attach_to: storage-server-04
+      device: "/dev/vdb"
+
+    - name: storage-vol-005
+      project: stress-storage
+      size: 1000
+      volume_type: high-iops
+      description: "High IOPS test volume"
+
+    - name: storage-vol-006
+      project: stress-storage
+      size: 1000
+      volume_type: high-iops
+      description: "High IOPS test volume 2"
+
+    # Additional volumes for different sizes
+    - name: stress-vol-large-01
+      project: stress-compute
+      size: 200
+      attach_to: stress-vm-091
+      device: "/dev/vdb"
+
+    - name: stress-vol-large-02
+      project: stress-compute
+      size: 200
+      attach_to: stress-vm-092
+      device: "/dev/vdb"
+
+    - name: stress-vol-large-03
+      project: stress-compute
+      size: 200
+      attach_to: stress-vm-093
+      device: "/dev/vdb"
+
+    - name: stress-vol-large-04
+      project: stress-compute
+      size: 200
+      attach_to: stress-vm-094
+      device: "/dev/vdb"
+
+    - name: stress-vol-large-05
+      project: stress-compute
+      size: 200
+      attach_to: stress-vm-095
+      device: "/dev/vdb"
+
+    - name: stress-vol-xlarge-01
+      project: stress-compute
+      size: 500
+      attach_to: stress-vm-096
+      device: "/dev/vdb"
+
+    - name: stress-vol-xlarge-02
+      project: stress-compute
+      size: 500
+      attach_to: stress-vm-097
+      device: "/dev/vdb"
+
+    - name: stress-vol-xlarge-03
+      project: stress-compute
+      size: 500
+      attach_to: stress-vm-098
+      device: "/dev/vdb"
+
+    - name: stress-vol-xlarge-04
+      project: stress-compute
+      size: 500
+      attach_to: stress-vm-099
+      device: "/dev/vdb"
+
+    - name: stress-vol-xlarge-05
+      project: stress-compute
+      size: 500
+      attach_to: stress-vm-100
+      device: "/dev/vdb"
+
+octavia:
+  load_balancers:
+    - name: stress-lb-01
+      project: stress-compute
+      vip_subnet: stress-subnet-01
+      listeners:
+        - name: stress-http-01
+          protocol: HTTP
+          port: 80
+          pool:
+            name: stress-pool-01
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: stress-vm-001
+                port: 80
+              - server: stress-vm-002
+                port: 80
+              - server: stress-vm-003
+                port: 80
+              - server: stress-vm-004
+                port: 80
+              - server: stress-vm-005
+                port: 80
+
+    - name: stress-lb-02
+      project: stress-compute
+      vip_subnet: stress-subnet-02
+      listeners:
+        - name: stress-http-02
+          protocol: HTTP
+          port: 80
+          pool:
+            name: stress-pool-02
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: stress-vm-011
+                port: 80
+              - server: stress-vm-012
+                port: 80
+              - server: stress-vm-013
+                port: 80
+              - server: stress-vm-014
+                port: 80
+              - server: stress-vm-015
+                port: 80
+
+    - name: stress-lb-03
+      project: stress-compute
+      vip_subnet: stress-subnet-03
+      listeners:
+        - name: stress-http-03
+          protocol: HTTP
+          port: 80
+          pool:
+            name: stress-pool-03
+            protocol: HTTP
+            lb_algorithm: LEAST_CONNECTIONS
+            members:
+              - server: stress-vm-021
+                port: 80
+              - server: stress-vm-022
+                port: 80
+              - server: stress-vm-023
+                port: 80
+              - server: stress-vm-024
+                port: 80
+              - server: stress-vm-025
+                port: 80
