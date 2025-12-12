@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
+from emulator.core.auth import validate_token_with_keystone
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -1542,15 +1543,16 @@ def get_current_user(auth_token: str | None) -> dict | None:
     """Get current user from auth token."""
     if not auth_token:
         return None
-    token = db.validate_token(auth_token)
-    if not token:
-        return None
-    return {
-        "id": token.user_id,
-        "name": token.user_name,
-        "project_id": token.project_id,
-        "project_name": token.project_name,
-    }
+    try:
+        token = validate_token_with_keystone(auth_token, "Status UI")
+        return {
+            "id": token.user_id,
+            "name": token.user_name,
+            "project_id": token.project_id,
+            "project_name": token.project_name,
+        }
+    except HTTPException:
+        return None  # Token invalid
 
 
 def build_project_map() -> dict[str, str]:

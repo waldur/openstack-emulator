@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
 from emulator.core.models import ContainerFormat, DiskFormat, ImageVisibility
+from emulator.core.auth import validate_token_with_keystone
 
 router = APIRouter()
 
@@ -64,10 +65,11 @@ def _get_project_id(token: str | None) -> str:
     """Extract project ID from token."""
     if not token:
         return "admin"
-    token_data = db.validate_token(token)
-    if token_data:
+    try:
+        token_data = validate_token_with_keystone(token, "Glance")
         return token_data.project_id
-    return "admin"
+    except HTTPException:
+        return "admin"  # Fallback for development
 
 
 def _parse_visibility(visibility: str | None) -> ImageVisibility | None:

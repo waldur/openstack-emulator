@@ -4,13 +4,13 @@ Runs on port 8999 (custom port for scenario management).
 This service is NOT subject to scenario injection (would cause recursion).
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from emulator.api.presets import router as presets_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.core.scenario_manager import scenario_manager
+from emulator.core.exceptions import add_openstack_exception_handlers
 
 app = FastAPI(
     title="OpenStack Emulator Scenario Manager",
@@ -29,20 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Custom exception handler
-@app.exception_handler(Exception)
-async def exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle exceptions."""
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "message": str(exc),
-                "code": 500,
-            }
-        },
-    )
+# Add OpenStack-style exception handlers
+add_openstack_exception_handlers(app)
 
 
 # Include routers

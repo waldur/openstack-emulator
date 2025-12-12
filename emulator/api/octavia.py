@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
+from emulator.core.auth import validate_token_with_keystone
 
 router = APIRouter(tags=["octavia"])
 
@@ -14,10 +15,11 @@ def _get_project_id(auth_token: str | None) -> str:
     """Get project_id from auth token. Returns 'admin' if no token provided."""
     if not auth_token:
         return "admin"
-    token = db.validate_token(auth_token)
-    if not token:
-        return "admin"
-    return token.project_id
+    try:
+        token = validate_token_with_keystone(auth_token, "Octavia")
+        return token.project_id
+    except HTTPException:
+        return "admin"  # Fallback for development
 
 
 # Pydantic models for request/response validation

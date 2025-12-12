@@ -3,11 +3,11 @@
 Runs on port 9876 (standard OpenStack Octavia port).
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from emulator.api.octavia import router as octavia_router
+from emulator.core.exceptions import add_openstack_exception_handlers
 
 app = FastAPI(
     title="OpenStack Octavia Emulator",
@@ -26,20 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Custom exception handler for OpenStack-style errors
-@app.exception_handler(Exception)
-async def openstack_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle exceptions in OpenStack error format."""
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "message": str(exc),
-                "code": 500,
-            }
-        },
-    )
+# Add OpenStack-style exception handlers
+add_openstack_exception_handlers(app)
 
 
 # Include Octavia router

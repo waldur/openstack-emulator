@@ -1,5 +1,6 @@
 """Keystone Identity API v3 endpoints for OpenStack emulator."""
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -7,15 +8,18 @@ from pydantic import BaseModel
 
 from emulator.core.database import db
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["identity"])
 
 
 # Request models
-class PasswordIdentity(BaseModel):
-    """Password identity for authentication."""
+class AuthIdentity(BaseModel):
+    """Authentication identity that supports both password and token methods."""
 
     methods: list[str]
-    password: dict[str, Any]
+    password: dict[str, Any] | None = None
+    token: dict[str, str] | None = None
 
 
 class AuthScope(BaseModel):
@@ -28,7 +32,7 @@ class AuthScope(BaseModel):
 class AuthRequest(BaseModel):
     """Authentication request body."""
 
-    identity: PasswordIdentity
+    identity: AuthIdentity
     scope: AuthScope | None = None
 
 
@@ -255,21 +259,59 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     This is a simplified implementation that accepts any credentials
     and returns a valid token for testing purposes.
     """
+    logger.debug("Keystone create_token called with body: %s", body)
     base_url = str(request.base_url).rstrip("/")
 
-    # Extract user info from request
-    user_info = body.auth.identity.password.get("user", {})
-    user_name = user_info.get("name", "admin")
-    user_domain = user_info.get("domain", {})
-    domain_id = user_domain.get("id", "default")
-    if not domain_id:
-        domain_name = user_domain.get("name", "Default")
-        domain = db.get_domain_by_name(domain_name)
-        domain_id = domain.id if domain else "default"
+    # Determine authentication method
+    auth_methods = body.auth.identity.methods
+    logger.debug("Auth methods: %s", auth_methods)
 
+    user_name = "admin"
+    domain_id = "default"
+
+    if "password" in auth_methods and body.auth.identity.password:
+        # Password-based authentication
+        logger.debug("Using password authentication")
+        logger.debug("Auth identity password: %s", body.auth.identity.password)
+        user_info = body.auth.identity.password.get("user", {})
+        logger.debug("Extracted user_info: %s", user_info)
+        user_name = user_info.get("name", "admin")
+        user_domain = user_info.get("domain", {})
+        domain_id = user_domain.get("id", "default")
+        if not domain_id:
+            domain_name = user_domain.get("name", "Default")
+            domain = db.get_domain_by_name(domain_name)
+            domain_id = domain.id if domain else "default"
+
+    elif "token" in auth_methods and body.auth.identity.token:
+        # Token-based authentication (re-authentication with existing token)
+        logger.debug("Using token authentication")
+        existing_token_id = body.auth.identity.token.get("id")
+        logger.debug("Existing token ID: %s", existing_token_id)
+
+        # Validate the existing token
+        existing_token = db.validate_token(existing_token_id)
+        if existing_token:
+            logger.debug("Existing token is valid, using its user info")
+            user_name = existing_token.user_name
+            domain_id = existing_token.domain_id
+        else:
+            logger.debug("Existing token is invalid, using defaults")
+            # For emulator purposes, we'll still allow token creation even with invalid existing token
+            user_name = "admin"
+            domain_id = "default"
+
+    else:
+        logger.debug("No recognized auth method found, using defaults")
+
+    # Extract project info
     project_name = "admin"
     if body.auth.scope and body.auth.scope.project:
         project_name = body.auth.scope.project.get("name", "admin")
+
+    logger.debug(
+        "Creating token for user: %s, project: %s, domain: %s", user_name, project_name, domain_id
+    )
 
     # Create token
     token = db.create_token(
@@ -281,6 +323,8 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
 
     # Set token in header
     response.headers["X-Subject-Token"] = token.id
+    logger.info("Token created successfully: %s", token.id)
+    logger.debug("Token will be added to database and available for validation")
 
     return token.to_dict()
 

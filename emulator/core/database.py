@@ -1,11 +1,14 @@
 """In-memory database for OpenStack emulator."""
 
 import json
+import logging
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from emulator.core.models import (
     AllocationPool,
@@ -154,6 +157,7 @@ class Database:
         self._init_default_keystone_data()
         self._init_default_volume_types()
         self._init_default_neutron_data()
+        self._init_default_tokens()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -432,15 +436,34 @@ class Database:
                 expires_at=datetime.utcnow() + timedelta(hours=24),
                 catalog=self._generate_service_catalog(base_url),
             )
+            logger.info("Storing token in database: %s for user %s", token.id, user.name)
             self._tokens[token.id] = token
+            logger.debug(
+                "Database now has %d tokens: %s", len(self._tokens), list(self._tokens.keys())
+            )
+            logger.debug("Token %s expires at: %s", token.id, token.expires_at)
             return token
 
     def validate_token(self, token_id: str) -> Token | None:
         """Validate and return a token if valid."""
+        logger.debug("Validating token: %s", token_id)
         with self._lock:
+            logger.debug(
+                "Database currently has %d tokens: %s", len(self._tokens), list(self._tokens.keys())
+            )
             token = self._tokens.get(token_id)
-            if token and token.expires_at and token.expires_at > datetime.utcnow():
-                return token
+            logger.debug("Token found in db: %s", token is not None)
+            if token:
+                logger.debug(
+                    "Token expires_at: %s, current time: %s", token.expires_at, datetime.utcnow()
+                )
+                if token.expires_at and token.expires_at > datetime.utcnow():
+                    logger.debug("Token is valid")
+                    return token
+                else:
+                    logger.debug("Token is expired")
+            else:
+                logger.debug("Token not found in database")
             return None
 
     def revoke_token(self, token_id: str) -> bool:
@@ -5901,6 +5924,11 @@ class Database:
             self._l7policies.clear()
             self._l7rules.clear()
             self._next_lb_vip = 1
+
+    def _init_default_tokens(self) -> None:
+        """Initialize tokens - currently empty, tokens should be created via authentication."""
+        logger.info("Token initialization - no default tokens created")
+        logger.info("Tokens will be created through proper authentication flow")
 
 
 # Global database instance

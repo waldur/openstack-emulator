@@ -3,12 +3,12 @@
 Runs on port 9292 (standard OpenStack Glance port).
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from emulator.api.glance import router as glance_router
 from emulator.core.middleware import ScenarioMiddleware
+from emulator.core.exceptions import add_openstack_exception_handlers
 
 app = FastAPI(
     title="OpenStack Glance Emulator",
@@ -30,20 +30,8 @@ app.add_middleware(
 # Add scenario injection middleware
 app.add_middleware(ScenarioMiddleware, service_name="glance")
 
-
-# Custom exception handler for OpenStack-style errors
-@app.exception_handler(Exception)
-async def openstack_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle exceptions in OpenStack error format."""
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "message": str(exc),
-                "code": 500,
-            }
-        },
-    )
+# Add OpenStack-style exception handlers
+add_openstack_exception_handlers(app)
 
 
 # Include Glance router

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
+from emulator.core.auth import validate_token_with_keystone
 
 router = APIRouter(tags=["block-storage"])
 
@@ -172,13 +173,22 @@ class ExtraSpecsBody(BaseModel):
 
 # Helper function to validate tokens
 def get_token_or_raise(auth_token: str | None) -> Any:
-    """Validate token or raise 401 error."""
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    token = db.validate_token(auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return token
+    """Validate token by calling Keystone service."""
+    return validate_token_with_keystone(auth_token, "Cinder")
+
+
+def _parse_is_public(value: str | None) -> bool | None:
+    """Parse is_public query parameter.
+
+    Handles 'None' as a string, boolean strings, and None values.
+    """
+    if value is None or value == "None":
+        return None
+    if value.lower() in ("true", "1", "yes"):
+        return True
+    if value.lower() in ("false", "0", "no"):
+        return False
+    return None
 
 
 # API Version endpoints
@@ -596,11 +606,12 @@ async def update_snapshot_metadata(
 async def list_volume_types(
     project_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
-    is_public: bool | None = Query(None),
+    is_public: str | None = Query(None),
 ) -> dict[str, Any]:
     """List volume types."""
     get_token_or_raise(x_auth_token)
-    volume_types = db.list_volume_types(is_public=is_public)
+    parsed_is_public = _parse_is_public(is_public)
+    volume_types = db.list_volume_types(is_public=parsed_is_public)
     return {"volume_types": [vt.to_dict() for vt in volume_types]}
 
 

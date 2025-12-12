@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from emulator.api.status_ui import router as status_router
+from emulator.core.exceptions import add_openstack_exception_handlers
 
 app = FastAPI(
     title="OpenStack Emulator Status",
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add OpenStack-style exception handlers
+add_openstack_exception_handlers(app)
 
 # Include Status UI router
 app.include_router(status_router)

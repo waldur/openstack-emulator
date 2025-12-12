@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
+from emulator.core.auth import validate_token_with_keystone
 
 router = APIRouter()
 
@@ -124,10 +125,11 @@ def _get_project_id(token: str | None) -> str:
     """Extract project ID from token."""
     if not token:
         return "admin"
-    token_data = db.validate_token(token)
-    if token_data:
+    try:
+        token_data = validate_token_with_keystone(token, "Neutron")
         return token_data.project_id
-    return "admin"
+    except HTTPException:
+        return "admin"  # Fallback for development
 
 
 # API Version endpoint
@@ -1000,9 +1002,11 @@ async def create_rbac_policy(
     # Get project_id from token or use default
     project_id = "admin"
     if x_auth_token:
-        token = db.validate_token(x_auth_token)
-        if token:
+        try:
+            token = validate_token_with_keystone(x_auth_token, "Neutron")
             project_id = token.project_id
+        except HTTPException:
+            project_id = "admin"  # Fallback for development
 
     policy = db.create_rbac_policy(
         object_type=object_type,

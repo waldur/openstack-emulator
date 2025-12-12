@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
+from emulator.core.auth import validate_token_with_keystone
 
 router = APIRouter(tags=["compute"])
 
@@ -99,15 +100,10 @@ class KeypairCreateBody(BaseModel):
     keypair: KeypairCreateRequest
 
 
-# Helper function to validate tokens
+# Helper function to validate tokens via Keystone
 def get_token_or_raise(auth_token: str | None) -> Any:
-    """Validate token or raise 401 error."""
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    token = db.validate_token(auth_token)
-    if not token:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return token
+    """Validate token by calling Keystone service."""
+    return validate_token_with_keystone(auth_token, "Nova")
 
 
 # API Version endpoints
