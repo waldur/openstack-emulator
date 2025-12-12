@@ -1,0 +1,1108 @@
+name: multi-tier
+description: "Complex multi-tier architecture with DMZ, multiple availability zones, transit networks, and strict network segmentation"
+
+keystone:
+  projects:
+    - name: network-core
+      description: "Core network infrastructure (transit, peering)"
+      users:
+        - name: network-admin
+          password: network-2024
+          email: network@multi-tier.local
+          roles: [admin, member]
+
+    - name: az-west
+      description: "Availability Zone West"
+      users:
+        - name: az-west-admin
+          password: west-2024
+          email: west@multi-tier.local
+          roles: [admin, member]
+
+    - name: az-east
+      description: "Availability Zone East"
+      users:
+        - name: az-east-admin
+          password: east-2024
+          email: east@multi-tier.local
+          roles: [admin, member]
+
+    - name: az-central
+      description: "Availability Zone Central"
+      users:
+        - name: az-central-admin
+          password: central-2024
+          email: central@multi-tier.local
+          roles: [admin, member]
+
+    - name: security
+      description: "Security services (WAF, IDS, bastion)"
+      users:
+        - name: security-admin
+          password: security-2024
+          email: security@multi-tier.local
+          roles: [admin, member]
+
+glance:
+  images:
+    - name: pfsense-2.7
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 8
+      min_ram: 1024
+      os_distro: freebsd
+      os_version: "pfsense-2.7"
+
+    - name: fortios-7
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 2
+      min_ram: 2048
+      os_distro: fortios
+      os_version: "7"
+
+neutron:
+  networks:
+    # =========================================
+    # CORE TRANSIT NETWORKS
+    # =========================================
+
+    # Internet edge / DMZ
+    - name: dmz-edge
+      project: network-core
+      external: false
+      shared: true
+      subnets:
+        - name: dmz-edge-subnet
+          cidr: "192.168.0.0/24"
+          gateway: "192.168.0.1"
+          dns_nameservers:
+            - "8.8.8.8"
+            - "8.8.4.4"
+
+    # Transit network - West to Central
+    - name: transit-west-central
+      project: network-core
+      shared: true
+      subnets:
+        - name: transit-wc-subnet
+          cidr: "10.255.1.0/30"
+          gateway: "10.255.1.1"
+          enable_dhcp: false
+
+    # Transit network - East to Central
+    - name: transit-east-central
+      project: network-core
+      shared: true
+      subnets:
+        - name: transit-ec-subnet
+          cidr: "10.255.2.0/30"
+          gateway: "10.255.2.1"
+          enable_dhcp: false
+
+    # Transit network - West to East (backup path)
+    - name: transit-west-east
+      project: network-core
+      shared: true
+      subnets:
+        - name: transit-we-subnet
+          cidr: "10.255.3.0/30"
+          gateway: "10.255.3.1"
+          enable_dhcp: false
+
+    # Management backbone
+    - name: mgmt-backbone
+      project: network-core
+      shared: true
+      subnets:
+        - name: mgmt-backbone-subnet
+          cidr: "10.254.0.0/24"
+          gateway: "10.254.0.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # =========================================
+    # AZ WEST NETWORKS
+    # =========================================
+
+    # West - Web tier
+    - name: west-web-tier
+      project: az-west
+      subnets:
+        - name: west-web-subnet
+          cidr: "10.1.1.0/24"
+          gateway: "10.1.1.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # West - App tier
+    - name: west-app-tier
+      project: az-west
+      subnets:
+        - name: west-app-subnet
+          cidr: "10.1.2.0/24"
+          gateway: "10.1.2.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # West - Database tier
+    - name: west-db-tier
+      project: az-west
+      subnets:
+        - name: west-db-subnet
+          cidr: "10.1.3.0/24"
+          gateway: "10.1.3.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # West - Storage tier
+    - name: west-storage-tier
+      project: az-west
+      subnets:
+        - name: west-storage-subnet
+          cidr: "10.1.4.0/24"
+          gateway: "10.1.4.1"
+          enable_dhcp: false
+
+    # =========================================
+    # AZ EAST NETWORKS
+    # =========================================
+
+    # East - Web tier
+    - name: east-web-tier
+      project: az-east
+      subnets:
+        - name: east-web-subnet
+          cidr: "10.2.1.0/24"
+          gateway: "10.2.1.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # East - App tier
+    - name: east-app-tier
+      project: az-east
+      subnets:
+        - name: east-app-subnet
+          cidr: "10.2.2.0/24"
+          gateway: "10.2.2.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # East - Database tier
+    - name: east-db-tier
+      project: az-east
+      subnets:
+        - name: east-db-subnet
+          cidr: "10.2.3.0/24"
+          gateway: "10.2.3.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # East - Storage tier
+    - name: east-storage-tier
+      project: az-east
+      subnets:
+        - name: east-storage-subnet
+          cidr: "10.2.4.0/24"
+          gateway: "10.2.4.1"
+          enable_dhcp: false
+
+    # =========================================
+    # AZ CENTRAL NETWORKS (Hub)
+    # =========================================
+
+    # Central - Shared services
+    - name: central-shared
+      project: az-central
+      shared: true
+      subnets:
+        - name: central-shared-subnet
+          cidr: "10.3.0.0/24"
+          gateway: "10.3.0.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # Central - Database replication
+    - name: central-db-repl
+      project: az-central
+      subnets:
+        - name: central-db-repl-subnet
+          cidr: "10.3.1.0/24"
+          gateway: "10.3.1.1"
+          dns_nameservers:
+            - "10.254.0.10"
+
+    # Central - Backup network
+    - name: central-backup
+      project: az-central
+      subnets:
+        - name: central-backup-subnet
+          cidr: "10.3.2.0/24"
+          gateway: "10.3.2.1"
+
+    # =========================================
+    # SECURITY NETWORKS
+    # =========================================
+
+    # Security - WAF tier
+    - name: security-waf
+      project: security
+      subnets:
+        - name: security-waf-subnet
+          cidr: "10.250.1.0/24"
+          gateway: "10.250.1.1"
+
+    # Security - IDS/IPS tier
+    - name: security-ids
+      project: security
+      subnets:
+        - name: security-ids-subnet
+          cidr: "10.250.2.0/24"
+          gateway: "10.250.2.1"
+
+    # Security - Bastion
+    - name: security-bastion
+      project: security
+      subnets:
+        - name: security-bastion-subnet
+          cidr: "10.250.3.0/24"
+          gateway: "10.250.3.1"
+
+  security_groups:
+    # DMZ edge
+    - name: dmz-public
+      description: "DMZ public facing"
+      project: network-core
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "0.0.0.0/0"
+
+    # Transit routing
+    - name: transit-router
+      description: "Transit router instances"
+      project: network-core
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 179
+          port_range_max: 179
+          remote_ip_prefix: "10.255.0.0/16"
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: udp
+          port_range_min: 4789
+          port_range_max: 4789
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Web tier
+    - name: web-tier-sg
+      description: "Web tier servers"
+      project: az-west
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "10.250.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "10.250.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.250.3.0/24"
+
+    # App tier
+    - name: app-tier-sg
+      description: "Application tier servers"
+      project: az-west
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.1.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.2.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.250.3.0/24"
+
+    # Database tier
+    - name: db-tier-sg
+      description: "Database tier servers"
+      project: az-west
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.1.2.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.2.2.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.3.1.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.250.3.0/24"
+
+    # Storage tier
+    - name: storage-tier-sg
+      description: "Storage tier (NFS/iSCSI)"
+      project: az-west
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 2049
+          port_range_max: 2049
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3260
+          port_range_max: 3260
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # WAF
+    - name: waf-sg
+      description: "Web Application Firewall"
+      project: security
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "192.168.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "192.168.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8443
+          port_range_max: 8443
+          remote_ip_prefix: "10.254.0.0/24"
+
+    # IDS
+    - name: ids-sg
+      description: "Intrusion Detection System"
+      project: security
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 1514
+          port_range_max: 1514
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: udp
+          port_range_min: 1514
+          port_range_max: 1514
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Bastion
+    - name: bastion-sg
+      description: "Bastion hosts"
+      project: security
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "192.168.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3389
+          port_range_max: 3389
+          remote_ip_prefix: "192.168.0.0/24"
+
+  routers:
+    # Core routers
+    - name: edge-router
+      project: network-core
+      external_network: external
+      interfaces:
+        - subnet: dmz-edge-subnet
+
+    - name: core-west-router
+      project: network-core
+      external_network: external
+      interfaces:
+        - subnet: transit-wc-subnet
+        - subnet: transit-we-subnet
+
+    - name: core-east-router
+      project: network-core
+      external_network: external
+      interfaces:
+        - subnet: transit-ec-subnet
+        - subnet: transit-we-subnet
+
+    - name: core-central-router
+      project: network-core
+      external_network: external
+      interfaces:
+        - subnet: transit-wc-subnet
+        - subnet: transit-ec-subnet
+        - subnet: mgmt-backbone-subnet
+
+    # AZ West routers
+    - name: west-router
+      project: az-west
+      external_network: external
+      interfaces:
+        - subnet: west-web-subnet
+        - subnet: west-app-subnet
+        - subnet: west-db-subnet
+        - subnet: west-storage-subnet
+
+    # AZ East routers
+    - name: east-router
+      project: az-east
+      external_network: external
+      interfaces:
+        - subnet: east-web-subnet
+        - subnet: east-app-subnet
+        - subnet: east-db-subnet
+        - subnet: east-storage-subnet
+
+    # AZ Central routers
+    - name: central-router
+      project: az-central
+      external_network: external
+      interfaces:
+        - subnet: central-shared-subnet
+        - subnet: central-db-repl-subnet
+        - subnet: central-backup-subnet
+
+    # Security routers
+    - name: security-router
+      project: security
+      external_network: external
+      interfaces:
+        - subnet: security-waf-subnet
+        - subnet: security-ids-subnet
+        - subnet: security-bastion-subnet
+
+nova:
+  servers:
+    # =========================================
+    # NETWORK CORE - Transit routers
+    # =========================================
+    - name: vrouter-west
+      project: network-core
+      flavor: m1.medium
+      image: pfsense-2.7
+      network: transit-west-central
+      security_groups: [transit-router]
+      metadata:
+        role: virtual-router
+        location: west
+
+    - name: vrouter-east
+      project: network-core
+      flavor: m1.medium
+      image: pfsense-2.7
+      network: transit-east-central
+      security_groups: [transit-router]
+      metadata:
+        role: virtual-router
+        location: east
+
+    - name: vrouter-central
+      project: network-core
+      flavor: m1.medium
+      image: pfsense-2.7
+      network: mgmt-backbone
+      security_groups: [transit-router]
+      metadata:
+        role: virtual-router
+        location: central
+
+    # DNS servers
+    - name: dns-1
+      project: network-core
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: mgmt-backbone
+      security_groups: [transit-router]
+      metadata:
+        role: dns
+        instance: "1"
+
+    - name: dns-2
+      project: network-core
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: mgmt-backbone
+      security_groups: [transit-router]
+      metadata:
+        role: dns
+        instance: "2"
+
+    # =========================================
+    # AZ WEST SERVERS
+    # =========================================
+
+    # Web tier
+    - name: west-web-1
+      project: az-west
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: west-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: web
+        az: west
+
+    - name: west-web-2
+      project: az-west
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: west-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: web
+        az: west
+
+    - name: west-web-3
+      project: az-west
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: west-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: web
+        az: west
+
+    # App tier
+    - name: west-app-1
+      project: az-west
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: west-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: app
+        az: west
+
+    - name: west-app-2
+      project: az-west
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: west-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: app
+        az: west
+
+    - name: west-app-3
+      project: az-west
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: west-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: app
+        az: west
+
+    - name: west-app-4
+      project: az-west
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: west-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: app
+        az: west
+
+    # Database tier
+    - name: west-db-primary
+      project: az-west
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: west-db-tier
+      security_groups: [db-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: database
+        role: primary
+        az: west
+
+    - name: west-db-replica
+      project: az-west
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: west-db-tier
+      security_groups: [db-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: database
+        role: replica
+        az: west
+
+    # Storage
+    - name: west-nfs-1
+      project: az-west
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: west-storage-tier
+      security_groups: [storage-tier-sg]
+      availability_zone: az-west
+      metadata:
+        tier: storage
+        type: nfs
+        az: west
+
+    # =========================================
+    # AZ EAST SERVERS
+    # =========================================
+
+    # Web tier
+    - name: east-web-1
+      project: az-east
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: east-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: web
+        az: east
+
+    - name: east-web-2
+      project: az-east
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: east-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: web
+        az: east
+
+    - name: east-web-3
+      project: az-east
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: east-web-tier
+      security_groups: [web-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: web
+        az: east
+
+    # App tier
+    - name: east-app-1
+      project: az-east
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: east-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: app
+        az: east
+
+    - name: east-app-2
+      project: az-east
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: east-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: app
+        az: east
+
+    - name: east-app-3
+      project: az-east
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: east-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: app
+        az: east
+
+    - name: east-app-4
+      project: az-east
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: east-app-tier
+      security_groups: [app-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: app
+        az: east
+
+    # Database tier
+    - name: east-db-primary
+      project: az-east
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: east-db-tier
+      security_groups: [db-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: database
+        role: primary
+        az: east
+
+    - name: east-db-replica
+      project: az-east
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: east-db-tier
+      security_groups: [db-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: database
+        role: replica
+        az: east
+
+    # Storage
+    - name: east-nfs-1
+      project: az-east
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: east-storage-tier
+      security_groups: [storage-tier-sg]
+      availability_zone: az-east
+      metadata:
+        tier: storage
+        type: nfs
+        az: east
+
+    # =========================================
+    # AZ CENTRAL SERVERS (Shared/Hub)
+    # =========================================
+
+    # Central shared services
+    - name: central-ldap
+      project: az-central
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: central-shared
+      security_groups: [db-tier-sg]
+      availability_zone: az-central
+      metadata:
+        role: ldap
+        az: central
+
+    - name: central-ntp
+      project: az-central
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: central-shared
+      security_groups: [db-tier-sg]
+      availability_zone: az-central
+      metadata:
+        role: ntp
+        az: central
+
+    # Database replication hub
+    - name: central-db-witness
+      project: az-central
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: central-db-repl
+      security_groups: [db-tier-sg]
+      availability_zone: az-central
+      metadata:
+        role: db-witness
+        az: central
+
+    # Backup server
+    - name: central-backup-1
+      project: az-central
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: central-backup
+      security_groups: [storage-tier-sg]
+      availability_zone: az-central
+      metadata:
+        role: backup
+        az: central
+
+    # =========================================
+    # SECURITY SERVERS
+    # =========================================
+
+    # WAF cluster
+    - name: waf-1
+      project: security
+      flavor: m1.medium
+      image: fortios-7
+      network: security-waf
+      security_groups: [waf-sg]
+      metadata:
+        role: waf
+        instance: "1"
+
+    - name: waf-2
+      project: security
+      flavor: m1.medium
+      image: fortios-7
+      network: security-waf
+      security_groups: [waf-sg]
+      metadata:
+        role: waf
+        instance: "2"
+
+    # IDS/IPS
+    - name: ids-1
+      project: security
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: security-ids
+      security_groups: [ids-sg]
+      metadata:
+        role: ids
+        instance: "1"
+
+    - name: ids-2
+      project: security
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: security-ids
+      security_groups: [ids-sg]
+      metadata:
+        role: ids
+        instance: "2"
+
+    # Bastion hosts
+    - name: bastion-west
+      project: security
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: security-bastion
+      security_groups: [bastion-sg]
+      metadata:
+        role: bastion
+        region: west
+
+    - name: bastion-east
+      project: security
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: security-bastion
+      security_groups: [bastion-sg]
+      metadata:
+        role: bastion
+        region: east
+
+cinder:
+  volumes:
+    # West databases
+    - name: west-db-primary-data
+      project: az-west
+      size: 500
+      volume_type: high-iops
+      description: "West primary DB data"
+      attach_to: west-db-primary
+      device: "/dev/vdb"
+
+    - name: west-db-primary-wal
+      project: az-west
+      size: 100
+      volume_type: high-iops
+      description: "West primary DB WAL"
+      attach_to: west-db-primary
+      device: "/dev/vdc"
+
+    - name: west-db-replica-data
+      project: az-west
+      size: 500
+      volume_type: high-iops
+      description: "West replica DB data"
+      attach_to: west-db-replica
+      device: "/dev/vdb"
+
+    # West storage
+    - name: west-nfs-data
+      project: az-west
+      size: 2000
+      description: "West NFS storage"
+      attach_to: west-nfs-1
+      device: "/dev/vdb"
+
+    # East databases
+    - name: east-db-primary-data
+      project: az-east
+      size: 500
+      volume_type: high-iops
+      description: "East primary DB data"
+      attach_to: east-db-primary
+      device: "/dev/vdb"
+
+    - name: east-db-primary-wal
+      project: az-east
+      size: 100
+      volume_type: high-iops
+      description: "East primary DB WAL"
+      attach_to: east-db-primary
+      device: "/dev/vdc"
+
+    - name: east-db-replica-data
+      project: az-east
+      size: 500
+      volume_type: high-iops
+      description: "East replica DB data"
+      attach_to: east-db-replica
+      device: "/dev/vdb"
+
+    # East storage
+    - name: east-nfs-data
+      project: az-east
+      size: 2000
+      description: "East NFS storage"
+      attach_to: east-nfs-1
+      device: "/dev/vdb"
+
+    # Central backup
+    - name: central-backup-data
+      project: az-central
+      size: 5000
+      description: "Central backup storage"
+      attach_to: central-backup-1
+      device: "/dev/vdb"
+
+octavia:
+  load_balancers:
+    # Global entry point
+    - name: global-web-lb
+      project: security
+      vip_subnet: security-waf-subnet
+      listeners:
+        - name: global-https
+          protocol: HTTPS
+          port: 443
+          pool:
+            name: waf-pool
+            protocol: HTTPS
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: waf-1
+                port: 443
+              - server: waf-2
+                port: 443
+
+    # West web tier LB
+    - name: west-web-lb
+      project: az-west
+      vip_subnet: west-web-subnet
+      listeners:
+        - name: west-web-http
+          protocol: HTTP
+          port: 80
+          pool:
+            name: west-web-pool
+            protocol: HTTP
+            lb_algorithm: LEAST_CONNECTIONS
+            members:
+              - server: west-web-1
+                port: 80
+              - server: west-web-2
+                port: 80
+              - server: west-web-3
+                port: 80
+
+    # West app tier LB
+    - name: west-app-lb
+      project: az-west
+      vip_subnet: west-app-subnet
+      listeners:
+        - name: west-app-http
+          protocol: HTTP
+          port: 8080
+          pool:
+            name: west-app-pool
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: west-app-1
+                port: 8080
+              - server: west-app-2
+                port: 8080
+              - server: west-app-3
+                port: 8080
+              - server: west-app-4
+                port: 8080
+
+    # East web tier LB
+    - name: east-web-lb
+      project: az-east
+      vip_subnet: east-web-subnet
+      listeners:
+        - name: east-web-http
+          protocol: HTTP
+          port: 80
+          pool:
+            name: east-web-pool
+            protocol: HTTP
+            lb_algorithm: LEAST_CONNECTIONS
+            members:
+              - server: east-web-1
+                port: 80
+              - server: east-web-2
+                port: 80
+              - server: east-web-3
+                port: 80
+
+    # East app tier LB
+    - name: east-app-lb
+      project: az-east
+      vip_subnet: east-app-subnet
+      listeners:
+        - name: east-app-http
+          protocol: HTTP
+          port: 8080
+          pool:
+            name: east-app-pool
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: east-app-1
+                port: 8080
+              - server: east-app-2
+                port: 8080
+              - server: east-app-3
+                port: 8080
+              - server: east-app-4
+                port: 8080

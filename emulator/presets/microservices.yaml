@@ -1,0 +1,1129 @@
+name: microservices
+description: "Microservices architecture with service mesh, API gateway, multiple services, and observability stack"
+
+keystone:
+  projects:
+    - name: platform
+      description: "Platform infrastructure (gateway, service mesh, observability)"
+      users:
+        - name: platform-admin
+          password: platform-2024
+          email: platform@microservices.local
+          roles: [admin, member]
+
+    - name: services
+      description: "Business services"
+      users:
+        - name: services-admin
+          password: services-2024
+          email: services@microservices.local
+          roles: [admin, member]
+        - name: services-deploy
+          password: deploy-2024
+          email: deploy@microservices.local
+          roles: [member]
+
+    - name: data
+      description: "Data services (databases, caches, queues)"
+      users:
+        - name: data-admin
+          password: data-2024
+          email: data@microservices.local
+          roles: [admin, member]
+
+glance:
+  images:
+    - name: alpine-3.18
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 1
+      min_ram: 256
+      os_distro: alpine
+      os_version: "3.18"
+
+    - name: debian-12-minimal
+      visibility: public
+      disk_format: qcow2
+      container_format: bare
+      min_disk: 5
+      min_ram: 512
+      os_distro: debian
+      os_version: "12"
+
+neutron:
+  networks:
+    # Public ingress network
+    - name: ingress-network
+      project: platform
+      external: false
+      subnets:
+        - name: ingress-subnet
+          cidr: "10.0.0.0/24"
+          gateway: "10.0.0.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Service mesh network
+    - name: mesh-network
+      project: platform
+      shared: true
+      subnets:
+        - name: mesh-subnet
+          cidr: "10.10.0.0/20"
+          gateway: "10.10.0.1"
+          dns_nameservers:
+            - "10.10.0.10"
+          allocation_pools:
+            - start: "10.10.0.100"
+              end: "10.10.15.250"
+
+    # Services network - Frontend tier
+    - name: frontend-network
+      project: services
+      subnets:
+        - name: frontend-subnet
+          cidr: "10.20.1.0/24"
+          gateway: "10.20.1.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Services network - Backend tier
+    - name: backend-network
+      project: services
+      subnets:
+        - name: backend-subnet
+          cidr: "10.20.2.0/24"
+          gateway: "10.20.2.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Services network - Internal APIs
+    - name: internal-api-network
+      project: services
+      subnets:
+        - name: internal-api-subnet
+          cidr: "10.20.3.0/24"
+          gateway: "10.20.3.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Data network - Databases
+    - name: database-network
+      project: data
+      subnets:
+        - name: database-subnet
+          cidr: "10.30.1.0/24"
+          gateway: "10.30.1.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Data network - Cache
+    - name: cache-network
+      project: data
+      subnets:
+        - name: cache-subnet
+          cidr: "10.30.2.0/24"
+          gateway: "10.30.2.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+    # Data network - Message Queue
+    - name: queue-network
+      project: data
+      subnets:
+        - name: queue-subnet
+          cidr: "10.30.3.0/24"
+          gateway: "10.30.3.1"
+          dns_nameservers:
+            - "10.10.0.10"
+
+  security_groups:
+    # API Gateway
+    - name: api-gateway
+      description: "API Gateway - public entry point"
+      project: platform
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Service mesh control plane
+    - name: mesh-control
+      description: "Service mesh control plane"
+      project: platform
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 15010
+          port_range_max: 15014
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9090
+          port_range_max: 9090
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Service mesh sidecar
+    - name: mesh-sidecar
+      description: "Service mesh sidecar proxy"
+      project: platform
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 15001
+          port_range_max: 15001
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 15006
+          port_range_max: 15006
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 15090
+          port_range_max: 15090
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Observability
+    - name: observability
+      description: "Observability stack (metrics, logs, traces)"
+      project: platform
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9090
+          port_range_max: 9090
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3000
+          port_range_max: 3000
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 16686
+          port_range_max: 16686
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 14268
+          port_range_max: 14268
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9200
+          port_range_max: 9200
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Frontend services
+    - name: frontend-svc
+      description: "Frontend services"
+      project: services
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3000
+          port_range_max: 3000
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Backend services
+    - name: backend-svc
+      description: "Backend services"
+      project: services
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9000
+          port_range_max: 9000
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 50051
+          port_range_max: 50051
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Database services
+    - name: database-svc
+      description: "Database services"
+      project: data
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 27017
+          port_range_max: 27017
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Cache services
+    - name: cache-svc
+      description: "Cache services"
+      project: data
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 6379
+          port_range_max: 6379
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 11211
+          port_range_max: 11211
+          remote_ip_prefix: "10.0.0.0/8"
+
+    # Queue services
+    - name: queue-svc
+      description: "Message queue services"
+      project: data
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5672
+          port_range_max: 5672
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 15672
+          port_range_max: 15672
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9092
+          port_range_max: 9092
+          remote_ip_prefix: "10.0.0.0/8"
+
+  routers:
+    - name: ingress-router
+      project: platform
+      external_network: external
+      interfaces:
+        - subnet: ingress-subnet
+
+    - name: mesh-router
+      project: platform
+      external_network: external
+      interfaces:
+        - subnet: mesh-subnet
+
+    - name: frontend-router
+      project: services
+      external_network: external
+      interfaces:
+        - subnet: frontend-subnet
+
+    - name: backend-router
+      project: services
+      external_network: external
+      interfaces:
+        - subnet: backend-subnet
+
+    - name: internal-api-router
+      project: services
+      external_network: external
+      interfaces:
+        - subnet: internal-api-subnet
+
+    - name: database-router
+      project: data
+      external_network: external
+      interfaces:
+        - subnet: database-subnet
+
+    - name: cache-router
+      project: data
+      external_network: external
+      interfaces:
+        - subnet: cache-subnet
+
+    - name: queue-router
+      project: data
+      external_network: external
+      interfaces:
+        - subnet: queue-subnet
+
+nova:
+  servers:
+    # Platform - API Gateway cluster
+    - name: api-gateway-1
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: ingress-network
+      security_groups: [api-gateway]
+      metadata:
+        service: api-gateway
+        instance: "1"
+
+    - name: api-gateway-2
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: ingress-network
+      security_groups: [api-gateway]
+      metadata:
+        service: api-gateway
+        instance: "2"
+
+    - name: api-gateway-3
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: ingress-network
+      security_groups: [api-gateway]
+      metadata:
+        service: api-gateway
+        instance: "3"
+
+    # Platform - Service mesh control plane
+    - name: istiod-1
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [mesh-control]
+      metadata:
+        service: istiod
+        instance: "1"
+
+    - name: istiod-2
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [mesh-control]
+      metadata:
+        service: istiod
+        instance: "2"
+
+    # Platform - Service discovery / DNS
+    - name: coredns-1
+      project: platform
+      flavor: m1.small
+      image: alpine-3.18
+      network: mesh-network
+      security_groups: [mesh-control]
+      metadata:
+        service: coredns
+        instance: "1"
+
+    - name: coredns-2
+      project: platform
+      flavor: m1.small
+      image: alpine-3.18
+      network: mesh-network
+      security_groups: [mesh-control]
+      metadata:
+        service: coredns
+        instance: "2"
+
+    # Platform - Observability
+    - name: prometheus-1
+      project: platform
+      flavor: m1.large
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: prometheus
+        instance: "1"
+
+    - name: prometheus-2
+      project: platform
+      flavor: m1.large
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: prometheus
+        instance: "2"
+
+    - name: grafana
+      project: platform
+      flavor: m1.small
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: grafana
+
+    - name: jaeger
+      project: platform
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: jaeger
+
+    - name: elasticsearch-1
+      project: platform
+      flavor: m1.large
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: elasticsearch
+        instance: "1"
+
+    - name: elasticsearch-2
+      project: platform
+      flavor: m1.large
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: elasticsearch
+        instance: "2"
+
+    - name: elasticsearch-3
+      project: platform
+      flavor: m1.large
+      image: debian-12-minimal
+      network: mesh-network
+      security_groups: [observability]
+      metadata:
+        service: elasticsearch
+        instance: "3"
+
+    # Services - Frontend
+    - name: web-ui-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: frontend-network
+      security_groups: [frontend-svc, mesh-sidecar]
+      metadata:
+        service: web-ui
+        instance: "1"
+
+    - name: web-ui-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: frontend-network
+      security_groups: [frontend-svc, mesh-sidecar]
+      metadata:
+        service: web-ui
+        instance: "2"
+
+    - name: web-ui-3
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: frontend-network
+      security_groups: [frontend-svc, mesh-sidecar]
+      metadata:
+        service: web-ui
+        instance: "3"
+
+    - name: bff-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: frontend-network
+      security_groups: [frontend-svc, mesh-sidecar]
+      metadata:
+        service: bff
+        instance: "1"
+
+    - name: bff-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: frontend-network
+      security_groups: [frontend-svc, mesh-sidecar]
+      metadata:
+        service: bff
+        instance: "2"
+
+    # Services - Backend microservices
+    - name: user-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: user-service
+        instance: "1"
+
+    - name: user-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: user-service
+        instance: "2"
+
+    - name: order-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: order-service
+        instance: "1"
+
+    - name: order-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: order-service
+        instance: "2"
+
+    - name: order-service-3
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: order-service
+        instance: "3"
+
+    - name: product-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: product-service
+        instance: "1"
+
+    - name: product-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: product-service
+        instance: "2"
+
+    - name: inventory-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: inventory-service
+        instance: "1"
+
+    - name: inventory-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: inventory-service
+        instance: "2"
+
+    - name: payment-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: payment-service
+        instance: "1"
+
+    - name: payment-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: payment-service
+        instance: "2"
+
+    - name: notification-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: notification-service
+        instance: "1"
+
+    - name: notification-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: backend-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: notification-service
+        instance: "2"
+
+    # Services - Internal APIs
+    - name: auth-service-1
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: internal-api-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: auth-service
+        instance: "1"
+
+    - name: auth-service-2
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: internal-api-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: auth-service
+        instance: "2"
+
+    - name: config-service
+      project: services
+      flavor: m1.small
+      image: alpine-3.18
+      network: internal-api-network
+      security_groups: [backend-svc, mesh-sidecar]
+      metadata:
+        service: config-service
+
+    # Data - PostgreSQL cluster
+    - name: postgres-primary
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: postgresql
+        role: primary
+
+    - name: postgres-replica-1
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: postgresql
+        role: replica
+        instance: "1"
+
+    - name: postgres-replica-2
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: postgresql
+        role: replica
+        instance: "2"
+
+    # Data - MongoDB cluster
+    - name: mongodb-1
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: mongodb
+        instance: "1"
+
+    - name: mongodb-2
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: mongodb
+        instance: "2"
+
+    - name: mongodb-3
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: database-network
+      security_groups: [database-svc]
+      metadata:
+        service: mongodb
+        instance: "3"
+
+    # Data - Redis cluster
+    - name: redis-1
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "1"
+
+    - name: redis-2
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "2"
+
+    - name: redis-3
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "3"
+
+    - name: redis-4
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "4"
+
+    - name: redis-5
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "5"
+
+    - name: redis-6
+      project: data
+      flavor: m1.medium
+      image: alpine-3.18
+      network: cache-network
+      security_groups: [cache-svc]
+      metadata:
+        service: redis
+        instance: "6"
+
+    # Data - Message queue
+    - name: rabbitmq-1
+      project: data
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: rabbitmq
+        instance: "1"
+
+    - name: rabbitmq-2
+      project: data
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: rabbitmq
+        instance: "2"
+
+    - name: rabbitmq-3
+      project: data
+      flavor: m1.medium
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: rabbitmq
+        instance: "3"
+
+    # Data - Kafka cluster
+    - name: kafka-1
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: kafka
+        instance: "1"
+
+    - name: kafka-2
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: kafka
+        instance: "2"
+
+    - name: kafka-3
+      project: data
+      flavor: m1.large
+      image: debian-12-minimal
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: kafka
+        instance: "3"
+
+    - name: zookeeper-1
+      project: data
+      flavor: m1.small
+      image: alpine-3.18
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: zookeeper
+        instance: "1"
+
+    - name: zookeeper-2
+      project: data
+      flavor: m1.small
+      image: alpine-3.18
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: zookeeper
+        instance: "2"
+
+    - name: zookeeper-3
+      project: data
+      flavor: m1.small
+      image: alpine-3.18
+      network: queue-network
+      security_groups: [queue-svc]
+      metadata:
+        service: zookeeper
+        instance: "3"
+
+cinder:
+  volumes:
+    # Observability
+    - name: prometheus-1-data
+      project: platform
+      size: 200
+      description: "Prometheus metrics storage"
+      attach_to: prometheus-1
+      device: "/dev/vdb"
+
+    - name: prometheus-2-data
+      project: platform
+      size: 200
+      description: "Prometheus metrics storage"
+      attach_to: prometheus-2
+      device: "/dev/vdb"
+
+    - name: elasticsearch-1-data
+      project: platform
+      size: 500
+      description: "Elasticsearch data"
+      attach_to: elasticsearch-1
+      device: "/dev/vdb"
+
+    - name: elasticsearch-2-data
+      project: platform
+      size: 500
+      description: "Elasticsearch data"
+      attach_to: elasticsearch-2
+      device: "/dev/vdb"
+
+    - name: elasticsearch-3-data
+      project: platform
+      size: 500
+      description: "Elasticsearch data"
+      attach_to: elasticsearch-3
+      device: "/dev/vdb"
+
+    # Databases
+    - name: postgres-primary-data
+      project: data
+      size: 500
+      volume_type: high-iops
+      description: "PostgreSQL primary data"
+      attach_to: postgres-primary
+      device: "/dev/vdb"
+
+    - name: postgres-replica-1-data
+      project: data
+      size: 500
+      volume_type: high-iops
+      description: "PostgreSQL replica data"
+      attach_to: postgres-replica-1
+      device: "/dev/vdb"
+
+    - name: postgres-replica-2-data
+      project: data
+      size: 500
+      volume_type: high-iops
+      description: "PostgreSQL replica data"
+      attach_to: postgres-replica-2
+      device: "/dev/vdb"
+
+    - name: mongodb-1-data
+      project: data
+      size: 300
+      description: "MongoDB data"
+      attach_to: mongodb-1
+      device: "/dev/vdb"
+
+    - name: mongodb-2-data
+      project: data
+      size: 300
+      description: "MongoDB data"
+      attach_to: mongodb-2
+      device: "/dev/vdb"
+
+    - name: mongodb-3-data
+      project: data
+      size: 300
+      description: "MongoDB data"
+      attach_to: mongodb-3
+      device: "/dev/vdb"
+
+    # Kafka
+    - name: kafka-1-data
+      project: data
+      size: 500
+      description: "Kafka data"
+      attach_to: kafka-1
+      device: "/dev/vdb"
+
+    - name: kafka-2-data
+      project: data
+      size: 500
+      description: "Kafka data"
+      attach_to: kafka-2
+      device: "/dev/vdb"
+
+    - name: kafka-3-data
+      project: data
+      size: 500
+      description: "Kafka data"
+      attach_to: kafka-3
+      device: "/dev/vdb"
+
+octavia:
+  load_balancers:
+    - name: api-gateway-lb
+      project: platform
+      vip_subnet: ingress-subnet
+      listeners:
+        - name: gateway-https
+          protocol: HTTPS
+          port: 443
+          pool:
+            name: api-gateway-pool
+            protocol: HTTPS
+            lb_algorithm: LEAST_CONNECTIONS
+            members:
+              - server: api-gateway-1
+                port: 8080
+              - server: api-gateway-2
+                port: 8080
+              - server: api-gateway-3
+                port: 8080
+
+    - name: frontend-lb
+      project: services
+      vip_subnet: frontend-subnet
+      listeners:
+        - name: web-ui-http
+          protocol: HTTP
+          port: 3000
+          pool:
+            name: web-ui-pool
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: web-ui-1
+                port: 3000
+              - server: web-ui-2
+                port: 3000
+              - server: web-ui-3
+                port: 3000
+
+    - name: postgres-lb
+      project: data
+      vip_subnet: database-subnet
+      listeners:
+        - name: postgres-tcp
+          protocol: TCP
+          port: 5432
+          pool:
+            name: postgres-pool
+            protocol: TCP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: postgres-replica-1
+                port: 5432
+              - server: postgres-replica-2
+                port: 5432
+
+    - name: redis-lb
+      project: data
+      vip_subnet: cache-subnet
+      listeners:
+        - name: redis-tcp
+          protocol: TCP
+          port: 6379
+          pool:
+            name: redis-pool
+            protocol: TCP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: redis-1
+                port: 6379
+              - server: redis-2
+                port: 6379
+              - server: redis-3
+                port: 6379
+              - server: redis-4
+                port: 6379
+              - server: redis-5
+                port: 6379
+              - server: redis-6
+                port: 6379

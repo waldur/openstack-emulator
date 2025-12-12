@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from emulator.api.presets import router as presets_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.core.scenario_manager import scenario_manager
 
@@ -44,8 +45,9 @@ async def exception_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-# Include scenarios router
+# Include routers
 app.include_router(scenarios_router)
+app.include_router(presets_router)
 
 
 # Health check endpoint
@@ -69,14 +71,22 @@ async def root() -> dict:
         "version": "0.1.0",
         "status": scenario_manager.get_status(),
         "endpoints": {
-            "list_scenarios": "GET /scenarios",
-            "get_active": "GET /scenarios/active",
-            "get_stats": "GET /scenarios/stats",
-            "enable": "POST /scenarios/{id}/enable",
-            "disable": "POST /scenarios/{id}/disable",
-            "reset_all": "POST /scenarios/reset",
-            "create_custom": "POST /scenarios/custom",
-            "apply_preset": "POST /scenarios/preset/{name}",
-            "set_load_level": "POST /scenarios/load",
+            "scenarios": {
+                "list_scenarios": "GET /scenarios",
+                "get_active": "GET /scenarios/active",
+                "get_stats": "GET /scenarios/stats",
+                "enable": "POST /scenarios/{id}/enable",
+                "disable": "POST /scenarios/{id}/disable",
+                "reset_all": "POST /scenarios/reset",
+                "create_custom": "POST /scenarios/custom",
+                "apply_preset": "POST /scenarios/preset/{name}",
+                "set_load_level": "POST /scenarios/load",
+            },
+            "presets": {
+                "list_presets": "GET /presets",
+                "load_preset": "POST /presets/{name}",
+                "load_inline": "POST /presets/load/inline",
+                "preview_preset": "GET /presets/{name}/preview",
+            },
         },
     }

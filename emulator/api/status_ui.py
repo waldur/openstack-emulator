@@ -17,6 +17,7 @@ from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
 )
+from emulator.core.presets import PresetLoader
 from emulator.core.scenario_manager import scenario_manager
 from emulator.core.scenarios import ScenarioCategory
 
@@ -531,6 +532,139 @@ tailwind.config = {
         background: rgba(255, 51, 102, 0.2);
         box-shadow: 0 0 10px rgba(255, 51, 102, 0.4);
     }
+    /* Preview modal - larger and purple themed */
+    .modal-content.preview-modal {
+        max-width: 700px;
+        border-color: #8957e5;
+        box-shadow: 0 0 30px rgba(137, 87, 229, 0.3), inset 0 0 30px rgba(137, 87, 229, 0.05);
+    }
+    .modal-content.preview-modal::before {
+        content: '[ PRESET PREVIEW ]';
+        color: #8957e5;
+    }
+    .modal-content.preview-modal .modal-header {
+        border-bottom-color: #8957e5;
+    }
+    .modal-content.preview-modal .modal-header h3 {
+        color: #8957e5;
+    }
+    .preview-description {
+        color: #8b949e;
+        font-size: 0.9rem;
+        margin-bottom: 20px;
+        padding: 12px;
+        background: rgba(137, 87, 229, 0.1);
+        border-left: 3px solid #8957e5;
+    }
+    .preview-section {
+        margin-bottom: 20px;
+    }
+    .preview-section-title {
+        color: #00d4ff;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .preview-section-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, #1e3a5f, transparent);
+    }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+    }
+    .preview-stat {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid #1e3a5f;
+        padding: 12px;
+        text-align: center;
+    }
+    .preview-stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #00ff41;
+    }
+    .preview-stat-label {
+        font-size: 0.7rem;
+        color: #4a5568;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 4px;
+    }
+    .preview-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid #1e3a5f;
+    }
+    /* Pagination styles */
+    .paginated-table {
+        position: relative;
+    }
+    .pagination-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 16px;
+        padding: 12px 16px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid #1e3a5f;
+        border-top: none;
+    }
+    .pagination-info {
+        color: #4a5568;
+        font-size: 0.8rem;
+    }
+    .pagination-info span {
+        color: #00d4ff;
+    }
+    .pagination-buttons {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .pagination-btn {
+        padding: 6px 12px;
+        background: rgba(0, 212, 255, 0.1);
+        border: 1px solid #1e3a5f;
+        color: #00d4ff;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .pagination-btn:hover:not(:disabled) {
+        background: rgba(0, 212, 255, 0.2);
+        border-color: #00d4ff;
+    }
+    .pagination-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+    .pagination-btn.active {
+        background: #00d4ff;
+        color: #0a0a0f;
+        border-color: #00d4ff;
+    }
+    .page-size-select {
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid #1e3a5f;
+        color: #00d4ff;
+        font-size: 0.75rem;
+        cursor: pointer;
+    }
+    .page-size-select:focus {
+        outline: none;
+        border-color: #00d4ff;
+    }
     /* Form styles */
     .form-group {
         margin-bottom: 20px;
@@ -861,6 +995,135 @@ tailwind.config = {
 # JavaScript for interactivity
 JS_SCRIPT = """
 <script>
+    // Pagination state management
+    const paginationState = {};
+
+    function initPagination(tableId, defaultPageSize = 10) {
+        const container = document.getElementById(tableId);
+        if (!container) return;
+
+        const table = container.querySelector('table');
+        if (!table) return;
+
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const totalRows = rows.length;
+
+        // Only paginate if there are more rows than default page size
+        if (totalRows <= defaultPageSize) {
+            // Hide pagination controls if not enough rows
+            const controls = container.querySelector('.pagination-controls');
+            if (controls) controls.style.display = 'none';
+            return;
+        }
+
+        // Initialize state
+        paginationState[tableId] = {
+            currentPage: 1,
+            pageSize: defaultPageSize,
+            totalRows: totalRows,
+            rows: rows
+        };
+
+        updatePagination(tableId);
+    }
+
+    function updatePagination(tableId) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        const { currentPage, pageSize, totalRows, rows } = state;
+        const totalPages = Math.ceil(totalRows / pageSize);
+        const startIdx = (currentPage - 1) * pageSize;
+        const endIdx = Math.min(startIdx + pageSize, totalRows);
+
+        // Show/hide rows
+        rows.forEach((row, idx) => {
+            row.style.display = (idx >= startIdx && idx < endIdx) ? '' : 'none';
+        });
+
+        // Update info text
+        const infoEl = document.querySelector('#' + tableId + ' .pagination-info');
+        if (infoEl) {
+            infoEl.innerHTML = 'Showing <span>' + (startIdx + 1) + '-' + endIdx + '</span> of <span>' + totalRows + '</span>';
+        }
+
+        // Update buttons
+        const prevBtn = document.querySelector('#' + tableId + ' .pagination-prev');
+        const nextBtn = document.querySelector('#' + tableId + ' .pagination-next');
+        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+        // Update page numbers
+        updatePageNumbers(tableId, currentPage, totalPages);
+    }
+
+    function updatePageNumbers(tableId, currentPage, totalPages) {
+        const numbersContainer = document.querySelector('#' + tableId + ' .page-numbers');
+        if (!numbersContainer) return;
+
+        let html = '';
+        const maxVisible = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+        if (endPage - startPage < maxVisible - 1) {
+            startPage = Math.max(1, endPage - maxVisible + 1);
+        }
+
+        if (startPage > 1) {
+            html += '<button class="pagination-btn" onclick="goToPage(\\'' + tableId + '\\', 1)">1</button>';
+            if (startPage > 2) html += '<span style="color: #4a5568;">...</span>';
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const activeClass = i === currentPage ? ' active' : '';
+            html += '<button class="pagination-btn' + activeClass + '" onclick="goToPage(\\'' + tableId + '\\', ' + i + ')">' + i + '</button>';
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) html += '<span style="color: #4a5568;">...</span>';
+            html += '<button class="pagination-btn" onclick="goToPage(\\'' + tableId + '\\', ' + totalPages + ')">' + totalPages + '</button>';
+        }
+
+        numbersContainer.innerHTML = html;
+    }
+
+    function goToPage(tableId, page) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        const totalPages = Math.ceil(state.totalRows / state.pageSize);
+        state.currentPage = Math.max(1, Math.min(page, totalPages));
+        updatePagination(tableId);
+    }
+
+    function prevPage(tableId) {
+        goToPage(tableId, (paginationState[tableId]?.currentPage || 1) - 1);
+    }
+
+    function nextPage(tableId) {
+        goToPage(tableId, (paginationState[tableId]?.currentPage || 1) + 1);
+    }
+
+    function changePageSize(tableId, newSize) {
+        const state = paginationState[tableId];
+        if (!state) return;
+
+        state.pageSize = parseInt(newSize);
+        state.currentPage = 1;
+        updatePagination(tableId);
+    }
+
+    // Initialize all paginated tables on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('.paginated-table').forEach(container => {
+            initPagination(container.id);
+        });
+    });
+
     // Tab switching with persistence
     function switchTab(tabName) {
         document.querySelectorAll('.tab-content').forEach(el => {
@@ -1169,6 +1432,78 @@ JS_SCRIPT = """
         }
     }
 
+    // Resource preset management functions
+    async function loadResourcePreset(presetName) {
+        if (!confirm('Load resource preset "' + presetName + '"? This will create resources in the emulator.')) {
+            return;
+        }
+        try {
+            showToast('Loading preset "' + presetName + '"...');
+            const response = await fetch('/api/resource-presets/' + presetName, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            if (response.ok) {
+                showToast('Preset loaded: ' + result.total_resources + ' resources created');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(result.detail?.message || 'Failed to load preset', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function previewResourcePreset(presetName) {
+        try {
+            const response = await fetch('/api/resource-presets/' + presetName + '/preview');
+            const result = await response.json();
+            if (response.ok) {
+                // Build resource stats grid
+                let statsHtml = '';
+                const resourceLabels = {
+                    'projects': 'Projects',
+                    'images': 'Images',
+                    'networks': 'Networks',
+                    'subnets': 'Subnets',
+                    'routers': 'Routers',
+                    'security_groups': 'Security Groups',
+                    'servers': 'Servers',
+                    'keypairs': 'Keypairs',
+                    'volumes': 'Volumes',
+                    'snapshots': 'Snapshots',
+                    'load_balancers': 'Load Balancers'
+                };
+
+                let totalResources = 0;
+                for (const [key, value] of Object.entries(result.resource_counts)) {
+                    if (value > 0) {
+                        totalResources += value;
+                        const label = resourceLabels[key] || key;
+                        statsHtml += '<div class="preview-stat"><div class="preview-stat-value">' + value + '</div><div class="preview-stat-label">' + label + '</div></div>';
+                    }
+                }
+
+                // Update modal content
+                document.getElementById('preview-preset-name').textContent = result.preset_name;
+                document.getElementById('preview-description').textContent = result.description || 'No description available';
+                document.getElementById('preview-total').textContent = totalResources;
+                document.getElementById('preview-stats').innerHTML = statsHtml || '<p style="color: #4a5568; text-align: center;">No resources defined in this preset</p>';
+                document.getElementById('preview-load-btn').onclick = function() {
+                    closeModal('preset-preview-modal');
+                    loadResourcePreset(presetName);
+                };
+
+                // Show modal
+                openModal('preset-preview-modal');
+            } else {
+                showToast('Failed to preview preset', 'error');
+            }
+        } catch (error) {
+            showToast('Network error', 'error');
+        }
+    }
+
     // Auto-refresh every 30 seconds (only if no modal is open)
     setTimeout(function() {
         if (!document.querySelector('.modal.active')) {
@@ -1239,6 +1574,44 @@ def format_project_cell(project_id: str | None, project_map: dict[str, str]) -> 
         return f'<span title="{project_id}">{project_id}</span>'
 
 
+def wrap_table_with_pagination(table_html: str, table_id: str, total_count: int) -> str:
+    """Wrap a table with pagination controls.
+
+    Args:
+        table_html: The rendered table HTML
+        table_id: Unique ID for this table (used for pagination state)
+        total_count: Total number of rows in the table
+
+    Returns:
+        HTML with pagination controls wrapped around the table
+    """
+    if total_count == 0:
+        return table_html
+
+    return f"""
+    <div id="{table_id}" class="paginated-table">
+        {table_html}
+        <div class="pagination-controls">
+            <div class="pagination-info">
+                Showing <span>1-{min(10, total_count)}</span> of <span>{total_count}</span>
+            </div>
+            <div class="pagination-buttons">
+                <span style="color: #4a5568; font-size: 0.75rem; margin-right: 8px;">Rows:</span>
+                <select class="page-size-select" onchange="changePageSize('{table_id}', this.value)">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                <button class="pagination-btn pagination-prev" onclick="prevPage('{table_id}')" disabled>◀ Prev</button>
+                <div class="page-numbers" style="display: flex; gap: 4px;"></div>
+                <button class="pagination-btn pagination-next" onclick="nextPage('{table_id}')">Next ▶</button>
+            </div>
+        </div>
+    </div>
+    """
+
+
 def render_servers_table(
     servers: list, authenticated: bool, project_map: dict[str, str] | None = None
 ) -> str:
@@ -1280,7 +1653,7 @@ def render_servers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1296,6 +1669,7 @@ def render_servers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "servers-table", len(servers))
 
 
 def render_volumes_table(
@@ -1334,7 +1708,7 @@ def render_volumes_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1350,6 +1724,7 @@ def render_volumes_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "volumes-table", len(volumes))
 
 
 def render_images_table(
@@ -1393,7 +1768,7 @@ def render_images_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1409,6 +1784,7 @@ def render_images_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "images-table", len(images))
 
 
 def render_networks_table(
@@ -1448,7 +1824,7 @@ def render_networks_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1464,6 +1840,7 @@ def render_networks_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "networks-table", len(networks))
 
 
 def render_subnets_table(
@@ -1500,7 +1877,7 @@ def render_subnets_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1516,6 +1893,7 @@ def render_subnets_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "subnets-table", len(subnets))
 
 
 def render_ports_table(
@@ -1555,7 +1933,7 @@ def render_ports_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1571,6 +1949,7 @@ def render_ports_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "ports-table", len(ports))
 
 
 def render_routers_table(
@@ -1610,7 +1989,7 @@ def render_routers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1626,6 +2005,7 @@ def render_routers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "routers-table", len(routers))
 
 
 def render_floating_ips_table(
@@ -1675,7 +2055,7 @@ def render_floating_ips_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1692,6 +2072,7 @@ def render_floating_ips_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "floating-ips-table", len(floating_ips))
 
 
 def render_security_groups_table(
@@ -1728,7 +2109,7 @@ def render_security_groups_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1743,6 +2124,7 @@ def render_security_groups_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "security-groups-table", len(security_groups))
 
 
 def render_projects_table(projects: list, authenticated: bool) -> str:
@@ -1771,7 +2153,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1785,6 +2167,7 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "projects-table", len(projects))
 
 
 def render_users_table(users: list, authenticated: bool) -> str:
@@ -1813,7 +2196,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1827,6 +2210,7 @@ def render_users_table(users: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "users-table", len(users))
 
 
 def render_flavors_table(flavors: list, authenticated: bool) -> str:
@@ -1856,7 +2240,7 @@ def render_flavors_table(flavors: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1871,6 +2255,7 @@ def render_flavors_table(flavors: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "flavors-table", len(flavors))
 
 
 def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
@@ -1901,7 +2286,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1915,6 +2300,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "keypairs-table", len(keypairs))
 
 
 def render_snapshots_table(
@@ -1955,7 +2341,7 @@ def render_snapshots_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -1971,6 +2357,7 @@ def render_snapshots_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "snapshots-table", len(snapshots))
 
 
 def render_load_balancers_table(
@@ -2020,7 +2407,7 @@ def render_load_balancers_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2037,6 +2424,7 @@ def render_load_balancers_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "load-balancers-table", len(load_balancers))
 
 
 def render_listeners_table(
@@ -2085,7 +2473,7 @@ def render_listeners_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2102,6 +2490,7 @@ def render_listeners_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "listeners-table", len(listeners))
 
 
 def render_pools_table(
@@ -2151,7 +2540,7 @@ def render_pools_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2168,6 +2557,7 @@ def render_pools_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "pools-table", len(pools))
 
 
 def render_health_monitors_table(
@@ -2220,7 +2610,7 @@ def render_health_monitors_table(
         """
 
     action_header = "<th>Actions</th>" if authenticated else ""
-    return f"""
+    table_html = f"""
     <table>
         <thead>
             <tr>
@@ -2238,6 +2628,7 @@ def render_health_monitors_table(
         <tbody>{rows}</tbody>
     </table>
     """
+    return wrap_table_with_pagination(table_html, "health-monitors-table", len(health_monitors))
 
 
 def build_scenarios_content(
@@ -2381,6 +2772,118 @@ def build_scenarios_content(
         {presets}
         {scenario_sections}
         {stats_html}
+    </div>
+    """
+
+
+def build_resource_presets_content(available_presets: list[dict]) -> str:
+    """Build the resource presets section HTML."""
+    # Build preset cards
+    preset_cards = ""
+    preset_descriptions = {
+        "empty": "Minimal setup with only default resources",
+        "development": "Small dev environment with project, network, and servers",
+        "production": "Production-like with multiple projects, networks, and load balancers",
+    }
+
+    for preset in available_presets:
+        name = preset.get("name", "unknown")
+        description = preset.get("description", preset_descriptions.get(name, ""))
+        file_name = preset.get("file", f"{name}.yaml")
+
+        # Determine badge color based on preset type
+        if name == "empty":
+            badge_class = "bg-[#238636]"
+            badge_text = "MINIMAL"
+        elif name == "development":
+            badge_class = "bg-[#1f6feb]"
+            badge_text = "DEV"
+        elif name == "production":
+            badge_class = "bg-[#8957e5]"
+            badge_text = "PROD"
+        else:
+            badge_class = "bg-[#6e7681]"
+            badge_text = "CUSTOM"
+
+        preset_cards += f"""
+        <div class="preset-card" style="background: #161b22; border: 1px solid #30363d; padding: 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                    <h4 style="color: #c9d1d9; margin: 0; font-size: 1rem;">{name}</h4>
+                    <span class="{badge_class}" style="color: white; padding: 2px 8px; font-size: 0.7rem; border-radius: 3px;">{badge_text}</span>
+                </div>
+                <p style="color: #8b949e; font-size: 0.85rem; margin: 0 0 6px 0;">{description}</p>
+                <p style="color: #6e7681; font-size: 0.75rem; margin: 0;">File: {file_name}</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-sm" onclick="previewResourcePreset('{name}')" title="Preview resources">
+                    👁 Preview
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="loadResourcePreset('{name}')" title="Load this preset">
+                    ▶ Load
+                </button>
+            </div>
+        </div>
+        """
+
+    if not preset_cards:
+        preset_cards = """
+        <div style="text-align: center; padding: 20px; color: #8b949e;">
+            <p>No resource presets found.</p>
+            <p style="font-size: 0.85rem;">Add YAML files to the presets directory to create presets.</p>
+        </div>
+        """
+
+    return f"""
+    <div class="resource-group">
+        <p style="margin-bottom: 20px; color: #8b949e;">
+            Load pre-configured resource sets to quickly set up OpenStack environments.
+            Presets can create projects, networks, servers, volumes, and more.
+        </p>
+
+        <div style="margin-bottom: 20px;">
+            <div style="background: #0d1117; border: 1px solid #f97316; border-left-width: 4px; padding: 12px 16px; margin-bottom: 16px;">
+                <p style="color: #f97316; font-size: 0.85rem; margin: 0;">
+                    <strong>Note:</strong> Loading a preset will create new resources. Existing resources with the same names will be skipped.
+                </p>
+            </div>
+        </div>
+
+        <h4 style="color: #00d4ff; margin-bottom: 16px;">Available Presets</h4>
+        {preset_cards}
+    </div>
+
+    <!-- Preset Preview Modal -->
+    <div id="preset-preview-modal" class="modal">
+        <div class="modal-content preview-modal">
+            <div class="modal-header">
+                <h3>📦 <span id="preview-preset-name">Preset Name</span></h3>
+                <button class="modal-close" onclick="closeModal('preset-preview-modal')">&times;</button>
+            </div>
+
+            <div class="preview-description" id="preview-description">
+                Loading description...
+            </div>
+
+            <div class="preview-section">
+                <div class="preview-section-title">
+                    <span>Resources to Create</span>
+                    <span style="color: #00ff41; font-weight: bold; margin-left: auto; padding-right: 12px;">Total: <span id="preview-total">0</span></span>
+                </div>
+                <div class="preview-grid" id="preview-stats">
+                    <!-- Stats will be populated dynamically -->
+                </div>
+            </div>
+
+            <div class="preview-actions">
+                <button class="btn btn-primary" id="preview-load-btn" style="flex: 1;">
+                    ▶ Load This Preset
+                </button>
+                <button class="btn btn-secondary" onclick="closeModal('preset-preview-modal')" style="flex: 1;">
+                    Cancel
+                </button>
+            </div>
+        </div>
     </div>
     """
 
@@ -3406,6 +3909,9 @@ async def status_page(
                         <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
                             <span class="mr-2">⚡</span> SCENARIOS {scenarios_badge}
                         </a>
+                        <a href="/presets" class="btn" style="background: linear-gradient(135deg, #8957e5 0%, #7c3aed 100%); border-color: #8957e5;">
+                            <span class="mr-2">📦</span> PRESETS
+                        </a>
                         <button class="btn btn-primary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
                         </button>
@@ -3703,6 +4209,9 @@ async def scenarios_page(
                         <a href="/" class="btn btn-primary">
                             <span class="mr-2">←</span> BACK TO STATUS
                         </a>
+                        <a href="/presets" class="btn" style="background: linear-gradient(135deg, #8957e5 0%, #7c3aed 100%); border-color: #8957e5;">
+                            <span class="mr-2">📦</span> PRESETS
+                        </a>
                         <button class="btn btn-secondary" onclick="location.reload()">
                             <span class="mr-2">↻</span> REFRESH
                         </button>
@@ -3727,7 +4236,7 @@ async def scenarios_page(
             </div>
 
             <!-- Scenarios Content -->
-            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6 mb-8">
                 <div class="flex items-center gap-3 mb-6">
                     <span class="text-[#00ff41] text-lg">■</span>
                     <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Scenario Configuration</h2>
@@ -3742,6 +4251,111 @@ async def scenarios_page(
                 <div>OPENSTACK EMULATOR // SCENARIO INJECTION SYSTEM</div>
                 <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
                 <div class="text-[#1e3a5f] mt-1">Changes take effect immediately</div>
+            </div>
+        </div>
+
+        {JS_SCRIPT}
+    </body>
+    </html>
+    """
+
+    return html
+
+
+@router.get("/presets", response_class=HTMLResponse)
+async def presets_page(
+    request: Request,
+    auth_token: str | None = Cookie(default=None),
+) -> str:
+    """Render the dedicated resource presets management page."""
+    # Get resource presets
+    preset_loader = PresetLoader(db)
+    available_presets = preset_loader.list_available_presets()
+    resource_presets_content = build_resource_presets_content(available_presets)
+    preset_count = len(available_presets)
+
+    # Build the full HTML page
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>OPENSTACK EMULATOR // RESOURCE PRESETS</title>
+        {CSS_STYLES}
+    </head>
+    <body class="min-h-screen">
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Header -->
+        <header class="bg-[#0d1117] border-b border-[#1e3a5f] py-6 mb-8">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <div class="text-[#4a5568] text-xs uppercase tracking-widest mb-1">// RESOURCE MANAGEMENT SYSTEM</div>
+                        <h1 class="text-2xl font-bold text-[#8957e5] tracking-wide">RESOURCE PRESETS</h1>
+                        <p class="text-[#00d4ff] text-sm mt-1">Load pre-configured OpenStack environments</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <a href="/" class="btn btn-primary">
+                            <span class="mr-2">←</span> BACK TO STATUS
+                        </a>
+                        <a href="/scenarios" class="btn" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); border-color: #f97316;">
+                            <span class="mr-2">⚡</span> SCENARIOS
+                        </a>
+                        <button class="btn btn-secondary" onclick="location.reload()">
+                            <span class="mr-2">↻</span> REFRESH
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto px-6 pb-12">
+            <!-- Presets Overview -->
+            <div class="mb-8 bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#8957e5] text-lg">📦</span>
+                    <h2 class="text-lg font-semibold text-[#8957e5] uppercase tracking-wider">Available Presets</h2>
+                    <span class="bg-[#8957e5] bg-opacity-20 text-[#8957e5] px-3 py-1 text-sm border border-[#8957e5]">{preset_count} PRESETS</span>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#8957e5] to-transparent"></div>
+                </div>
+                <p class="text-[#4a5568] text-sm mb-4">
+                    Load pre-configured resource presets to quickly set up your OpenStack environment.
+                    Presets include projects, networks, servers, volumes, and more.
+                </p>
+            </div>
+
+            <!-- Presets Content -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6 mb-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <span class="text-[#00ff41] text-lg">■</span>
+                    <h2 class="text-lg font-semibold text-[#00ff41] uppercase tracking-wider">Preset Configuration</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                {resource_presets_content}
+            </div>
+
+            <!-- Usage Info -->
+            <div class="bg-[#0d1117] border border-[#1e3a5f] p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-[#00d4ff] text-lg">ℹ</span>
+                    <h2 class="text-lg font-semibold text-[#00d4ff] uppercase tracking-wider">Usage</h2>
+                    <div class="flex-1 h-px bg-gradient-to-r from-[#1e3a5f] to-transparent"></div>
+                </div>
+                <div class="text-[#8b949e] text-sm space-y-2">
+                    <p><strong class="text-[#c9d1d9]">CLI:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">openstack-emulator --preset development</code></p>
+                    <p><strong class="text-[#c9d1d9]">API:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">POST /presets/development</code></p>
+                    <p><strong class="text-[#c9d1d9]">Custom:</strong> <code class="bg-[#161b22] px-2 py-1 text-[#00ff41]">openstack-emulator --preset-file /path/to/preset.yaml</code></p>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-8 text-center text-[#4a5568] text-xs">
+                <div class="mb-2">═══════════════════════════════════════════════════════════════</div>
+                <div>OPENSTACK EMULATOR // RESOURCE PRESET SYSTEM</div>
+                <div class="text-[#00d4ff] mt-2">From the team that builds <a href="https://waldur.com" target="_blank" class="underline hover:text-[#00ff41] transition-colors">Waldur</a></div>
+                <div class="text-[#1e3a5f] mt-1">Resources are created in dependency order</div>
             </div>
         </div>
 
@@ -4851,3 +5465,83 @@ async def api_set_load_level(request: ScenarioLoadRequest) -> dict:
     scenario_manager.enable_scenario(scenario_id)
 
     return {"message": f"Load level set to {level}%"}
+
+
+# Resource preset API endpoints
+@router.get("/api/resource-presets")
+async def api_list_resource_presets() -> dict:
+    """List available resource presets."""
+    loader = PresetLoader(db)
+    presets = loader.list_available_presets()
+    return {
+        "presets": presets,
+        "count": len(presets),
+    }
+
+
+@router.post("/api/resource-presets/{preset_name}")
+async def api_load_resource_preset(preset_name: str) -> dict:
+    """Load a resource preset by name."""
+    loader = PresetLoader(db)
+    result = loader.load_preset_by_name(preset_name)
+
+    if not result.success:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Failed to load preset '{preset_name}'",
+                "errors": result.errors,
+            },
+        )
+
+    return {
+        "message": f"Preset '{preset_name}' loaded successfully",
+        "preset_name": result.preset_name,
+        "resources_created": result.resources_created,
+        "total_resources": result.resource_count,
+        "errors": result.errors,
+    }
+
+
+@router.get("/api/resource-presets/{preset_name}/preview")
+async def api_preview_resource_preset(preset_name: str) -> dict:
+    """Preview a resource preset without loading it."""
+    import yaml  # type: ignore[import-untyped]
+
+    loader = PresetLoader(db)
+    preset_path = loader.BUILTIN_PRESETS_DIR / f"{preset_name}.yaml"
+
+    if not preset_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Preset '{preset_name}' not found",
+        )
+
+    with open(preset_path) as f:
+        config = yaml.safe_load(f)
+
+    # Count resources
+    resource_counts: dict[str, int] = {}
+    if "keystone" in config:
+        resource_counts["projects"] = len(config["keystone"].get("projects", []))
+    if "glance" in config:
+        resource_counts["images"] = len(config["glance"].get("images", []))
+    if "neutron" in config:
+        neutron = config["neutron"]
+        resource_counts["networks"] = len(neutron.get("networks", []))
+        resource_counts["routers"] = len(neutron.get("routers", []))
+        resource_counts["security_groups"] = len(neutron.get("security_groups", []))
+    if "nova" in config:
+        resource_counts["servers"] = len(config["nova"].get("servers", []))
+        resource_counts["keypairs"] = len(config["nova"].get("keypairs", []))
+    if "cinder" in config:
+        resource_counts["volumes"] = len(config["cinder"].get("volumes", []))
+        resource_counts["snapshots"] = len(config["cinder"].get("snapshots", []))
+    if "octavia" in config:
+        resource_counts["load_balancers"] = len(config["octavia"].get("load_balancers", []))
+
+    return {
+        "preset_name": config.get("name", preset_name),
+        "description": config.get("description", ""),
+        "resource_counts": resource_counts,
+    }

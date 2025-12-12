@@ -1,0 +1,375 @@
+name: production
+description: "Production-like environment with multiple projects, networks, servers, and load balancers"
+
+glance:
+  images:
+    - name: ubuntu-22.04-server
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 512
+      size: 2361393152
+      os_distro: ubuntu
+      os_version: "22.04"
+      architecture: x86_64
+    - name: ubuntu-20.04-server
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 512
+      size: 2147483648
+      os_distro: ubuntu
+      os_version: "20.04"
+      architecture: x86_64
+    - name: centos-9-stream
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 1024
+      size: 1073741824
+      os_distro: centos
+      os_version: "9-stream"
+      architecture: x86_64
+    - name: debian-12
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 8
+      min_ram: 512
+      size: 536870912
+      os_distro: debian
+      os_version: "12"
+      architecture: x86_64
+
+keystone:
+  projects:
+    - name: web-tier
+      description: "Web application tier"
+      users:
+        - name: web-admin
+          password: webadmin123
+          email: web-admin@example.com
+          roles: [member, admin]
+        - name: web-developer
+          password: webdev123
+          email: web-dev@example.com
+          roles: [member]
+
+    - name: database-tier
+      description: "Database tier"
+      users:
+        - name: dba
+          password: dba123
+          email: dba@example.com
+          roles: [member, admin]
+
+    - name: monitoring
+      description: "Monitoring and observability"
+      users:
+        - name: monitor-user
+          password: monitor123
+          email: monitor@example.com
+          roles: [member]
+
+neutron:
+  networks:
+    - name: web-network
+      project: web-tier
+      subnets:
+        - name: web-subnet
+          cidr: "10.100.0.0/24"
+          gateway: "10.100.0.1"
+          dns_nameservers:
+            - "8.8.8.8"
+
+    - name: db-network
+      project: database-tier
+      subnets:
+        - name: db-subnet
+          cidr: "10.200.0.0/24"
+          gateway: "10.200.0.1"
+          dns_nameservers:
+            - "8.8.8.8"
+
+    - name: monitoring-network
+      project: monitoring
+      subnets:
+        - name: monitoring-subnet
+          cidr: "10.250.0.0/24"
+          gateway: "10.250.0.1"
+
+  security_groups:
+    - name: web-frontend
+      description: "Web frontend servers - HTTP/HTTPS"
+      project: web-tier
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.0.0/8"
+
+    - name: web-backend
+      description: "Web backend servers - internal only"
+      project: web-tier
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+          remote_ip_prefix: "10.100.0.0/24"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.0.0/8"
+
+    - name: database
+      description: "Database servers"
+      project: database-tier
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 5432
+          port_range_max: 5432
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "10.0.0.0/8"
+
+    - name: monitoring-agents
+      description: "Monitoring agents"
+      project: monitoring
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 9090
+          port_range_max: 9090
+          remote_ip_prefix: "10.0.0.0/8"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3000
+          port_range_max: 3000
+          remote_ip_prefix: "10.0.0.0/8"
+
+  routers:
+    - name: web-router
+      project: web-tier
+      external_network: external
+      interfaces:
+        - subnet: web-subnet
+
+    - name: db-router
+      project: database-tier
+      external_network: external
+      interfaces:
+        - subnet: db-subnet
+
+    - name: monitoring-router
+      project: monitoring
+      external_network: external
+      interfaces:
+        - subnet: monitoring-subnet
+
+  floating_ips:
+    - project: web-tier
+      floating_network: external
+      server: web-frontend-1
+    - project: web-tier
+      floating_network: external
+      server: web-frontend-2
+    - project: monitoring
+      floating_network: external
+      server: grafana
+
+nova:
+  keypairs:
+    - name: web-deploy-key
+      user: web-admin
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... web-deploy@example.com"
+    - name: dba-key
+      user: dba
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQD... dba@example.com"
+    - name: monitoring-key
+      user: monitor-user
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQE... monitor@example.com"
+
+  servers:
+    # Web tier - frontend
+    - name: web-frontend-1
+      project: web-tier
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: web-network
+      key_name: web-deploy-key
+      security_groups: [web-frontend]
+      metadata:
+        tier: frontend
+        environment: production
+
+    - name: web-frontend-2
+      project: web-tier
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: web-network
+      key_name: web-deploy-key
+      security_groups: [web-frontend]
+      metadata:
+        tier: frontend
+        environment: production
+
+    # Web tier - backend
+    - name: web-backend-1
+      project: web-tier
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: web-network
+      key_name: web-deploy-key
+      security_groups: [web-backend]
+      metadata:
+        tier: backend
+        environment: production
+
+    - name: web-backend-2
+      project: web-tier
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: web-network
+      key_name: web-deploy-key
+      security_groups: [web-backend]
+      metadata:
+        tier: backend
+        environment: production
+
+    # Database tier
+    - name: postgres-primary
+      project: database-tier
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: db-network
+      key_name: dba-key
+      security_groups: [database]
+      metadata:
+        role: primary
+        engine: postgresql
+
+    - name: postgres-replica
+      project: database-tier
+      flavor: m1.large
+      image: ubuntu-22.04-server
+      network: db-network
+      key_name: dba-key
+      security_groups: [database]
+      metadata:
+        role: replica
+        engine: postgresql
+
+    # Monitoring
+    - name: prometheus
+      project: monitoring
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: monitoring-network
+      key_name: monitoring-key
+      security_groups: [monitoring-agents]
+      metadata:
+        role: metrics
+
+    - name: grafana
+      project: monitoring
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: monitoring-network
+      key_name: monitoring-key
+      security_groups: [monitoring-agents]
+      metadata:
+        role: dashboards
+
+cinder:
+  volumes:
+    - name: postgres-primary-data
+      project: database-tier
+      size: 200
+      description: "PostgreSQL primary data volume"
+      attach_to: postgres-primary
+      device: "/dev/vdb"
+
+    - name: postgres-replica-data
+      project: database-tier
+      size: 200
+      description: "PostgreSQL replica data volume"
+      attach_to: postgres-replica
+      device: "/dev/vdb"
+
+    - name: prometheus-data
+      project: monitoring
+      size: 100
+      description: "Prometheus metrics storage"
+      attach_to: prometheus
+      device: "/dev/vdb"
+
+  snapshots:
+    - name: postgres-primary-baseline
+      volume: postgres-primary-data
+      project: database-tier
+      description: "Baseline snapshot of PostgreSQL primary"
+    - name: postgres-replica-baseline
+      volume: postgres-replica-data
+      project: database-tier
+      description: "Baseline snapshot of PostgreSQL replica"
+    - name: prometheus-config-backup
+      volume: prometheus-data
+      project: monitoring
+      description: "Prometheus configuration backup"
+
+octavia:
+  load_balancers:
+    - name: web-lb
+      project: web-tier
+      vip_subnet: web-subnet
+      listeners:
+        - name: http-listener
+          protocol: HTTP
+          port: 80
+          pool:
+            name: web-frontend-pool
+            protocol: HTTP
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: web-frontend-1
+                port: 80
+              - server: web-frontend-2
+                port: 80
+
+        - name: https-listener
+          protocol: HTTPS
+          port: 443
+          pool:
+            name: web-frontend-https-pool
+            protocol: HTTPS
+            lb_algorithm: ROUND_ROBIN
+            members:
+              - server: web-frontend-1
+                port: 443
+              - server: web-frontend-2
+                port: 443

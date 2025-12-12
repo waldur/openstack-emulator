@@ -1,0 +1,143 @@
+name: development
+description: "Small development environment with a project, network, and sample servers"
+
+glance:
+  images:
+    - name: ubuntu-22.04-server
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 10
+      min_ram: 512
+      size: 2361393152
+      os_distro: ubuntu
+      os_version: "22.04"
+      architecture: x86_64
+    - name: cirros-0.6.2
+      visibility: public
+      container_format: bare
+      disk_format: qcow2
+      min_disk: 1
+      min_ram: 128
+      size: 21233664
+      os_distro: cirros
+      os_version: "0.6.2"
+      architecture: x86_64
+
+keystone:
+  projects:
+    - name: dev-project
+      description: "Development project"
+      users:
+        - name: developer
+          password: devpass
+          email: developer@example.com
+          roles: [member]
+
+neutron:
+  networks:
+    - name: dev-network
+      project: dev-project
+      subnets:
+        - name: dev-subnet
+          cidr: "10.10.0.0/24"
+          gateway: "10.10.0.1"
+          dns_nameservers:
+            - "8.8.8.8"
+            - "8.8.4.4"
+
+  security_groups:
+    - name: web-server
+      description: "Allow HTTP/HTTPS traffic"
+      project: dev-project
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+          remote_ip_prefix: "0.0.0.0/0"
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: "0.0.0.0/0"
+
+  routers:
+    - name: dev-router
+      project: dev-project
+      external_network: external
+      interfaces:
+        - subnet: dev-subnet
+
+  floating_ips:
+    - project: dev-project
+      floating_network: external
+      server: web-server
+
+nova:
+  keypairs:
+    - name: dev-key
+      user: developer
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7vbqHcgSHLz... developer@localhost"
+    - name: admin-key
+      user: developer
+      public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDKzXy3T5b8W... admin@localhost"
+
+  servers:
+    - name: web-server
+      project: dev-project
+      flavor: m1.small
+      image: ubuntu-22.04-server
+      network: dev-network
+      key_name: dev-key
+      security_groups:
+        - web-server
+        - default
+      metadata:
+        environment: development
+        role: webserver
+
+    - name: db-server
+      project: dev-project
+      flavor: m1.medium
+      image: ubuntu-22.04-server
+      network: dev-network
+      key_name: dev-key
+      security_groups:
+        - default
+      metadata:
+        environment: development
+        role: database
+
+cinder:
+  volumes:
+    - name: db-data
+      project: dev-project
+      size: 50
+      description: "Database data volume"
+      attach_to: db-server
+      device: "/dev/vdb"
+
+    - name: web-logs
+      project: dev-project
+      size: 20
+      description: "Web server logs volume"
+      attach_to: web-server
+      device: "/dev/vdb"
+
+  snapshots:
+    - name: db-data-backup
+      volume: db-data
+      project: dev-project
+      description: "Initial database backup snapshot"
+
+octavia:
+  load_balancers: []
