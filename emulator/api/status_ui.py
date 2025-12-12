@@ -1218,17 +1218,29 @@ def get_current_user(auth_token: str | None) -> dict | None:
     }
 
 
-def render_servers_table(servers: list, authenticated: bool) -> str:
+def build_project_map() -> dict[str, str]:
+    """Build a mapping of project IDs to project names."""
+    projects = db.list_projects()
+    return {p.id: p.name for p in projects}
+
+
+def render_servers_table(
+    servers: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the servers table HTML."""
     if not servers:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO SERVERS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for server in servers:
         status = server.status.value if hasattr(server.status, "value") else str(server.status)
         status_class = get_status_class(status)
         created = getattr(server, "created", None)
         created_str = created.strftime("%Y-%m-%d %H:%M:%S") if created else "-"
+        # Nova uses tenant_id instead of project_id
+        project_id = getattr(server, "tenant_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1246,6 +1258,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
             <td>{server.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{server.flavor_id}</td>
+            <td>{project_name}</td>
             <td>{created_str}</td>
             {actions}
         </tr>
@@ -1260,6 +1273,7 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
                 <th>Name</th>
                 <th>Status</th>
                 <th>Flavor</th>
+                <th>Project</th>
                 <th>Created</th>
                 {action_header}
             </tr>
@@ -1269,15 +1283,20 @@ def render_servers_table(servers: list, authenticated: bool) -> str:
     """
 
 
-def render_volumes_table(volumes: list, authenticated: bool) -> str:
+def render_volumes_table(
+    volumes: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the volumes table HTML."""
     if not volumes:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO VOLUMES FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for volume in volumes:
         status = volume.status.value if hasattr(volume.status, "value") else str(volume.status)
         status_class = get_status_class(status)
+        project_id = getattr(volume, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1294,6 +1313,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
             <td>{volume.volume_type or 'default'}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1308,6 +1328,7 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>Size</th>
                 <th>Type</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1316,11 +1337,14 @@ def render_volumes_table(volumes: list, authenticated: bool) -> str:
     """
 
 
-def render_images_table(images: list, authenticated: bool) -> str:
+def render_images_table(
+    images: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the images table HTML."""
     if not images:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO IMAGES FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for image in images:
         status = image.status.value if hasattr(image.status, "value") else str(image.status)
@@ -1329,6 +1353,9 @@ def render_images_table(images: list, authenticated: bool) -> str:
             image.visibility.value if hasattr(image.visibility, "value") else str(image.visibility)
         )
         size_mb = (image.size or 0) // (1024 * 1024)
+        # Glance uses owner instead of project_id
+        owner_id = getattr(image, "owner", None) or ""
+        owner_name = project_map.get(owner_id, owner_id[:8] + "..." if owner_id else "-")
 
         actions = ""
         if authenticated:
@@ -1345,6 +1372,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{visibility}</td>
             <td>{size_mb} MB</td>
+            <td>{owner_name}</td>
             {actions}
         </tr>
         """
@@ -1359,6 +1387,7 @@ def render_images_table(images: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>Visibility</th>
                 <th>Size</th>
+                <th>Owner</th>
                 {action_header}
             </tr>
         </thead>
@@ -1367,16 +1396,21 @@ def render_images_table(images: list, authenticated: bool) -> str:
     """
 
 
-def render_networks_table(networks: list, authenticated: bool) -> str:
+def render_networks_table(
+    networks: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the networks table HTML."""
     if not networks:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO NETWORKS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for network in networks:
         status = network.status.value if hasattr(network.status, "value") else str(network.status)
         status_class = get_status_class(status)
         external = "Yes" if network.external else "No"
+        project_id = getattr(network, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1393,6 +1427,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
             <td>{'Yes' if network.shared else 'No'}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1407,6 +1442,7 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>External</th>
                 <th>Shared</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1415,13 +1451,19 @@ def render_networks_table(networks: list, authenticated: bool) -> str:
     """
 
 
-def render_subnets_table(subnets: list, authenticated: bool) -> str:
+def render_subnets_table(
+    subnets: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the subnets table HTML."""
     if not subnets:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO SUBNETS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for subnet in subnets:
+        project_id = getattr(subnet, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
+
         actions = ""
         if authenticated:
             actions = f"""
@@ -1437,6 +1479,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
             <td>{subnet.cidr}</td>
             <td>{subnet.gateway_ip or '-'}</td>
             <td>{'Yes' if subnet.enable_dhcp else 'No'}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1451,6 +1494,7 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
                 <th>CIDR</th>
                 <th>Gateway</th>
                 <th>DHCP</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1459,16 +1503,21 @@ def render_subnets_table(subnets: list, authenticated: bool) -> str:
     """
 
 
-def render_ports_table(ports: list, authenticated: bool) -> str:
+def render_ports_table(
+    ports: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the ports table HTML."""
     if not ports:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO PORTS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for port in ports:
         status = port.status.value if hasattr(port.status, "value") else str(port.status)
         status_class = get_status_class(status)
         fixed_ips = ", ".join([ip.ip_address for ip in port.fixed_ips]) if port.fixed_ips else "-"
+        project_id = getattr(port, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1485,6 +1534,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
             <td>{fixed_ips}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1499,6 +1549,7 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>MAC Address</th>
                 <th>Fixed IPs</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1507,16 +1558,21 @@ def render_ports_table(ports: list, authenticated: bool) -> str:
     """
 
 
-def render_routers_table(routers: list, authenticated: bool) -> str:
+def render_routers_table(
+    routers: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the routers table HTML."""
     if not routers:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO ROUTERS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for router in routers:
         status = router.status.value if hasattr(router.status, "value") else str(router.status)
         status_class = get_status_class(status)
         ext_gateway = "Yes" if router.external_gateway_info else "No"
+        project_id = getattr(router, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1533,6 +1589,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{'Yes' if router.admin_state_up else 'No'}</td>
             <td>{ext_gateway}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1547,6 +1604,7 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>Admin State</th>
                 <th>External Gateway</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1555,15 +1613,20 @@ def render_routers_table(routers: list, authenticated: bool) -> str:
     """
 
 
-def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
+def render_floating_ips_table(
+    floating_ips: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the floating IPs table HTML."""
     if not floating_ips:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO FLOATING IPS ALLOCATED ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for fip in floating_ips:
         status = fip.status.value if hasattr(fip.status, "value") else str(fip.status)
         status_class = get_status_class(status)
+        project_id = getattr(fip, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1591,6 +1654,7 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
             <td>{fip.fixed_ip_address or '-'}</td>
             <td class="uuid">{floating_port_cell}</td>
             <td class="uuid">{internal_port_cell}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1606,6 +1670,7 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
                 <th>Fixed IP</th>
                 <th>Floating Port</th>
                 <th>Internal Port</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1614,14 +1679,19 @@ def render_floating_ips_table(floating_ips: list, authenticated: bool) -> str:
     """
 
 
-def render_security_groups_table(security_groups: list, authenticated: bool) -> str:
+def render_security_groups_table(
+    security_groups: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the security groups table HTML."""
     if not security_groups:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO SECURITY GROUPS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for sg in security_groups:
         rule_count = len(db.list_security_group_rules(security_group_id=sg.id))
+        project_id = getattr(sg, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1637,6 +1707,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
             <td>{sg.name}</td>
             <td>{sg.description or '-'}</td>
             <td>{rule_count}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1650,6 +1721,7 @@ def render_security_groups_table(security_groups: list, authenticated: bool) -> 
                 <th>Name</th>
                 <th>Description</th>
                 <th>Rules</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1830,17 +1902,22 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
     """
 
 
-def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
+def render_snapshots_table(
+    snapshots: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the snapshots table HTML."""
     if not snapshots:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO SNAPSHOTS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for snapshot in snapshots:
         status = (
             snapshot.status.value if hasattr(snapshot.status, "value") else str(snapshot.status)
         )
         status_class = get_status_class(status)
+        project_id = getattr(snapshot, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1857,6 +1934,7 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
             <td class="uuid"><span class="uuid-value" data-full="{snapshot.volume_id}" onclick="copyUuid(this)">{snapshot.volume_id[:13]}...</span></td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1871,6 +1949,7 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
                 <th>Status</th>
                 <th>Size</th>
                 <th>Volume ID</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1879,11 +1958,14 @@ def render_snapshots_table(snapshots: list, authenticated: bool) -> str:
     """
 
 
-def render_load_balancers_table(load_balancers: list, authenticated: bool) -> str:
+def render_load_balancers_table(
+    load_balancers: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the load balancers table HTML."""
     if not load_balancers:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO LOAD BALANCERS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for lb in load_balancers:
         prov_status = (
@@ -1898,6 +1980,8 @@ def render_load_balancers_table(load_balancers: list, authenticated: bool) -> st
         )
         prov_class = get_status_class(prov_status)
         op_class = get_status_class(op_status)
+        project_id = getattr(lb, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1915,6 +1999,7 @@ def render_load_balancers_table(load_balancers: list, authenticated: bool) -> st
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td><span class="status-badge {op_class}">{op_status}</span></td>
             <td>{lb.provider}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1930,6 +2015,7 @@ def render_load_balancers_table(load_balancers: list, authenticated: bool) -> st
                 <th>Provisioning</th>
                 <th>Operating</th>
                 <th>Provider</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1938,11 +2024,14 @@ def render_load_balancers_table(load_balancers: list, authenticated: bool) -> st
     """
 
 
-def render_listeners_table(listeners: list, authenticated: bool) -> str:
+def render_listeners_table(
+    listeners: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the listeners table HTML."""
     if not listeners:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO LISTENERS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for listener in listeners:
         prov_status = (
@@ -1956,6 +2045,8 @@ def render_listeners_table(listeners: list, authenticated: bool) -> str:
             if hasattr(listener.protocol, "value")
             else str(listener.protocol)
         )
+        project_id = getattr(listener, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -1973,6 +2064,7 @@ def render_listeners_table(listeners: list, authenticated: bool) -> str:
             <td>{listener.protocol_port}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td class="uuid"><span class="uuid-value" data-full="{listener.loadbalancer_id}" onclick="copyUuid(this)">{listener.loadbalancer_id[:13]}...</span></td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -1988,6 +2080,7 @@ def render_listeners_table(listeners: list, authenticated: bool) -> str:
                 <th>Port</th>
                 <th>Status</th>
                 <th>Load Balancer</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -1996,11 +2089,14 @@ def render_listeners_table(listeners: list, authenticated: bool) -> str:
     """
 
 
-def render_pools_table(pools: list, authenticated: bool) -> str:
+def render_pools_table(
+    pools: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the pools table HTML."""
     if not pools:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO POOLS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for pool in pools:
         prov_status = (
@@ -2015,6 +2111,8 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
             if hasattr(pool.lb_algorithm, "value")
             else str(pool.lb_algorithm)
         )
+        project_id = getattr(pool, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -2032,6 +2130,7 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
             <td>{lb_algorithm}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td>{len(pool.members)}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -2047,6 +2146,7 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
                 <th>Algorithm</th>
                 <th>Status</th>
                 <th>Members</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -2055,11 +2155,14 @@ def render_pools_table(pools: list, authenticated: bool) -> str:
     """
 
 
-def render_health_monitors_table(health_monitors: list, authenticated: bool) -> str:
+def render_health_monitors_table(
+    health_monitors: list, authenticated: bool, project_map: dict[str, str] | None = None
+) -> str:
     """Render the health monitors table HTML."""
     if not health_monitors:
         return '<div class="text-center py-8 text-[#4a5568]">[ NO HEALTH MONITORS FOUND ]</div>'
 
+    project_map = project_map or {}
     rows = ""
     for monitor in health_monitors:
         prov_status = (
@@ -2069,6 +2172,8 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
         )
         prov_class = get_status_class(prov_status)
         mon_type = monitor.type.value if hasattr(monitor.type, "value") else str(monitor.type)
+        project_id = getattr(monitor, "project_id", None) or ""
+        project_name = project_map.get(project_id, project_id[:8] + "..." if project_id else "-")
 
         actions = ""
         if authenticated:
@@ -2094,6 +2199,7 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
             <td>{monitor.timeout}s</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td class="uuid">{pool_cell}</td>
+            <td>{project_name}</td>
             {actions}
         </tr>
         """
@@ -2110,6 +2216,7 @@ def render_health_monitors_table(health_monitors: list, authenticated: bool) -> 
                 <th>Timeout</th>
                 <th>Status</th>
                 <th>Pool</th>
+                <th>Project</th>
                 {action_header}
             </tr>
         </thead>
@@ -2273,8 +2380,10 @@ def render_create_modals(
     load_balancers: list,
     listeners: list,
     pools: list,
+    projects: list | None = None,
 ) -> str:
     """Render all create modals for resources."""
+    projects = projects or []
 
     # Build flavor options
     flavor_options = "".join(
@@ -2331,6 +2440,10 @@ def render_create_modals(
 
     # Build pool options for health monitors
     pool_options = "".join([f'<option value="{p.id}">{p.name or p.id[:8]}</option>' for p in pools])
+
+    # Build project options for tenant-scoped resources
+    project_options = '<option value="">Current project</option>'
+    project_options += "".join([f'<option value="{p.id}">{p.name}</option>' for p in projects])
 
     return f"""
     <!-- Login Modal -->
@@ -2393,6 +2506,12 @@ def render_create_modals(
                         {network_options}
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="server-project">Project</label>
+                    <select id="server-project" name="project_id">
+                        {project_options}
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-server-modal')">Cancel</button>
                     <button type="button" class="btn btn-success" onclick="createResource('servers', 'create-server-form', 'create-server-modal')">Create</button>
@@ -2426,6 +2545,12 @@ def render_create_modals(
                     <label for="volume-type">Volume Type</label>
                     <select id="volume-type" name="volume_type">
                         {vol_type_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="volume-project">Project</label>
+                    <select id="volume-project" name="project_id">
+                        {project_options}
                     </select>
                 </div>
                 <div class="form-actions">
@@ -2466,6 +2591,12 @@ def render_create_modals(
                         <input type="checkbox" name="external">
                         External Network
                     </label>
+                </div>
+                <div class="form-group">
+                    <label for="network-project">Project</label>
+                    <select id="network-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-network-modal')">Cancel</button>
@@ -2508,6 +2639,12 @@ def render_create_modals(
                         Enable DHCP
                     </label>
                 </div>
+                <div class="form-group">
+                    <label for="subnet-project">Project</label>
+                    <select id="subnet-project" name="project_id">
+                        {project_options}
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-subnet-modal')">Cancel</button>
                     <button type="button" class="btn btn-success" onclick="createResource('subnets', 'create-subnet-form', 'create-subnet-modal')">Create</button>
@@ -2542,6 +2679,12 @@ def render_create_modals(
                         Admin State Up
                     </label>
                 </div>
+                <div class="form-group">
+                    <label for="router-project">Project</label>
+                    <select id="router-project" name="project_id">
+                        {project_options}
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-router-modal')">Cancel</button>
                     <button type="button" class="btn btn-success" onclick="createResource('routers', 'create-router-form', 'create-router-modal')">Create</button>
@@ -2563,6 +2706,12 @@ def render_create_modals(
                     <label for="fip-network">External Network *</label>
                     <select id="fip-network" name="floating_network_id" required>
                         {ext_net_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="fip-project">Project</label>
+                    <select id="fip-project" name="project_id">
+                        {project_options}
                     </select>
                 </div>
                 <div class="form-actions">
@@ -2589,6 +2738,12 @@ def render_create_modals(
                 <div class="form-group">
                     <label for="sg-description">Description</label>
                     <input type="text" id="sg-description" name="description" placeholder="Security group description">
+                </div>
+                <div class="form-group">
+                    <label for="sg-project">Project</label>
+                    <select id="sg-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-security-group-modal')">Cancel</button>
@@ -2708,6 +2863,12 @@ def render_create_modals(
                         <option value="community">Community</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="image-project">Owner (Project)</label>
+                    <select id="image-project" name="project_id">
+                        {project_options}
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-image-modal')">Cancel</button>
                     <button type="button" class="btn btn-success" onclick="createResource('images', 'create-image-form', 'create-image-modal')">Create</button>
@@ -2738,6 +2899,12 @@ def render_create_modals(
                 <div class="form-group">
                     <label for="snapshot-description">Description</label>
                     <input type="text" id="snapshot-description" name="description" placeholder="Snapshot description">
+                </div>
+                <div class="form-group">
+                    <label for="snapshot-project">Project</label>
+                    <select id="snapshot-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-snapshot-modal')">Cancel</button>
@@ -2782,6 +2949,12 @@ def render_create_modals(
                         <input type="checkbox" name="admin_state_up" checked>
                         Admin State Up
                     </label>
+                </div>
+                <div class="form-group">
+                    <label for="lb-project">Project</label>
+                    <select id="lb-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-loadbalancer-modal')">Cancel</button>
@@ -2833,6 +3006,12 @@ def render_create_modals(
                         <input type="checkbox" name="admin_state_up" checked>
                         Admin State Up
                     </label>
+                </div>
+                <div class="form-group">
+                    <label for="listener-project">Project</label>
+                    <select id="listener-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-listener-modal')">Cancel</button>
@@ -2889,6 +3068,12 @@ def render_create_modals(
                         <input type="checkbox" name="admin_state_up" checked>
                         Admin State Up
                     </label>
+                </div>
+                <div class="form-group">
+                    <label for="pool-project">Project</label>
+                    <select id="pool-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-pool-modal')">Cancel</button>
@@ -2963,6 +3148,12 @@ def render_create_modals(
                         <input type="checkbox" name="admin_state_up" checked>
                         Admin State Up
                     </label>
+                </div>
+                <div class="form-group">
+                    <label for="hm-project">Project</label>
+                    <select id="hm-project" name="project_id">
+                        {project_options}
+                    </select>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('create-healthmonitor-modal')">Cancel</button>
@@ -3111,6 +3302,9 @@ async def status_page(
     pools = db.list_pools()
     health_monitors = db.list_health_monitors()
 
+    # Build project lookup map for displaying project names in tables
+    project_map = {p.id: p.name for p in projects}
+
     # Build authentication section
     if authenticated and current_user:
         auth_section = f"""
@@ -3150,7 +3344,16 @@ async def status_page(
 
     # Build modals
     modals = render_create_modals(
-        flavors, images, networks, volumes, volume_types, subnets, load_balancers, listeners, pools
+        flavors,
+        images,
+        networks,
+        volumes,
+        volume_types,
+        subnets,
+        load_balancers,
+        listeners,
+        pools,
+        projects,
     )
 
     # Get active scenario count for badge display in header
@@ -3238,7 +3441,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-server-modal', '+ NEW')}
                         </div>
-                        {render_servers_table(servers, authenticated)}
+                        {render_servers_table(servers, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3270,7 +3473,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-image-modal', '+ NEW')}
                         </div>
-                        {render_images_table(images, authenticated)}
+                        {render_images_table(images, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3280,7 +3483,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-volume-modal', '+ NEW')}
                         </div>
-                        {render_volumes_table(volumes, authenticated)}
+                        {render_volumes_table(volumes, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3290,7 +3493,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-snapshot-modal', '+ NEW')}
                         </div>
-                        {render_snapshots_table(snapshots, authenticated)}
+                        {render_snapshots_table(snapshots, authenticated, project_map)}
                     </div>
                 </div>
 
@@ -3304,7 +3507,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-network-modal', '+ NEW')}
                         </div>
-                        {render_networks_table(networks, authenticated)}
+                        {render_networks_table(networks, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3314,7 +3517,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-subnet-modal', '+ NEW')}
                         </div>
-                        {render_subnets_table(subnets, authenticated)}
+                        {render_subnets_table(subnets, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3323,7 +3526,7 @@ async def status_page(
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(ports)}</span>
                             </h3>
                         </div>
-                        {render_ports_table(ports, authenticated)}
+                        {render_ports_table(ports, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3333,7 +3536,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-router-modal', '+ NEW')}
                         </div>
-                        {render_routers_table(routers, authenticated)}
+                        {render_routers_table(routers, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3343,7 +3546,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-floating-ip-modal', '+ ALLOCATE')}
                         </div>
-                        {render_floating_ips_table(floating_ips, authenticated)}
+                        {render_floating_ips_table(floating_ips, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3353,7 +3556,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-security-group-modal', '+ NEW')}
                         </div>
-                        {render_security_groups_table(security_groups, authenticated)}
+                        {render_security_groups_table(security_groups, authenticated, project_map)}
                     </div>
                 </div>
 
@@ -3367,7 +3570,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-loadbalancer-modal', '+ NEW')}
                         </div>
-                        {render_load_balancers_table(load_balancers, authenticated)}
+                        {render_load_balancers_table(load_balancers, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3377,7 +3580,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-listener-modal', '+ NEW')}
                         </div>
-                        {render_listeners_table(listeners, authenticated)}
+                        {render_listeners_table(listeners, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3387,7 +3590,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-pool-modal', '+ NEW')}
                         </div>
-                        {render_pools_table(pools, authenticated)}
+                        {render_pools_table(pools, authenticated, project_map)}
                     </div>
                     <div class="mb-8">
                         <div class="flex justify-between items-center mb-4">
@@ -3397,7 +3600,7 @@ async def status_page(
                             </h3>
                             {create_btn('create-healthmonitor-modal', '+ NEW')}
                         </div>
-                        {render_health_monitors_table(health_monitors, authenticated)}
+                        {render_health_monitors_table(health_monitors, authenticated, project_map)}
                     </div>
                 </div>
 
