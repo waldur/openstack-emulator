@@ -401,6 +401,88 @@ class TestFloatingIPs:
         assert data["floatingip"]["floating_network_id"] == ext_network["id"]
         assert data["floatingip"]["floating_ip_address"]
 
+    def test_create_floating_ip_creates_port(self):
+        """Test that creating a floating IP also creates a port on the external network.
+
+        In real OpenStack Neutron, when a floating IP is created, a port is created
+        on the external network with device_owner='network:floatingip' to hold the
+        floating IP address.
+        """
+        # Get external network
+        network_response = client.get("/v2.0/networks")
+        networks = network_response.json()["networks"]
+        ext_network = next((n for n in networks if n.get("router:external")), None)
+        if not ext_network:
+            pytest.skip("No external network available")
+
+        # Get initial port count on external network
+        initial_ports = client.get(f"/v2.0/ports?network_id={ext_network['id']}").json()["ports"]
+        initial_port_count = len(initial_ports)
+
+        # Create a floating IP
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": ext_network["id"]}},
+        )
+        assert response.status_code == 201
+        fip_data = response.json()["floatingip"]
+
+        # Verify floating_port_id is set
+        assert fip_data.get("floating_port_id") is not None
+        floating_port_id = fip_data["floating_port_id"]
+
+        # Verify the port was created on the external network
+        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
+        assert port_response.status_code == 200
+        port_data = port_response.json()["port"]
+
+        # Verify port properties
+        assert port_data["network_id"] == ext_network["id"]
+        assert port_data["device_owner"] == "network:floatingip"
+        assert port_data["device_id"] == fip_data["id"]
+
+        # Verify the port has the floating IP address
+        assert len(port_data["fixed_ips"]) > 0
+        assert port_data["fixed_ips"][0]["ip_address"] == fip_data["floating_ip_address"]
+
+        # Verify port count increased
+        final_ports = client.get(f"/v2.0/ports?network_id={ext_network['id']}").json()["ports"]
+        assert len(final_ports) == initial_port_count + 1
+
+    def test_delete_floating_ip_deletes_port(self):
+        """Test that deleting a floating IP also deletes its associated port.
+
+        When a floating IP is deleted, the port on the external network that
+        was created to hold the floating IP address should also be deleted.
+        """
+        # Get external network
+        network_response = client.get("/v2.0/networks")
+        networks = network_response.json()["networks"]
+        ext_network = next((n for n in networks if n.get("router:external")), None)
+        if not ext_network:
+            pytest.skip("No external network available")
+
+        # Create a floating IP
+        create_response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": ext_network["id"]}},
+        )
+        fip_data = create_response.json()["floatingip"]
+        fip_id = fip_data["id"]
+        floating_port_id = fip_data["floating_port_id"]
+
+        # Verify the port exists
+        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
+        assert port_response.status_code == 200
+
+        # Delete the floating IP
+        delete_response = client.delete(f"/v2.0/floatingips/{fip_id}")
+        assert delete_response.status_code == 204
+
+        # Verify the associated port was also deleted
+        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
+        assert port_response.status_code == 404
+
     def test_get_floating_ip(self):
         """Test getting a specific floating IP."""
         # Get external network
