@@ -249,7 +249,7 @@ class TestAuthentication:
         """Test successful login."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -263,7 +263,7 @@ class TestAuthentication:
         """Test login with specific project."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password", "project_name": "admin"},
+            json={"username": "admin", "password": "s4l4dus", "project_name": "admin"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -273,7 +273,7 @@ class TestAuthentication:
         """Test login with invalid username."""
         response = client.post(
             "/api/login",
-            json={"username": "nonexistent", "password": "password"},
+            json={"username": "nonexistent", "password": "s4l4dus"},
         )
         assert response.status_code == 401
         assert "Invalid username" in response.json()["detail"]
@@ -282,7 +282,7 @@ class TestAuthentication:
         """Test login with invalid project."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password", "project_name": "nonexistent"},
+            json={"username": "admin", "password": "s4l4dus", "project_name": "nonexistent"},
         )
         assert response.status_code == 401
         assert "Project not found" in response.json()["detail"]
@@ -292,7 +292,7 @@ class TestAuthentication:
         # First login
         login_response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         assert login_response.status_code == 200
 
@@ -307,7 +307,7 @@ class TestAuthentication:
         # First login
         login_response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         token = login_response.cookies.get("auth_token")
 
@@ -330,7 +330,7 @@ class TestServerManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -419,7 +419,7 @@ class TestVolumeManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -459,7 +459,7 @@ class TestNetworkManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -544,7 +544,7 @@ class TestSecurityGroupManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -586,7 +586,7 @@ class TestProjectManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -640,7 +640,7 @@ class TestUserManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -663,7 +663,7 @@ class TestUserManagement:
         # Try to create user with existing name
         response = client.post(
             "/api/users",
-            json={"name": "admin", "password": "password"},
+            json={"name": "admin", "password": "s4l4dus"},
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
@@ -688,7 +688,7 @@ class TestImageManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -729,7 +729,7 @@ class TestSnapshotManagement:
         """Helper to login and return auth token."""
         response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         return response.cookies.get("auth_token")
 
@@ -781,7 +781,7 @@ class TestStatusPageAuthentication:
         # Login first
         login_response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         token = login_response.cookies.get("auth_token")
 
@@ -795,7 +795,7 @@ class TestStatusPageAuthentication:
         # Login first
         login_response = client.post(
             "/api/login",
-            json={"username": "admin", "password": "password"},
+            json={"username": "admin", "password": "s4l4dus"},
         )
         token = login_response.cookies.get("auth_token")
 
