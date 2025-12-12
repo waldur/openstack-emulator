@@ -287,13 +287,24 @@ class Database:
         )
         self._users[admin_user.id] = admin_user
 
-        # Create default roles
+        # Create default roles (including standard OpenStack role name variations)
         admin_role = Role(id=str(uuid4()), name="admin", description="Admin role")
         member_role = Role(id=str(uuid4()), name="member", description="Member role")
+        member_cap_role = Role(
+            id=str(uuid4()), name="Member", description="Member role (capitalized)"
+        )
+        member_underscore_role = Role(
+            id=str(uuid4()), name="_member_", description="Member role (legacy)"
+        )
         reader_role = Role(id=str(uuid4()), name="reader", description="Reader role")
+        manager_role = Role(id=str(uuid4()), name="manager", description="Manager role")
+
         self._roles[admin_role.id] = admin_role
         self._roles[member_role.id] = member_role
+        self._roles[member_cap_role.id] = member_cap_role
+        self._roles[member_underscore_role.id] = member_underscore_role
         self._roles[reader_role.id] = reader_role
+        self._roles[manager_role.id] = manager_role
         self._admin_role_id = admin_role.id
 
         # Assign admin role to admin user on admin project
@@ -366,19 +377,42 @@ class Database:
         }
 
     def _init_default_volume_types(self) -> None:
-        """Create default volume types."""
+        """Create default volume types matching real OpenStack patterns."""
         default_types = [
+            VolumeType(
+                id=str(uuid4()),
+                name="__DEFAULT__",
+                description="Default volume type",
+                is_public=False,
+                extra_specs={},
+            ),
             VolumeType(
                 id=str(uuid4()),
                 name="lvmdriver-1",
                 description="Default LVM volume type",
                 is_public=True,
+                extra_specs={},
             ),
             VolumeType(
                 id=str(uuid4()),
-                name="__DEFAULT__",
-                description="Default volume type",
+                name="prod",
+                description="Shared production HDD",
+                is_public=False,
+                extra_specs={"volume_backend_name": "prod"},
+            ),
+            VolumeType(
+                id=str(uuid4()),
+                name="rbd",
+                description="Ceph RBD storage",
+                is_public=False,
+                extra_specs={"volume_backend_name": "rbd"},
+            ),
+            VolumeType(
+                id=str(uuid4()),
+                name="ssd",
+                description="IOPS intensive SSD",
                 is_public=True,
+                extra_specs={"volume_backend_name": "ssd"},
             ),
         ]
         for vtype in default_types:
@@ -434,7 +468,7 @@ class Database:
                 roles=roles,
                 issued_at=datetime.utcnow(),
                 expires_at=datetime.utcnow() + timedelta(hours=24),
-                catalog=self._generate_service_catalog(base_url),
+                catalog=self._generate_service_catalog(base_url, project.id),
             )
             logger.info("Storing token in database: %s for user %s", token.id, user.name)
             self._tokens[token.id] = token
@@ -474,7 +508,9 @@ class Database:
                 return True
             return False
 
-    def _generate_service_catalog(self, base_url: str) -> list[dict[str, Any]]:
+    def _generate_service_catalog(
+        self, base_url: str, project_id: str = ""
+    ) -> list[dict[str, Any]]:
         """Generate a service catalog for tokens.
 
         Uses standard OpenStack ports:
@@ -569,17 +605,17 @@ class Database:
                     {
                         "region": "RegionOne",
                         "interface": "public",
-                        "url": f"{cinder_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/{project_id}",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "internal",
-                        "url": f"{cinder_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/{project_id}",
                     },
                     {
                         "region": "RegionOne",
                         "interface": "admin",
-                        "url": f"{cinder_url}/v3/%(project_id)s",
+                        "url": f"{cinder_url}/v3/{project_id}",
                     },
                 ],
             },
@@ -5924,6 +5960,43 @@ class Database:
             self._l7policies.clear()
             self._l7rules.clear()
             self._next_lb_vip = 1
+
+    def get_hypervisor_statistics(self) -> dict[str, Any]:
+        """Calculate dynamic hypervisor statistics based on current resources."""
+        with self._lock:
+            # Get all servers and calculate usage
+            servers = list(self._servers.values())
+            running_servers = [s for s in servers if s.status == ServerStatus.ACTIVE]
+
+            vcpus_used = 0
+            memory_mb_used = 0
+
+            # Calculate resource usage from running servers
+            for server in running_servers:
+                flavor = self._flavors.get(server.flavor_id)
+                if flavor:
+                    vcpus_used += flavor.vcpus
+                    memory_mb_used += flavor.ram
+
+            # Static capacity values (can be made configurable later)
+            total_vcpus = 32
+            total_memory_mb = 65536
+            total_local_gb = 1000
+
+            return {
+                "count": 1,  # Number of hypervisors
+                "vcpus": total_vcpus,
+                "vcpus_used": vcpus_used,
+                "memory_mb": total_memory_mb,
+                "memory_mb_used": memory_mb_used,
+                "local_gb": total_local_gb,
+                "local_gb_used": 0,  # TODO: Calculate from volumes if needed
+                "free_ram_mb": total_memory_mb - memory_mb_used,
+                "free_disk_gb": total_local_gb,
+                "current_workload": 0,  # OpenStack concept - can remain 0
+                "running_vms": len(running_servers),
+                "disk_available_least": total_local_gb,
+            }
 
     def _init_default_tokens(self) -> None:
         """Initialize tokens - currently empty, tokens should be created via authentication."""

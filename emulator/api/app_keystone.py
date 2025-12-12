@@ -5,6 +5,7 @@ Runs on port 5000 (standard OpenStack Keystone port).
 
 import json
 import logging
+import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,6 +14,22 @@ from pydantic import ValidationError
 from emulator.api.keystone import router as keystone_router
 from emulator.core.middleware import ScenarioMiddleware
 from emulator.core.exceptions import add_openstack_exception_handlers
+from emulator.core.headers import add_openstack_headers_middleware
+from emulator.core.logging_middleware import add_debug_logging_middleware
+
+# Configure logging for this process
+log_level = os.getenv("EMULATOR_LOG_LEVEL", "info").lower()
+level_mapping = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+logging.basicConfig(
+    level=level_mapping.get(log_level, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,43 +51,14 @@ app.add_middleware(
 )
 
 
-# Add request logging middleware
-@app.middleware("http")
-async def log_request_details(request: Request, call_next):
-    """Log request information."""
-    logger.debug("=== Keystone Request: %s %s ===", request.method, request.url)
-    logger.debug("Headers: %s", dict(request.headers))
-
-    # Log request body for POST/PUT/PATCH requests
-    if request.method in ["POST", "PUT", "PATCH"]:
-        body = await request.body()
-        try:
-            if body:
-                decoded_body = body.decode("utf-8")
-                logger.debug("Request body: %s", decoded_body)
-                try:
-                    json_body = json.loads(decoded_body)
-                    # Only log auth details at info level for token creation
-                    if "/auth/tokens" in str(request.url):
-                        logger.info(
-                            "Authentication request: %s",
-                            json_body.get("auth", {}).get("identity", {}).get("methods", []),
-                        )
-                except json.JSONDecodeError as e:
-                    logger.warning("JSON decode error: %s", e)
-        except Exception as e:
-            logger.error("Body processing error: %s", e)
-
-        # Need to reconstruct the request with the body for downstream processing
-        request._body = body
-
-    response = await call_next(request)
-    logger.debug("Response status: %s", response.status_code)
-    return response
-
+# Add enhanced debug logging middleware
+add_debug_logging_middleware(app, "keystone")
 
 # Add scenario injection middleware
 app.add_middleware(ScenarioMiddleware, service_name="keystone")
+
+# Add OpenStack headers middleware
+add_openstack_headers_middleware(app, "identity", "3.14")
 
 
 # Add specific Pydantic validation error handler

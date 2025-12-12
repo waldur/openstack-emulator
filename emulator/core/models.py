@@ -563,6 +563,7 @@ class Project:
     enabled: bool = True
     is_domain: bool = False
     tags: list[str] = field(default_factory=list)
+    options: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""
@@ -574,6 +575,7 @@ class Project:
             "enabled": self.enabled,
             "is_domain": self.is_domain,
             "tags": self.tags,
+            "options": self.options,
             "links": {"self": f"/v3/projects/{self.id}"},
         }
         if self.parent_id:
@@ -798,6 +800,7 @@ class VolumeType:
             "is_public": self.is_public,
             "extra_specs": self.extra_specs,
             "qos_specs_id": self.qos_specs_id,
+            "os-volume-type-access:is_public": self.is_public,  # Additional field for compatibility
         }
 
 

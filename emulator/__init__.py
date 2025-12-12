@@ -1,7 +1,9 @@
 """OpenStack Emulator - A testing tool for OpenStack API clients."""
 
 import argparse
+import logging
 import multiprocessing
+import os
 import sys
 
 import uvicorn
@@ -10,6 +12,33 @@ from emulator.api.app import app
 
 __version__ = "0.1.0"
 __all__ = ["app", "main"]
+
+
+def configure_logging(log_level: str) -> None:
+    """Configure Python logging for the emulator."""
+    # Map string levels to logging levels
+    level_mapping = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+    }
+
+    level = level_mapping.get(log_level.lower(), logging.INFO)
+
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        force=True,  # Override any existing configuration
+    )
+
+    # Set specific loggers to debug level if needed
+    if level == logging.DEBUG:
+        logging.getLogger("emulator").setLevel(logging.DEBUG)
+        logging.getLogger("emulator.core.auth").setLevel(logging.DEBUG)
+        logging.getLogger("emulator.core.database").setLevel(logging.DEBUG)
+        logging.getLogger("emulator.api").setLevel(logging.DEBUG)
 
 
 def load_preset(preset_name: str | None, preset_file: str | None) -> bool:
@@ -94,7 +123,7 @@ SERVICE_APPS = {
 }
 
 
-def run_service(service: str, host: str, port: int) -> None:
+def run_service(service: str, host: str, port: int, log_level: str = "info") -> None:
     """Run a single OpenStack service."""
     app_path = SERVICE_APPS.get(service)
     if not app_path:
@@ -107,11 +136,11 @@ def run_service(service: str, host: str, port: int) -> None:
         host=host,
         port=port,
         reload=False,
-        log_level="info",
+        log_level=log_level,
     )
 
 
-def run_all_services(host: str, port_offset: int = 0) -> None:
+def run_all_services(host: str, port_offset: int = 0, log_level: str = "info") -> None:
     """Run all OpenStack services on their standard ports."""
     processes = []
 
@@ -127,12 +156,13 @@ def run_all_services(host: str, port_offset: int = 0) -> None:
     print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
     print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
     print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
+    print(f"\nLog level: {log_level}")
     print("\nPress Ctrl+C to stop all services.\n")
 
     for service, port in ports.items():
         p = multiprocessing.Process(
             target=run_service,
-            args=(service, host, port),
+            args=(service, host, port, log_level),
         )
         p.start()
         processes.append(p)
@@ -204,8 +234,18 @@ def main() -> None:
         action="store_true",
         help="List available built-in presets and exit",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Set the logging level (default: info)",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging first and set environment variable for child processes
+    configure_logging(args.log_level)
+    os.environ["EMULATOR_LOG_LEVEL"] = args.log_level
 
     # Handle --list-presets
     if args.list_presets:
@@ -219,10 +259,10 @@ def main() -> None:
     if args.service == "all":
         if args.port:
             print("Warning: --port is ignored when running all services")
-        run_all_services(args.host, args.port_offset)
+        run_all_services(args.host, args.port_offset, args.log_level)
     else:
         port = args.port or SERVICE_PORTS[args.service]
-        run_service(args.service, args.host, port)
+        run_service(args.service, args.host, port, args.log_level)
 
 
 if __name__ == "__main__":

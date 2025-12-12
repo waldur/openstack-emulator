@@ -63,6 +63,12 @@ class VolumeCreateRequest(BaseModel):
     volume_type: str | None = None
 
 
+class VolumeTypeCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    is_public: bool = True
+
+
 class NetworkCreateRequest(BaseModel):
     name: str
     admin_state_up: bool = True
@@ -2362,6 +2368,55 @@ def render_snapshots_table(
     return wrap_table_with_pagination(table_html, "snapshots-table", len(snapshots))
 
 
+def render_volume_types_table(volume_types: list, authenticated: bool) -> str:
+    """Render the volume types table HTML."""
+    if not volume_types:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO VOLUME TYPES FOUND ]</div>'
+
+    rows = ""
+    for vt in volume_types:
+        public_badge = "Public" if vt.is_public else "Private"
+        public_class = (
+            "bg-green-100 text-green-800" if vt.is_public else "bg-yellow-100 text-yellow-800"
+        )
+
+        delete_btn = (
+            f"""
+                <button class="action-btn delete" onclick="deleteResource('volume_types', '{vt.id}', '{vt.name}')" title="Delete">Delete</button>
+            """
+            if authenticated
+            else ""
+        )
+
+        rows += f"""
+        <tr>
+            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{vt.name}</td>
+            <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis;" title="{vt.id}">{vt.id[:8]}...</td>
+            <td><span class="px-2 py-1 text-xs rounded {public_class}">{public_badge}</span></td>
+            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{vt.description or "—"}</td>
+            <td class="text-sm text-[#6b7280]">{len(vt.extra_specs)} specs</td>
+            <td>{delete_btn}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table class="min-w-full">
+        <thead class="border-b border-[#e5e7eb]">
+            <tr class="text-left">
+                <th class="px-4 py-2 font-semibold text-[#374151]">Name</th>
+                <th class="px-4 py-2 font-semibold text-[#374151]">ID</th>
+                <th class="px-4 py-2 font-semibold text-[#374151]">Visibility</th>
+                <th class="px-4 py-2 font-semibold text-[#374151]">Description</th>
+                <th class="px-4 py-2 font-semibold text-[#374151]">Extra Specs</th>
+                {"<th class='px-4 py-2 font-semibold text-[#374151]'>Actions</th>" if authenticated else ""}
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "volume-types-table", len(volume_types))
+
+
 def render_load_balancers_table(
     load_balancers: list, authenticated: bool, project_map: dict[str, str] | None = None
 ) -> str:
@@ -3434,6 +3489,37 @@ def render_create_modals(
         </div>
     </div>
 
+    <!-- Create Volume Type Modal -->
+    <div id="create-volume-type-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Volume Type</h3>
+                <button class="modal-close" onclick="closeModal('create-volume-type-modal')">&times;</button>
+            </div>
+            <div class="form-error" style="display: none;"></div>
+            <form id="create-volume-type-form">
+                <div class="form-group">
+                    <label for="volume-type-name">Name *</label>
+                    <input type="text" id="volume-type-name" name="name" required maxlength="255" placeholder="Enter volume type name">
+                </div>
+                <div class="form-group">
+                    <label for="volume-type-description">Description</label>
+                    <textarea id="volume-type-description" name="description" placeholder="Enter description (optional)" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="volume-type-is-public" name="is_public" checked>
+                        Public (visible to all projects)
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-volume-type-modal')">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="createResource('volume_types', 'create-volume-type-form', 'create-volume-type-modal')">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Create Load Balancer Modal -->
     <div id="create-loadbalancer-modal" class="modal">
         <div class="modal-content">
@@ -4018,6 +4104,16 @@ async def status_page(
                         </div>
                         {render_snapshots_table(snapshots, authenticated, project_map)}
                     </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Volume Types
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(volume_types)}</span>
+                            </h3>
+                            {create_btn('create-volume-type-modal', '+ NEW')}
+                        </div>
+                        {render_volume_types_table(volume_types, authenticated)}
+                    </div>
                 </div>
 
                 <!-- Network Tab -->
@@ -4406,6 +4502,7 @@ async def api_status(request: Request) -> dict:
             "flavors": len(db.list_flavors()),
             "keypairs": len(db._keypairs),
             "snapshots": len(db.list_snapshots()),
+            "volume_types": len(db.list_volume_types()),
             "load_balancers": len(db.list_load_balancers()),
             "listeners": len(db.list_listeners()),
             "pools": len(db.list_pools()),
@@ -4421,38 +4518,67 @@ async def api_status(request: Request) -> dict:
 
 @router.post("/api/login")
 async def api_login(request: LoginRequest) -> JSONResponse:
-    """Login and create a session token."""
-    # Find the user
-    user = db.get_user_by_name(request.username)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+    """Login and create a session token via Keystone."""
+    try:
+        # Authenticate with Keystone using password
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            auth_request = {
+                "auth": {
+                    "identity": {
+                        "methods": ["password"],
+                        "password": {
+                            "user": {
+                                "name": request.username,
+                                "password": request.password,
+                                "domain": {"name": "Default"},
+                            }
+                        },
+                    },
+                    "scope": {
+                        "project": {
+                            "name": request.project_name or "admin",
+                            "domain": {"name": "Default"},
+                        }
+                    },
+                }
+            }
 
-    # Find the project (optional)
-    project = None
-    if request.project_name:
-        project = db.get_project_by_name(request.project_name)
-        if not project:
-            raise HTTPException(status_code=401, detail="Project not found")
-    else:
-        project = db.get_project_by_name("admin")
+            response = await client.post("http://localhost:5000/v3/auth/tokens", json=auth_request)
 
-    # Create a token using the database
-    token = db.create_token(
-        user_name=user.name,
-        project_name=project.name if project else "admin",
-        domain_id=user.domain_id,
-    )
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        # Extract token from response
+        token_id = response.headers.get("X-Subject-Token")
+        token_data = response.json()
+
+        if not token_id:
+            raise HTTPException(status_code=500, detail="Authentication failed")
+
+        # Extract user and project info from token response
+        token_info = token_data.get("token", {})
+        user_info = token_info.get("user", {})
+        project_info = token_info.get("project", {})
+
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Authentication error")
 
     response = JSONResponse(
         content={
-            "token": token.id,
-            "user": {"id": user.id, "name": user.name},
-            "project": {"id": project.id, "name": project.name} if project else None,
+            "token": token_id,
+            "user": {"id": user_info.get("id"), "name": user_info.get("name")},
+            "project": (
+                {"id": project_info.get("id"), "name": project_info.get("name")}
+                if project_info
+                else None
+            ),
         }
     )
     response.set_cookie(
         key="auth_token",
-        value=token.id,
+        value=token_id,
         httponly=True,
         max_age=86400,  # 24 hours
         samesite="lax",
@@ -5083,6 +5209,44 @@ async def api_delete_snapshot(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     return {"message": "Snapshot deleted"}
+
+
+# =============================================================================
+# Management API - Volume Types
+# =============================================================================
+
+
+@router.post("/api/volume_types")
+async def api_create_volume_type(
+    request: VolumeTypeCreateRequest,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Create a new volume type."""
+    user = require_auth(auth_token)
+
+    # Create volume type using database method
+    volume_type = db.create_volume_type(
+        name=request.name,
+        description=request.description or "",
+        is_public=request.is_public,
+        extra_specs={},  # Can be extended later
+    )
+
+    return {"message": f"Volume type '{volume_type.name}' created", "id": volume_type.id}
+
+
+@router.delete("/api/volume_types/{volume_type_id}")
+async def api_delete_volume_type(
+    volume_type_id: str,
+    auth_token: str | None = Cookie(default=None),
+) -> dict:
+    """Delete a volume type."""
+    require_auth(auth_token)
+
+    if not db.delete_volume_type(volume_type_id):
+        raise HTTPException(status_code=404, detail="Volume type not found")
+
+    return {"message": "Volume type deleted"}
 
 
 # =============================================================================

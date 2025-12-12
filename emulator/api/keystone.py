@@ -1,5 +1,6 @@
 """Keystone Identity API v3 endpoints for OpenStack emulator."""
 
+import json
 import logging
 from typing import Any
 
@@ -326,7 +327,9 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     logger.info("Token created successfully: %s", token.id)
     logger.debug("Token will be added to database and available for validation")
 
-    return token.to_dict()
+    token_response = token.to_dict()
+    logger.debug("Token response: %s", json.dumps(token_response, indent=2))
+    return token_response
 
 
 @router.get("/v3/auth/tokens")
@@ -561,11 +564,18 @@ async def list_users(
 ) -> dict[str, Any]:
     """List users."""
     validate_token_header(x_auth_token)
+    if name:
+        logger.debug("Searching for user with name: %s", name)
     users = db.list_users(domain_id=domain_id, enabled=enabled, name=name)
-    return {
+    logger.debug("Found %d users matching criteria", len(users))
+
+    response_data = {
         "users": [u.to_dict() for u in users],
         "links": {"self": "/v3/users", "previous": None, "next": None},
     }
+
+    logger.debug("Users response: %s", json.dumps(response_data, indent=2))
+    return response_data
 
 
 @router.post("/v3/users", status_code=201)
@@ -688,11 +698,18 @@ async def list_roles(
 ) -> dict[str, Any]:
     """List roles."""
     validate_token_header(x_auth_token)
+    if name:
+        logger.debug("Searching for role with name: %s", name)
     roles = db.list_roles(domain_id=domain_id, name=name)
-    return {
+    logger.debug("Found %d roles matching criteria", len(roles))
+
+    response_data = {
         "roles": [r.to_dict() for r in roles],
         "links": {"self": "/v3/roles", "previous": None, "next": None},
     }
+
+    logger.debug("Roles response: %s", json.dumps(response_data, indent=2))
+    return response_data
 
 
 @router.post("/v3/roles", status_code=201)

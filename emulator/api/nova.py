@@ -870,22 +870,9 @@ async def get_hypervisor_statistics(
     """Get hypervisor statistics."""
     get_token_or_raise(x_auth_token)
 
-    return {
-        "hypervisor_statistics": {
-            "count": 1,
-            "vcpus": 32,
-            "vcpus_used": 0,
-            "memory_mb": 65536,
-            "memory_mb_used": 0,
-            "local_gb": 1000,
-            "local_gb_used": 0,
-            "free_ram_mb": 65536,
-            "free_disk_gb": 1000,
-            "current_workload": 0,
-            "running_vms": 0,
-            "disk_available_least": 1000,
-        }
-    }
+    # Get dynamic statistics from database
+    stats = db.get_hypervisor_statistics()
+    return {"hypervisor_statistics": stats}
 
 
 # ==================== Server Groups ====================
