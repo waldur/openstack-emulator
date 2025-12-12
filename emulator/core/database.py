@@ -827,7 +827,111 @@ class Database:
                     server.updated = datetime.utcnow()
                     return True
 
+            elif action_lower == "confirmresize":
+                if server.status == ServerStatus.VERIFY_RESIZE:
+                    # Restore to pre-resize status (ACTIVE or SHUTOFF)
+                    if server.pre_resize_status == ServerStatus.SHUTOFF:
+                        server.status = ServerStatus.SHUTOFF
+                        server.power_state = PowerState.SHUTDOWN
+                    else:
+                        server.status = ServerStatus.ACTIVE
+                        server.power_state = PowerState.RUNNING
+                    # Clear resize tracking fields
+                    server.original_flavor_id = None
+                    server.pre_resize_status = None
+                    server.updated = datetime.utcnow()
+                    return True
+
+            elif action_lower == "revertresize":
+                if server.status == ServerStatus.VERIFY_RESIZE:
+                    # Revert to original flavor
+                    if server.original_flavor_id:
+                        server.flavor_id = server.original_flavor_id
+                    # Restore to pre-resize status (ACTIVE or SHUTOFF)
+                    if server.pre_resize_status == ServerStatus.SHUTOFF:
+                        server.status = ServerStatus.SHUTOFF
+                        server.power_state = PowerState.SHUTDOWN
+                    else:
+                        server.status = ServerStatus.ACTIVE
+                        server.power_state = PowerState.RUNNING
+                    # Clear resize tracking fields
+                    server.original_flavor_id = None
+                    server.pre_resize_status = None
+                    server.updated = datetime.utcnow()
+                    return True
+
             return False
+
+    def server_resize(self, server_id: str, flavor_id: str) -> bool:
+        """Resize a server to a new flavor.
+
+        Transitions: ACTIVE/SHUTOFF -> RESIZE -> VERIFY_RESIZE
+        In the emulator, we skip RESIZE and go directly to VERIFY_RESIZE.
+        """
+        with self._lock:
+            server = self._servers.get(server_id)
+            if not server:
+                return False
+
+            # Can only resize from ACTIVE or SHUTOFF
+            if server.status not in [ServerStatus.ACTIVE, ServerStatus.SHUTOFF]:
+                return False
+
+            # Validate the new flavor exists
+            if flavor_id not in self._flavors:
+                return False
+
+            # Store original flavor and status for potential revert
+            server.original_flavor_id = server.flavor_id
+            server.pre_resize_status = server.status
+
+            # Update to new flavor
+            server.flavor_id = flavor_id
+
+            # Transition to VERIFY_RESIZE (skipping RESIZE state for simplicity)
+            server.status = ServerStatus.VERIFY_RESIZE
+            server.power_state = PowerState.SHUTDOWN
+            server.updated = datetime.utcnow()
+            return True
+
+    def create_server_snapshot(
+        self,
+        server_id: str,
+        name: str,
+        metadata: dict[str, str] | None = None,
+    ) -> GlanceImage | None:
+        """Create a snapshot image from a server.
+
+        Returns the created GlanceImage or None if server not found.
+        """
+        with self._lock:
+            server = self._servers.get(server_id)
+            if not server:
+                return None
+
+            # Create a new Glance image as a snapshot
+            image = GlanceImage(
+                id=str(uuid4()),
+                name=name,
+                status=ImageStatus.ACTIVE,  # Immediately active in emulator
+                visibility=ImageVisibility.PRIVATE,
+                protected=False,
+                owner=server.tenant_id,
+                min_disk=0,
+                min_ram=0,
+                container_format=ContainerFormat.BARE,
+                disk_format=DiskFormat.QCOW2,
+                size=1073741824,  # Fake 1GB size
+                properties={
+                    "image_type": "snapshot",
+                    "instance_uuid": server_id,
+                    "base_image_ref": server.image_id,
+                    **(metadata or {}),
+                },
+            )
+            self._glance_images[image.id] = image
+            self._image_members[image.id] = []
+            return image
 
     # Flavor operations
     def get_flavor(self, flavor_id: str) -> Flavor | None:

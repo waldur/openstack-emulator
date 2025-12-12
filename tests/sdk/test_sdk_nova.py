@@ -214,3 +214,195 @@ class TestNovaAvailabilityZones:
         # Should have nova zone
         zone_names = [z.name for z in zones]
         assert "nova" in zone_names
+
+
+class TestNovaServerActions:
+    """Test Nova server action operations via SDK."""
+
+    def _create_test_server(self, conn: Connection, name: str = "test-action-server") -> object:
+        """Helper to create a test server."""
+        flavor = conn.compute.find_flavor("m1.tiny")
+        images = list(conn.compute.images())
+        image = images[0]
+        server = conn.compute.create_server(
+            name=name,
+            flavor_id=flavor.id,
+            image_id=image.id,
+        )
+        # Wait for the server to become ACTIVE
+        server = conn.compute.wait_for_server(server, status="ACTIVE", wait=30)
+        return server
+
+    def test_server_stop_and_start(self, openstack_connection: Connection) -> None:
+        """Test stopping and starting a server."""
+        server = self._create_test_server(openstack_connection, "test-stop-start")
+
+        # Stop the server
+        openstack_connection.compute.stop_server(server)
+        server = openstack_connection.compute.wait_for_server(server, status="SHUTOFF", wait=30)
+        assert server.status == "SHUTOFF"
+
+        # Start the server
+        openstack_connection.compute.start_server(server)
+        server = openstack_connection.compute.wait_for_server(server, status="ACTIVE", wait=30)
+        assert server.status == "ACTIVE"
+
+    def test_server_reboot(self, openstack_connection: Connection) -> None:
+        """Test rebooting a server."""
+        server = self._create_test_server(openstack_connection, "test-reboot")
+
+        # Reboot the server (soft reboot)
+        openstack_connection.compute.reboot_server(server, reboot_type="SOFT")
+        server = openstack_connection.compute.wait_for_server(server, status="ACTIVE", wait=30)
+        assert server.status == "ACTIVE"
+
+    def test_server_resize_and_confirm(self, openstack_connection: Connection) -> None:
+        """Test resizing a server and confirming the resize."""
+        server = self._create_test_server(openstack_connection, "test-resize-confirm")
+
+        # Get original flavor
+        original_flavor = openstack_connection.compute.find_flavor("m1.tiny")
+        assert server.flavor["id"] == original_flavor.id
+
+        # Get a different flavor to resize to
+        new_flavor = openstack_connection.compute.find_flavor("m1.small")
+        assert new_flavor is not None
+        assert new_flavor.id != original_flavor.id
+
+        # Resize the server
+        openstack_connection.compute.resize_server(server, new_flavor.id)
+
+        # Wait for VERIFY_RESIZE status
+        server = openstack_connection.compute.wait_for_server(
+            server, status="VERIFY_RESIZE", wait=30
+        )
+        assert server.status == "VERIFY_RESIZE"
+
+        # Confirm the resize
+        openstack_connection.compute.confirm_server_resize(server)
+
+        # Wait for ACTIVE status after confirm
+        server = openstack_connection.compute.wait_for_server(server, status="ACTIVE", wait=30)
+        assert server.status == "ACTIVE"
+
+        # Verify the flavor changed
+        server = openstack_connection.compute.get_server(server.id)
+        assert server.flavor["id"] == new_flavor.id
+
+    def test_server_resize_and_revert(self, openstack_connection: Connection) -> None:
+        """Test resizing a server and reverting the resize."""
+        server = self._create_test_server(openstack_connection, "test-resize-revert")
+
+        # Get original flavor
+        original_flavor = openstack_connection.compute.find_flavor("m1.tiny")
+        assert server.flavor["id"] == original_flavor.id
+
+        # Get a different flavor to resize to
+        new_flavor = openstack_connection.compute.find_flavor("m1.small")
+        assert new_flavor is not None
+
+        # Resize the server
+        openstack_connection.compute.resize_server(server, new_flavor.id)
+
+        # Wait for VERIFY_RESIZE status
+        server = openstack_connection.compute.wait_for_server(
+            server, status="VERIFY_RESIZE", wait=30
+        )
+        assert server.status == "VERIFY_RESIZE"
+
+        # Revert the resize
+        openstack_connection.compute.revert_server_resize(server)
+
+        # Wait for ACTIVE status after revert
+        server = openstack_connection.compute.wait_for_server(server, status="ACTIVE", wait=30)
+        assert server.status == "ACTIVE"
+
+        # Verify the flavor is back to original
+        server = openstack_connection.compute.get_server(server.id)
+        assert server.flavor["id"] == original_flavor.id
+
+    def test_server_resize_from_shutoff(self, openstack_connection: Connection) -> None:
+        """Test resizing a server that is in SHUTOFF state."""
+        server = self._create_test_server(openstack_connection, "test-resize-shutoff")
+
+        # Stop the server first
+        openstack_connection.compute.stop_server(server)
+        server = openstack_connection.compute.wait_for_server(server, status="SHUTOFF", wait=30)
+        assert server.status == "SHUTOFF"
+
+        # Get a different flavor to resize to
+        new_flavor = openstack_connection.compute.find_flavor("m1.small")
+
+        # Resize the server
+        openstack_connection.compute.resize_server(server, new_flavor.id)
+
+        # Wait for VERIFY_RESIZE status
+        server = openstack_connection.compute.wait_for_server(
+            server, status="VERIFY_RESIZE", wait=30
+        )
+        assert server.status == "VERIFY_RESIZE"
+
+        # Confirm the resize
+        openstack_connection.compute.confirm_server_resize(server)
+
+        # After confirm, server should go back to SHUTOFF (its pre-resize state)
+        server = openstack_connection.compute.wait_for_server(server, status="SHUTOFF", wait=30)
+        assert server.status == "SHUTOFF"
+
+    def test_create_server_image(self, openstack_connection: Connection) -> None:
+        """Test creating a snapshot image from a server."""
+        server = self._create_test_server(openstack_connection, "test-create-image")
+
+        # Create an image from the server
+        image_name = "test-server-snapshot"
+        metadata = {"description": "Test snapshot", "created_by": "sdk_test"}
+
+        # Use the compute proxy to create the image
+        image_id = openstack_connection.compute.create_server_image(
+            server, image_name, metadata=metadata
+        )
+        assert image_id is not None
+
+        # Verify the image was created in Glance
+        image = openstack_connection.image.get_image(image_id)
+        assert image is not None
+        assert image.name == image_name
+        assert image.status == "active"
+
+        # Check image properties (stored in properties dict)
+        assert image.properties.get("image_type") == "snapshot"
+        # instance_uuid is a top-level attribute, not in properties
+        assert image.instance_uuid == server.id
+
+    def test_create_server_image_with_metadata(self, openstack_connection: Connection) -> None:
+        """Test creating a snapshot image with custom metadata."""
+        server = self._create_test_server(openstack_connection, "test-image-metadata")
+
+        # Create an image with custom metadata
+        image_name = "test-snapshot-with-metadata"
+        metadata = {
+            "backup_type": "daily",
+            "retention_days": "7",
+        }
+
+        image_id = openstack_connection.compute.create_server_image(
+            server, image_name, metadata=metadata
+        )
+        assert image_id is not None
+
+        # Verify the metadata was applied (in properties dict)
+        image = openstack_connection.image.get_image(image_id)
+        assert image is not None
+        assert image.properties.get("backup_type") == "daily"
+        assert image.properties.get("retention_days") == "7"
+
+    def test_get_server_console_output(self, openstack_connection: Connection) -> None:
+        """Test getting console output from a server."""
+        server = self._create_test_server(openstack_connection, "test-console-output")
+
+        # Get console output
+        output = openstack_connection.compute.get_server_console_output(server)
+        assert output is not None
+        # The emulator returns a stub message
+        assert isinstance(output, dict)
+        assert "output" in output

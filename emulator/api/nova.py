@@ -432,6 +432,44 @@ async def server_action(
             )
         return Response(status_code=202)
 
+    elif "resize" in body:
+        resize_data = body["resize"]
+        flavor_ref = resize_data.get("flavorRef")
+        if not flavor_ref:
+            raise HTTPException(status_code=400, detail="flavorRef is required for resize")
+        # Validate flavor exists
+        flavor = db.get_flavor(flavor_ref)
+        if not flavor:
+            raise HTTPException(status_code=400, detail=f"Flavor {flavor_ref} not found")
+        if not db.server_resize(server_id, flavor_ref):
+            raise HTTPException(status_code=409, detail="Cannot resize server in current state")
+        return Response(status_code=202)
+
+    elif "confirmResize" in body:
+        if not db.server_action(server_id, "confirmResize"):
+            raise HTTPException(status_code=409, detail="Cannot confirm resize in current state")
+        return Response(status_code=204)
+
+    elif "revertResize" in body:
+        if not db.server_action(server_id, "revertResize"):
+            raise HTTPException(status_code=409, detail="Cannot revert resize in current state")
+        return Response(status_code=202)
+
+    elif "createImage" in body:
+        create_image_data = body["createImage"]
+        image_name = create_image_data.get("name")
+        if not image_name:
+            raise HTTPException(status_code=400, detail="Image name is required")
+        metadata = create_image_data.get("metadata", {})
+        image = db.create_server_snapshot(server_id, image_name, metadata)
+        if not image:
+            raise HTTPException(status_code=404, detail="Server not found")
+        # Return the image ID in the Location header (OpenStack convention)
+        return Response(
+            status_code=202,
+            headers={"Location": f"/v2/images/{image.id}"},
+        )
+
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {list(body.keys())}")
 
