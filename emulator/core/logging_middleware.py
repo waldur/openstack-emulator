@@ -13,8 +13,15 @@ from starlette.background import BackgroundTask
 logger = logging.getLogger(__name__)
 
 
-def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
-                        status_code: int, headers: dict, method: str, url: str):
+def log_request_response(
+    service_name: str,
+    req_body: bytes,
+    res_body: bytes,
+    status_code: int,
+    headers: dict,
+    method: str,
+    url: str,
+):
     """Log request and response details using background task."""
     try:
         # Skip verbose logging for UI service (HTML responses are too large)
@@ -22,8 +29,11 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
             # Only log non-HTML responses for status service
             content_type = headers.get("content-type", "")
             if content_type.startswith("text/html"):
-                logger.debug("%s RESPONSE: HTML content (%d bytes) - skipped for brevity",
-                           service_name.upper(), len(res_body))
+                logger.debug(
+                    "%s RESPONSE: HTML content (%d bytes) - skipped for brevity",
+                    service_name.upper(),
+                    len(res_body),
+                )
                 return
 
         # Log request
@@ -32,7 +42,9 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
             logger.debug("%s REQUEST BODY: %s", service_name.upper(), req_str)
             try:
                 req_json = json.loads(req_str)
-                logger.debug("%s REQUEST JSON: %s", service_name.upper(), json.dumps(req_json, indent=2))
+                logger.debug(
+                    "%s REQUEST JSON: %s", service_name.upper(), json.dumps(req_json, indent=2)
+                )
             except json.JSONDecodeError:
                 pass
 
@@ -42,7 +54,9 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
             logger.debug("%s RESPONSE BODY: %s", service_name.upper(), res_str)
             try:
                 res_json = json.loads(res_str)
-                logger.debug("%s RESPONSE JSON: %s", service_name.upper(), json.dumps(res_json, indent=2))
+                logger.debug(
+                    "%s RESPONSE JSON: %s", service_name.upper(), json.dumps(res_json, indent=2)
+                )
             except json.JSONDecodeError:
                 pass
 
@@ -63,7 +77,12 @@ async def debug_logging_middleware(request: Request, call_next):
         return await call_next(request)
 
     # Get service name from app title or default
-    service_name = getattr(request.app, 'title', 'unknown').replace('OpenStack ', '').replace(' Emulator', '').lower()
+    service_name = (
+        getattr(request.app, "title", "unknown")
+        .replace("OpenStack ", "")
+        .replace(" Emulator", "")
+        .lower()
+    )
 
     # Log request details
     logger.debug("%s REQUEST: %s %s", service_name.upper(), request.method, request.url)
@@ -83,14 +102,18 @@ async def debug_logging_middleware(request: Request, call_next):
     chunks = []
     async for chunk in response.body_iterator:
         chunks.append(chunk)
-    res_body = b''.join(chunks)
+    res_body = b"".join(chunks)
 
     # Create background task to log bodies
     task = BackgroundTask(
         log_request_response,
-        service_name, req_body, res_body,
-        response.status_code, dict(response.headers),
-        request.method, str(request.url)
+        service_name,
+        req_body,
+        res_body,
+        response.status_code,
+        dict(response.headers),
+        request.method,
+        str(request.url),
     )
 
     # Return new response with captured body and logging task
@@ -99,7 +122,7 @@ async def debug_logging_middleware(request: Request, call_next):
         status_code=response.status_code,
         headers=dict(response.headers),
         media_type=response.headers.get("content-type"),
-        background=task
+        background=task,
     )
 
 

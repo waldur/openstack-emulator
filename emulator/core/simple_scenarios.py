@@ -21,6 +21,13 @@ class FailureResult:
     status_code: int = 500
     error_message: str = "Internal server error"
     delay_seconds: float = 0.0
+    scenario_id: str | None = None
+    failure_type: str | None = None
+
+    @property
+    def message(self) -> str:
+        """Alias for error_message for backwards compatibility."""
+        return self.error_message
 
 
 class SimpleScenarioManager:
@@ -60,13 +67,13 @@ class SimpleScenarioManager:
             if config_override:
                 # Create a copy with overrides (simplified for emulator)
                 scenario.failure_config.failure_probability = config_override.get(
-                    'failure_probability', scenario.failure_config.failure_probability
+                    "failure_probability", scenario.failure_config.failure_probability
                 )
                 scenario.failure_config.error_code = config_override.get(
-                    'error_code', scenario.failure_config.error_code
+                    "error_code", scenario.failure_config.error_code
                 )
                 scenario.failure_config.error_message = config_override.get(
-                    'error_message', scenario.failure_config.error_message
+                    "error_message", scenario.failure_config.error_message
                 )
 
             scenario.enabled_at = datetime.utcnow()
@@ -128,9 +135,11 @@ class SimpleScenarioManager:
                 # Check if this scenario should trigger
                 if random.random() < scenario.failure_config.failure_probability:
                     # Update statistics
-                    scenario.stats.total_injections += 1
+                    scenario.stats.times_triggered += 1
+                    scenario.stats.failures_injected += 1
                     scenario.stats.last_triggered = datetime.utcnow()
-                    self._global_stats.total_injections += 1
+                    self._global_stats.times_triggered += 1
+                    self._global_stats.failures_injected += 1
                     self._global_stats.last_triggered = datetime.utcnow()
 
                     return FailureResult(
@@ -138,6 +147,8 @@ class SimpleScenarioManager:
                         status_code=scenario.failure_config.error_code,
                         error_message=scenario.failure_config.error_message,
                         delay_seconds=0.0,  # Can be enhanced later
+                        scenario_id=scenario.id,
+                        failure_type=scenario.failure_type.value if scenario.failure_type else None,
                     )
 
             return FailureResult(should_fail=False)
@@ -148,17 +159,27 @@ class SimpleScenarioManager:
             scenario_stats = {}
             for scenario_id, scenario in self._enabled_scenarios.items():
                 scenario_stats[scenario_id] = {
-                    'total_injections': scenario.stats.total_injections,
-                    'last_triggered': scenario.stats.last_triggered.isoformat() if scenario.stats.last_triggered else None,
+                    "times_triggered": scenario.stats.times_triggered,
+                    "failures_injected": scenario.stats.failures_injected,
+                    "last_triggered": (
+                        scenario.stats.last_triggered.isoformat()
+                        if scenario.stats.last_triggered
+                        else None
+                    ),
                 }
 
             return {
-                'global': {
-                    'total_injections': self._global_stats.total_injections,
-                    'last_triggered': self._global_stats.last_triggered.isoformat() if self._global_stats.last_triggered else None,
+                "global": {
+                    "times_triggered": self._global_stats.times_triggered,
+                    "failures_injected": self._global_stats.failures_injected,
+                    "last_triggered": (
+                        self._global_stats.last_triggered.isoformat()
+                        if self._global_stats.last_triggered
+                        else None
+                    ),
                 },
-                'scenarios': scenario_stats,
-                'enabled_count': len(self._enabled_scenarios),
+                "scenarios": scenario_stats,
+                "enabled_count": len(self._enabled_scenarios),
             }
 
 

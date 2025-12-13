@@ -65,10 +65,14 @@ class EmulatorServers:
         """Start all emulator services on dynamic ports."""
         # Get unified service apps
         from emulator.api.unified_app import create_all_service_apps
+
         service_apps = create_all_service_apps()
 
         for service, app in service_apps.items():
-            if service not in ["status", "scenarios"]:  # Only start OpenStack services for SDK tests
+            if service not in [
+                "status",
+                "scenarios",
+            ]:  # Only start OpenStack services for SDK tests
                 port = find_free_port()
                 self.ports[service] = port
                 server = UvicornServer(app, self.host, port)
@@ -114,11 +118,12 @@ def reset_database() -> Generator[None, None, None]:
     db._keypairs.clear()
     # Reinitialize defaults
     db._init_default_flavors()
-    
+
     # Reset scenarios to prevent random failures during tests
     from emulator.core.simple_scenarios import simple_scenario_manager
+
     simple_scenario_manager.reset()
-    
+
     yield
 
 

@@ -30,6 +30,7 @@ def validate_token_simple(auth_token: str | None, service_name: str = "unknown")
 
     # Use shared database for token validation
     from emulator.core.database import db
+
     token = db.validate_token(auth_token)
     if not token:
         logger.debug("%s: Token validation failed in database", service_name)
@@ -38,10 +39,14 @@ def validate_token_simple(auth_token: str | None, service_name: str = "unknown")
     logger.debug("%s: Token validation succeeded", service_name)
 
     # Return a simplified object with commonly needed fields
-    return type('TokenInfo', (), {
-        'project_id': token.project_id,
-        'project_name': token.project_name,
-        'user_id': token.user_id,
-        'user_name': token.user_name,
-        'raw_token': token  # Keep original for any other needs
-    })()
+    return type(
+        "TokenInfo",
+        (),
+        {
+            "project_id": token.project_id,
+            "project_name": token.project_name,
+            "user_id": token.user_id,
+            "user_name": token.user_name,
+            "raw_token": token,  # Keep original for any other needs
+        },
+    )()

@@ -35,11 +35,7 @@ def client():
 def auth_token(client):
     """Get an authentication token by creating it directly in the database."""
     # Create token directly in database for simplified testing
-    token = db.create_token(
-        user_name="admin",
-        project_name="admin", 
-        domain_id="default"
-    )
+    token = db.create_token(user_name="admin", project_name="admin", domain_id="default")
     return token.id
 
 

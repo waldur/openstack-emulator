@@ -41,11 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_service_app(
-    service_name: str,
-    router,
-    api_version: str,
-    description: str,
-    include_scenarios: bool = True
+    service_name: str, router, api_version: str, description: str, include_scenarios: bool = True
 ) -> FastAPI:
     """Create a FastAPI app for a specific OpenStack service.
 
@@ -69,6 +65,7 @@ def create_service_app(
 
     # Add CORS middleware for development
     from fastapi.middleware.cors import CORSMiddleware
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -227,8 +224,7 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
     for service_name, app in service_apps.items():
         port = ports[service_name]
         task = asyncio.create_task(
-            run_service_on_port(app, host, port, service_name),
-            name=f"{service_name}-{port}"
+            run_service_on_port(app, host, port, service_name), name=f"{service_name}-{port}"
         )
         tasks.append(task)
 
