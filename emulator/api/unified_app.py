@@ -3,26 +3,25 @@
 import asyncio
 import logging
 import os
-import threading
-from typing import Dict, List
+from typing import Dict
+
 import uvicorn
 from fastapi import FastAPI
 
-# Import all service routers
-from emulator.api.keystone import router as keystone_router
-from emulator.api.nova import router as nova_router
 from emulator.api.cinder import router as cinder_router
 from emulator.api.glance import router as glance_router
-from emulator.api.neutron import router as neutron_router
-from emulator.api.octavia import router as octavia_router
-from emulator.api.status_ui import router as status_router
-from emulator.api.scenarios import router as scenarios_router
-from emulator.api.presets import router as presets_router
 
+# Import all service routers
+from emulator.api.keystone import router as keystone_router
+from emulator.api.neutron import router as neutron_router
+from emulator.api.nova import router as nova_router
+from emulator.api.octavia import router as octavia_router
+from emulator.api.scenarios import router as scenarios_router
+from emulator.api.status_ui import router as status_router
 from emulator.core.exceptions import add_openstack_exception_handlers
 from emulator.core.headers import add_openstack_headers_middleware
-from emulator.core.middleware import ScenarioMiddleware
 from emulator.core.logging_middleware import add_debug_logging_middleware
+from emulator.core.middleware import ScenarioMiddleware
 
 # Configure logging
 log_level = os.getenv("EMULATOR_LOG_LEVEL", "info").lower()
@@ -49,14 +48,14 @@ def create_service_app(
     include_scenarios: bool = True
 ) -> FastAPI:
     """Create a FastAPI app for a specific OpenStack service.
-    
+
     Args:
         service_name: Name of the service (keystone, nova, etc.)
         router: The FastAPI router for this service
         api_version: API version string (e.g., "3.14", "2.1")
         description: Service description
         include_scenarios: Whether to include scenario middleware
-        
+
     Returns:
         Configured FastAPI application
     """
@@ -105,7 +104,7 @@ def create_service_app(
 
 def create_all_service_apps() -> Dict[str, FastAPI]:
     """Create all OpenStack service applications.
-    
+
     Returns:
         Dictionary mapping service names to FastAPI apps
     """
@@ -117,28 +116,28 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
             "A lightweight OpenStack Keystone (Identity) API emulator",
         ),
         "nova": create_service_app(
-            "nova", 
+            "nova",
             nova_router,
             "2.19",
             "A lightweight OpenStack Nova (Compute) API emulator",
         ),
         "cinder": create_service_app(
             "cinder",
-            cinder_router, 
+            cinder_router,
             "3.0",
             "A lightweight OpenStack Cinder (Block Storage) API emulator",
         ),
         "glance": create_service_app(
             "glance",
             glance_router,
-            "2.0", 
+            "2.0",
             "A lightweight OpenStack Glance (Image) API emulator",
         ),
         "neutron": create_service_app(
             "neutron",
             neutron_router,
             "2.0",
-            "A lightweight OpenStack Neutron (Networking) API emulator", 
+            "A lightweight OpenStack Neutron (Networking) API emulator",
         ),
         "octavia": create_service_app(
             "octavia",
@@ -149,7 +148,7 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
         "status": create_service_app(
             "status",
             status_router,
-            "1.0", 
+            "1.0",
             "Web interface for viewing OpenStack emulator status",
             include_scenarios=False,
         ),
@@ -178,7 +177,7 @@ SERVICE_PORTS = {
 
 async def run_service_on_port(app: FastAPI, host: str, port: int, service_name: str) -> None:
     """Run a service app on a specific port using uvicorn.
-    
+
     Args:
         app: The FastAPI application
         host: Host to bind to
@@ -193,24 +192,24 @@ async def run_service_on_port(app: FastAPI, host: str, port: int, service_name: 
         access_log=True,
     )
     server = uvicorn.Server(config)
-    
+
     logger.info("Starting %s on %s:%s", service_name, host, port)
     await server.serve()
 
 
 async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) -> None:
     """Run all OpenStack services asynchronously in a single process.
-    
+
     Args:
         host: Host to bind to
         port_offset: Offset to add to all default ports
     """
     # Create all service apps
     service_apps = create_all_service_apps()
-    
+
     # Calculate actual ports with offset
     ports = {service: port + port_offset for service, port in SERVICE_PORTS.items()}
-    
+
     print("\nOpenStack Emulator (Single Process) running:")
     print(f"  - Keystone (Identity):     http://{host}:{ports['keystone']}")
     print(f"  - Nova (Compute):          http://{host}:{ports['nova']}")
@@ -245,7 +244,7 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
 
 def run_all_services(host: str = "0.0.0.0", port_offset: int = 0) -> None:
     """Run all OpenStack services in a single process.
-    
+
     Args:
         host: Host to bind to
         port_offset: Offset to add to all default ports
@@ -258,20 +257,20 @@ def run_all_services(host: str = "0.0.0.0", port_offset: int = 0) -> None:
 
 def run_single_service(service_name: str, host: str = "0.0.0.0", port: int | None = None) -> None:
     """Run a single OpenStack service.
-    
+
     Args:
         service_name: Name of the service to run
-        host: Host to bind to  
+        host: Host to bind to
         port: Port to bind to (uses default if None)
     """
     service_apps = create_all_service_apps()
-    
+
     if service_name not in service_apps:
         raise ValueError(f"Unknown service: {service_name}")
-        
+
     app = service_apps[service_name]
     actual_port = port or SERVICE_PORTS[service_name]
-    
+
     print(f"Starting {service_name} on {host}:{actual_port}")
     uvicorn.run(
         app,

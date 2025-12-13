@@ -6,13 +6,14 @@ Based on StackOverflow solution for proper response body capture.
 import json
 import logging
 import os
+
 from fastapi import FastAPI, Request, Response
 from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 
 
-def log_request_response(service_name: str, req_body: bytes, res_body: bytes, 
+def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
                         status_code: int, headers: dict, method: str, url: str):
     """Log request and response details using background task."""
     try:
@@ -21,10 +22,10 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
             # Only log non-HTML responses for status service
             content_type = headers.get("content-type", "")
             if content_type.startswith("text/html"):
-                logger.debug("%s RESPONSE: HTML content (%d bytes) - skipped for brevity", 
+                logger.debug("%s RESPONSE: HTML content (%d bytes) - skipped for brevity",
                            service_name.upper(), len(res_body))
                 return
-        
+
         # Log request
         if req_body:
             req_str = req_body.decode("utf-8")
@@ -34,7 +35,7 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
                 logger.debug("%s REQUEST JSON: %s", service_name.upper(), json.dumps(req_json, indent=2))
             except json.JSONDecodeError:
                 pass
-        
+
         # Log response
         if res_body:
             res_str = res_body.decode("utf-8")
@@ -44,7 +45,7 @@ def log_request_response(service_name: str, req_body: bytes, res_body: bytes,
                 logger.debug("%s RESPONSE JSON: %s", service_name.upper(), json.dumps(res_json, indent=2))
             except json.JSONDecodeError:
                 pass
-                
+
     except Exception as e:
         logger.error("%s LOGGING ERROR: %s", service_name.upper(), e)
 
@@ -57,41 +58,41 @@ async def debug_logging_middleware(request: Request, call_next):
         or os.getenv("EMULATOR_DEBUG", "").lower() in ("1", "true")
         or os.getenv("EMULATOR_LOG_LEVEL", "").lower() == "debug"
     )
-    
+
     if not debug_enabled:
         return await call_next(request)
-    
+
     # Get service name from app title or default
     service_name = getattr(request.app, 'title', 'unknown').replace('OpenStack ', '').replace(' Emulator', '').lower()
-    
+
     # Log request details
     logger.debug("%s REQUEST: %s %s", service_name.upper(), request.method, request.url)
     logger.debug("%s HEADERS: %s", service_name.upper(), dict(request.headers))
-    
+
     # Get request body
     req_body = await request.body()
-    
+
     # Process request
     response = await call_next(request)
-    
+
     # Log response headers
     logger.debug("%s RESPONSE: %s", service_name.upper(), response.status_code)
     logger.debug("%s RESPONSE HEADERS: %s", service_name.upper(), dict(response.headers))
-    
+
     # Capture response body
     chunks = []
     async for chunk in response.body_iterator:
         chunks.append(chunk)
     res_body = b''.join(chunks)
-    
+
     # Create background task to log bodies
     task = BackgroundTask(
-        log_request_response, 
-        service_name, req_body, res_body, 
-        response.status_code, dict(response.headers), 
+        log_request_response,
+        service_name, req_body, res_body,
+        response.status_code, dict(response.headers),
         request.method, str(request.url)
     )
-    
+
     # Return new response with captured body and logging task
     return Response(
         content=res_body,

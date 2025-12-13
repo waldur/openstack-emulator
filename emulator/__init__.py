@@ -1,11 +1,10 @@
 """OpenStack Emulator - A testing tool for OpenStack API clients."""
 
 import argparse
-import logging
 import os
 import sys
 
-from emulator.api.unified_app import run_all_services, run_single_service, SERVICE_PORTS
+from emulator.api.unified_app import SERVICE_PORTS, run_all_services, run_single_service
 
 __version__ = "0.1.0"
 __all__ = ["main"]

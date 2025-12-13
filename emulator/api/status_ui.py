@@ -13,7 +13,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
-from emulator.core.simple_auth import validate_token_simple
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -21,6 +20,7 @@ from emulator.core.models import (
 from emulator.core.presets import PresetLoader
 from emulator.core.scenario_manager import scenario_manager
 from emulator.core.scenarios import ScenarioCategory
+from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
 
@@ -5205,7 +5205,7 @@ async def api_create_volume_type(
     auth_token: str | None = Cookie(default=None),
 ) -> dict:
     """Create a new volume type."""
-    user = require_auth(auth_token)
+    require_auth(auth_token)
 
     # Create volume type using database method
     volume_type = db.create_volume_type(

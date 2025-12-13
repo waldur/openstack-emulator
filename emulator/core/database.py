@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
-
 from emulator.core.models import (
     AllocationPool,
     CinderQuota,
@@ -74,6 +72,8 @@ from emulator.core.models import (
     VolumeStatus,
     VolumeType,
 )
+
+logger = logging.getLogger(__name__)
 
 # Neutron device owner constants
 DEVICE_OWNER_FLOATINGIP = "network:floatingip"

@@ -1,8 +1,8 @@
 """OpenStack standard HTTP headers middleware."""
 
 import uuid
+
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
 
 
 def add_openstack_headers_middleware(app: FastAPI, service_name: str, api_version: str) -> None:

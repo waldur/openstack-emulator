@@ -2,13 +2,11 @@
 
 import random
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
 
 from emulator.core.scenarios import (
-    FailureConfig,
     Scenario,
     ScenarioStats,
     get_builtin_scenarios,
@@ -28,7 +26,7 @@ class FailureResult:
 class SimpleScenarioManager:
     """
     Simplified scenario manager for single-process emulator.
-    
+
     Uses direct in-memory state sharing instead of file-based synchronization.
     """
 
@@ -37,27 +35,27 @@ class SimpleScenarioManager:
         self._lock = threading.RLock()
         self._enabled_scenarios: Dict[str, Scenario] = {}
         self._global_stats = ScenarioStats()
-        
+
         # Load built-in scenarios
         self._available_scenarios = {s.id: s for s in get_builtin_scenarios()}
 
     def enable_scenario(self, scenario_id: str, config_override: Dict[str, Any] = None) -> bool:
         """
         Enable a scenario by ID.
-        
+
         Args:
             scenario_id: The scenario ID to enable
             config_override: Optional configuration overrides
-            
+
         Returns:
             True if scenario was enabled successfully
         """
         with self._lock:
             if scenario_id not in self._available_scenarios:
                 return False
-                
+
             scenario = self._available_scenarios[scenario_id]
-            
+
             # Apply config overrides if provided
             if config_override:
                 # Create a copy with overrides (simplified for emulator)
@@ -70,7 +68,7 @@ class SimpleScenarioManager:
                 scenario.failure_config.error_message = config_override.get(
                     'error_message', scenario.failure_config.error_message
                 )
-            
+
             scenario.enabled_at = datetime.utcnow()
             self._enabled_scenarios[scenario_id] = scenario
             return True
@@ -78,10 +76,10 @@ class SimpleScenarioManager:
     def disable_scenario(self, scenario_id: str) -> bool:
         """
         Disable a scenario by ID.
-        
+
         Args:
             scenario_id: The scenario ID to disable
-            
+
         Returns:
             True if scenario was disabled
         """
@@ -114,11 +112,11 @@ class SimpleScenarioManager:
     def should_inject_failure(self, service_name: str, endpoint: str = "") -> FailureResult:
         """
         Check if a failure should be injected for a request.
-        
+
         Args:
             service_name: Name of the service (nova, cinder, etc.)
             endpoint: Optional endpoint path
-            
+
         Returns:
             FailureResult indicating if/how the request should fail
         """
@@ -126,7 +124,7 @@ class SimpleScenarioManager:
             for scenario in self._enabled_scenarios.values():
                 if scenario.target_service != service_name:
                     continue
-                    
+
                 # Check if this scenario should trigger
                 if random.random() < scenario.failure_config.failure_probability:
                     # Update statistics
@@ -134,14 +132,14 @@ class SimpleScenarioManager:
                     scenario.stats.last_triggered = datetime.utcnow()
                     self._global_stats.total_injections += 1
                     self._global_stats.last_triggered = datetime.utcnow()
-                    
+
                     return FailureResult(
                         should_fail=True,
                         status_code=scenario.failure_config.error_code,
                         error_message=scenario.failure_config.error_message,
                         delay_seconds=0.0,  # Can be enhanced later
                     )
-            
+
             return FailureResult(should_fail=False)
 
     def get_stats(self) -> Dict[str, Any]:
@@ -153,7 +151,7 @@ class SimpleScenarioManager:
                     'total_injections': scenario.stats.total_injections,
                     'last_triggered': scenario.stats.last_triggered.isoformat() if scenario.stats.last_triggered else None,
                 }
-            
+
             return {
                 'global': {
                     'total_injections': self._global_stats.total_injections,
