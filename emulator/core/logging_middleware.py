@@ -107,7 +107,12 @@ async def debug_logging_middleware(
     streaming_response = cast(StreamingResponse, response)
     chunks: list[bytes] = []
     async for chunk in streaming_response.body_iterator:
-        chunks.append(chunk)
+        if isinstance(chunk, bytes):
+            chunks.append(chunk)
+        elif isinstance(chunk, str):
+            chunks.append(chunk.encode("utf-8"))
+        else:
+            chunks.append(bytes(chunk))
     res_body = b"".join(chunks)
 
     # Create background task to log bodies
