@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app_glance import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
@@ -14,7 +14,8 @@ def reset_database():
     yield
 
 
-client = TestClient(app)
+apps = create_all_service_apps()
+client = TestClient(apps["glance"])
 
 
 class TestHealthCheck:

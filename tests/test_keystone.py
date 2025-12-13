@@ -3,14 +3,15 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
 @pytest.fixture
 def client():
     """Create a test client."""
-    return TestClient(app)
+    apps = create_all_service_apps()
+    return TestClient(apps["keystone"])
 
 
 @pytest.fixture
@@ -26,7 +27,7 @@ def auth_token(client):
                         "user": {
                             "name": "admin",
                             "domain": {"id": "default"},
-                            "password": "secret",
+                            "password": "s4l4dus",
                         }
                     },
                 },
@@ -81,7 +82,7 @@ class TestTokens:
                             "user": {
                                 "name": "admin",
                                 "domain": {"id": "default"},
-                                "password": "secret",
+                                "password": "s4l4dus",
                             }
                         },
                     },

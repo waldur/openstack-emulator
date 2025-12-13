@@ -24,7 +24,7 @@ def find_free_port() -> int:
 class UvicornServer:
     """Uvicorn server running in a background thread."""
 
-    def __init__(self, app: str, host: str, port: int) -> None:
+    def __init__(self, app, host: str, port: int) -> None:
         self.app = app
         self.host = host
         self.port = port
@@ -63,22 +63,17 @@ class EmulatorServers:
 
     def start_all(self) -> None:
         """Start all emulator services on dynamic ports."""
-        # Map service names to their app modules
-        service_apps = {
-            "keystone": "emulator.api.app_keystone:app",
-            "nova": "emulator.api.app_nova:app",
-            "cinder": "emulator.api.app_cinder:app",
-            "glance": "emulator.api.app_glance:app",
-            "neutron": "emulator.api.app_neutron:app",
-            "octavia": "emulator.api.app_octavia:app",
-        }
+        # Get unified service apps
+        from emulator.api.unified_app import create_all_service_apps
+        service_apps = create_all_service_apps()
 
-        for service, app_path in service_apps.items():
-            port = find_free_port()
-            self.ports[service] = port
-            server = UvicornServer(app_path, self.host, port)
-            server.start()
-            self.servers[service] = server
+        for service, app in service_apps.items():
+            if service not in ["status", "scenarios"]:  # Only start OpenStack services for SDK tests
+                port = find_free_port()
+                self.ports[service] = port
+                server = UvicornServer(app, self.host, port)
+                server.start()
+                self.servers[service] = server
 
     def stop_all(self) -> None:
         """Stop all emulator services."""
@@ -119,6 +114,11 @@ def reset_database() -> Generator[None, None, None]:
     db._keypairs.clear()
     # Reinitialize defaults
     db._init_default_flavors()
+    
+    # Reset scenarios to prevent random failures during tests
+    from emulator.core.simple_scenarios import simple_scenario_manager
+    simple_scenario_manager.reset()
+    
     yield
 
 
@@ -139,7 +139,7 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         auth_type="password",
         auth_url=emulator_servers.get_url("keystone") + "/v3",
         username="admin",
-        password="secret",
+        password="s4l4dus",
         project_name="admin",
         project_domain_name="Default",
         user_domain_name="Default",
@@ -155,7 +155,7 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         auth_type="password",
         auth_url=emulator_servers.get_url("keystone") + "/v3",
         username="admin",
-        password="secret",
+        password="s4l4dus",
         project_name="admin",
         project_domain_name="Default",
         user_domain_name="Default",
@@ -164,7 +164,7 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         compute_endpoint_override=emulator_servers.get_url("nova") + "/v2.1",
         identity_endpoint_override=emulator_servers.get_url("keystone") + "/v3",
         image_endpoint_override=emulator_servers.get_url("glance"),
-        network_endpoint_override=emulator_servers.get_url("neutron"),
+        network_endpoint_override=emulator_servers.get_url("neutron") + "/v2.0",
         block_storage_endpoint_override=emulator_servers.get_url("cinder") + f"/v3/{project_id}",
         load_balancer_endpoint_override=emulator_servers.get_url("octavia"),
     )

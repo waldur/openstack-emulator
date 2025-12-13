@@ -2,43 +2,13 @@
 
 import argparse
 import logging
-import multiprocessing
 import os
 import sys
 
-import uvicorn
-
-from emulator.api.app import app
+from emulator.api.unified_app import run_all_services, run_single_service, SERVICE_PORTS
 
 __version__ = "0.1.0"
-__all__ = ["app", "main"]
-
-
-def configure_logging(log_level: str) -> None:
-    """Configure Python logging for the emulator."""
-    # Map string levels to logging levels
-    level_mapping = {
-        "debug": logging.DEBUG,
-        "info": logging.INFO,
-        "warning": logging.WARNING,
-        "error": logging.ERROR,
-    }
-
-    level = level_mapping.get(log_level.lower(), logging.INFO)
-
-    # Configure root logger
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        force=True,  # Override any existing configuration
-    )
-
-    # Set specific loggers to debug level if needed
-    if level == logging.DEBUG:
-        logging.getLogger("emulator").setLevel(logging.DEBUG)
-        logging.getLogger("emulator.core.auth").setLevel(logging.DEBUG)
-        logging.getLogger("emulator.core.database").setLevel(logging.DEBUG)
-        logging.getLogger("emulator.api").setLevel(logging.DEBUG)
+__all__ = ["main"]
 
 
 def load_preset(preset_name: str | None, preset_file: str | None) -> bool:
@@ -97,84 +67,6 @@ def list_presets() -> None:
     for preset in presets:
         print(f"  - {preset['name']}: {preset['description']}")
         print(f"    File: {preset['file']}")
-
-
-# Standard OpenStack service ports
-SERVICE_PORTS = {
-    "keystone": 5000,
-    "nova": 8774,
-    "cinder": 8776,
-    "glance": 9292,
-    "neutron": 9696,
-    "octavia": 9876,
-    "status": 10000,
-    "scenarios": 8999,
-}
-
-SERVICE_APPS = {
-    "keystone": "emulator.api.app_keystone:app",
-    "nova": "emulator.api.app_nova:app",
-    "cinder": "emulator.api.app_cinder:app",
-    "glance": "emulator.api.app_glance:app",
-    "neutron": "emulator.api.app_neutron:app",
-    "octavia": "emulator.api.app_octavia:app",
-    "status": "emulator.api.app_status:app",
-    "scenarios": "emulator.api.app_scenarios:app",
-}
-
-
-def run_service(service: str, host: str, port: int, log_level: str = "info") -> None:
-    """Run a single OpenStack service."""
-    app_path = SERVICE_APPS.get(service)
-    if not app_path:
-        print(f"Unknown service: {service}")
-        sys.exit(1)
-
-    print(f"Starting {service} on {host}:{port}")
-    uvicorn.run(
-        app_path,
-        host=host,
-        port=port,
-        reload=False,
-        log_level=log_level,
-    )
-
-
-def run_all_services(host: str, port_offset: int = 0, log_level: str = "info") -> None:
-    """Run all OpenStack services on their standard ports."""
-    processes = []
-
-    # Calculate actual ports with offset
-    ports = {service: port + port_offset for service, port in SERVICE_PORTS.items()}
-
-    print("\nOpenStack Emulator running:")
-    print(f"  - Keystone (Identity):     http://{host}:{ports['keystone']}")
-    print(f"  - Nova (Compute):          http://{host}:{ports['nova']}")
-    print(f"  - Cinder (Block Storage):  http://{host}:{ports['cinder']}")
-    print(f"  - Glance (Image):          http://{host}:{ports['glance']}")
-    print(f"  - Neutron (Network):       http://{host}:{ports['neutron']}")
-    print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
-    print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
-    print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
-    print(f"\nLog level: {log_level}")
-    print("\nPress Ctrl+C to stop all services.\n")
-
-    for service, port in ports.items():
-        p = multiprocessing.Process(
-            target=run_service,
-            args=(service, host, port, log_level),
-        )
-        p.start()
-        processes.append(p)
-
-    try:
-        for p in processes:
-            p.join()
-    except KeyboardInterrupt:
-        print("\nStopping all services...")
-        for p in processes:
-            p.terminate()
-            p.join()
 
 
 def main() -> None:
@@ -243,8 +135,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Configure logging first and set environment variable for child processes
-    configure_logging(args.log_level)
+    # Configure logging
     os.environ["EMULATOR_LOG_LEVEL"] = args.log_level
 
     # Handle --list-presets
@@ -259,10 +150,10 @@ def main() -> None:
     if args.service == "all":
         if args.port:
             print("Warning: --port is ignored when running all services")
-        run_all_services(args.host, args.port_offset, args.log_level)
+        run_all_services(args.host, args.port_offset)
     else:
         port = args.port or SERVICE_PORTS[args.service]
-        run_service(args.service, args.host, port, args.log_level)
+        run_single_service(args.service, args.host, port)
 
 
 if __name__ == "__main__":

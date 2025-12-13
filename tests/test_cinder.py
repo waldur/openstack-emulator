@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
@@ -27,45 +27,28 @@ def reset_db():
 @pytest.fixture
 def client():
     """Create test client."""
-    return TestClient(app)
+    apps = create_all_service_apps()
+    return TestClient(apps["cinder"])
 
 
 @pytest.fixture
 def auth_token(client):
-    """Get an authentication token."""
-    response = client.post(
-        "/v3/auth/tokens",
-        json={
-            "auth": {
-                "identity": {
-                    "methods": ["password"],
-                    "password": {
-                        "user": {
-                            "name": "admin",
-                            "domain": {"name": "Default"},
-                            "password": "secret",
-                        }
-                    },
-                },
-                "scope": {"project": {"name": "admin", "domain": {"name": "Default"}}},
-            }
-        },
+    """Get an authentication token by creating it directly in the database."""
+    # Create token directly in database for simplified testing
+    token = db.create_token(
+        user_name="admin",
+        project_name="admin", 
+        domain_id="default"
     )
-    assert response.status_code == 200
-    return response.headers["X-Subject-Token"]
+    return token.id
 
 
 @pytest.fixture
 def project_id(client, auth_token):
-    """Get the project ID from the token."""
-    response = client.get(
-        "/v3/auth/tokens",
-        headers={
-            "X-Auth-Token": auth_token,
-            "X-Subject-Token": auth_token,
-        },
-    )
-    return response.json()["token"]["project"]["id"]
+    """Get the project ID from the database."""
+    # Since we create tokens directly, we can return the default project ID
+    token = db.validate_token(auth_token)
+    return token.project_id if token else "admin"
 
 
 class TestVersionEndpoints:
@@ -527,14 +510,14 @@ class TestVolumeTypeEndpoints:
             headers={"X-Auth-Token": auth_token},
             json={
                 "volume_type": {
-                    "name": "ssd",
+                    "name": "test-ssd",
                     "description": "SSD storage type",
                 }
             },
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["volume_type"]["name"] == "ssd"
+        assert data["volume_type"]["name"] == "test-ssd"
         assert data["volume_type"]["description"] == "SSD storage type"
 
     def test_create_duplicate_volume_type(self, client, auth_token, project_id):
@@ -543,14 +526,14 @@ class TestVolumeTypeEndpoints:
         client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-duplicate-ssd"}},
         )
 
         # Try to create duplicate
         response = client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-duplicate-ssd"}},
         )
         assert response.status_code == 409
 
@@ -560,7 +543,7 @@ class TestVolumeTypeEndpoints:
         create_response = client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-show-ssd"}},
         )
         type_id = create_response.json()["volume_type"]["id"]
 
@@ -578,7 +561,7 @@ class TestVolumeTypeEndpoints:
         create_response = client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-update-ssd"}},
         )
         type_id = create_response.json()["volume_type"]["id"]
 
@@ -603,7 +586,7 @@ class TestVolumeTypeEndpoints:
         create_response = client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-delete-ssd"}},
         )
         type_id = create_response.json()["volume_type"]["id"]
 
@@ -632,7 +615,7 @@ class TestVolumeTypeExtraSpecs:
             headers={"X-Auth-Token": auth_token},
             json={
                 "volume_type": {
-                    "name": "ssd",
+                    "name": "test-extra-specs-ssd",
                     "extra_specs": {"volume_backend_name": "ssd-backend"},
                 }
             },
@@ -653,7 +636,7 @@ class TestVolumeTypeExtraSpecs:
         create_response = client.post(
             f"/v3/{project_id}/types",
             headers={"X-Auth-Token": auth_token},
-            json={"volume_type": {"name": "ssd"}},
+            json={"volume_type": {"name": "test-create-specs-ssd"}},
         )
         type_id = create_response.json()["volume_type"]["id"]
 
@@ -675,7 +658,7 @@ class TestVolumeTypeExtraSpecs:
             headers={"X-Auth-Token": auth_token},
             json={
                 "volume_type": {
-                    "name": "ssd",
+                    "name": "test-delete-spec-ssd",
                     "extra_specs": {"key1": "value1"},
                 }
             },

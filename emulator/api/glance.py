@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
 from emulator.core.models import ContainerFormat, DiskFormat, ImageVisibility
-from emulator.core.auth import validate_token_with_keystone
+from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
 
@@ -66,7 +66,7 @@ def _get_project_id(token: str | None) -> str:
     if not token:
         return "admin"
     try:
-        token_data = validate_token_with_keystone(token, "Glance")
+        token_data = validate_token_simple(token, "Glance")
         return token_data.project_id
     except HTTPException:
         return "admin"  # Fallback for development

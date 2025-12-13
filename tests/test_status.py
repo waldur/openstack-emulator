@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app_status import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
@@ -33,7 +33,8 @@ def reset_db():
 @pytest.fixture
 def client():
     """Create test client."""
-    return TestClient(app)
+    apps = create_all_service_apps()
+    return TestClient(apps["status"])
 
 
 class TestHealthEndpoint:
@@ -276,7 +277,7 @@ class TestAuthentication:
             json={"username": "nonexistent", "password": "s4l4dus"},
         )
         assert response.status_code == 401
-        assert "Invalid username" in response.json()["detail"]
+        assert "Invalid username" in response.json()["error"]["message"]
 
     def test_login_invalid_project(self, client):
         """Test login with invalid project."""
@@ -285,7 +286,7 @@ class TestAuthentication:
             json={"username": "admin", "password": "s4l4dus", "project_name": "nonexistent"},
         )
         assert response.status_code == 401
-        assert "Project not found" in response.json()["detail"]
+        assert "Project not found" in response.json()["error"]["message"]
 
     def test_logout(self, client):
         """Test logout."""
@@ -364,7 +365,7 @@ class TestServerManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "Flavor not found" in response.json()["detail"]
+        assert "Flavor not found" in response.json()["error"]["message"]
 
     def test_delete_server(self, client):
         """Test deleting a server."""
@@ -576,7 +577,7 @@ class TestSecurityGroupManagement:
                 cookies={"auth_token": token},
             )
             assert response.status_code == 400
-            assert "default" in response.json()["detail"]
+            assert "default" in response.json()["error"]["message"]
 
 
 class TestProjectManagement:
@@ -619,7 +620,7 @@ class TestProjectManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "already exists" in response.json()["detail"]
+        assert "already exists" in response.json()["error"]["message"]
 
     def test_cannot_delete_admin_project(self, client):
         """Test that admin project cannot be deleted."""
@@ -630,7 +631,7 @@ class TestProjectManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "admin" in response.json()["detail"]
+        assert "admin" in response.json()["error"]["message"]
 
 
 class TestUserManagement:
@@ -667,7 +668,7 @@ class TestUserManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "already exists" in response.json()["detail"]
+        assert "already exists" in response.json()["error"]["message"]
 
     def test_cannot_delete_admin_user(self, client):
         """Test that admin user cannot be deleted."""
@@ -678,7 +679,7 @@ class TestUserManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "admin" in response.json()["detail"]
+        assert "admin" in response.json()["error"]["message"]
 
 
 class TestImageManagement:
@@ -764,7 +765,7 @@ class TestSnapshotManagement:
             cookies={"auth_token": token},
         )
         assert response.status_code == 400
-        assert "Volume not found" in response.json()["detail"]
+        assert "Volume not found" in response.json()["error"]["message"]
 
 
 class TestStatusPageAuthentication:

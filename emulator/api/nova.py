@@ -1,12 +1,13 @@
 """Nova Compute API endpoints for OpenStack emulator."""
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
-from emulator.core.auth import validate_token_with_keystone
+from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter(tags=["compute"])
 
@@ -100,10 +101,10 @@ class KeypairCreateBody(BaseModel):
     keypair: KeypairCreateRequest
 
 
-# Helper function to validate tokens via Keystone
+# Helper function to validate tokens
 def get_token_or_raise(auth_token: str | None) -> Any:
-    """Validate token by calling Keystone service."""
-    return validate_token_with_keystone(auth_token, "Nova")
+    """Validate token using shared database."""
+    return validate_token_simple(auth_token, "Nova")
 
 
 # API Version endpoints

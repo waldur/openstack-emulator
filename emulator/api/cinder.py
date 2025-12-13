@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.auth import validate_token_with_keystone
+from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter(tags=["block-storage"])
 
@@ -173,8 +173,8 @@ class ExtraSpecsBody(BaseModel):
 
 # Helper function to validate tokens
 def get_token_or_raise(auth_token: str | None) -> Any:
-    """Validate token by calling Keystone service."""
-    return validate_token_with_keystone(auth_token, "Cinder")
+    """Validate token using shared database."""
+    return validate_token_simple(auth_token, "Cinder")
 
 
 def _parse_is_public(value: str | None) -> bool | None:

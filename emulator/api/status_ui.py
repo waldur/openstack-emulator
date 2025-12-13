@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
-from emulator.core.auth import validate_token_with_keystone
+from emulator.core.simple_auth import validate_token_simple
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -1550,7 +1550,7 @@ def get_current_user(auth_token: str | None) -> dict | None:
     if not auth_token:
         return None
     try:
-        token = validate_token_with_keystone(auth_token, "Status UI")
+        token = validate_token_simple(auth_token, "Status UI")
         return {
             "id": token.user_id,
             "name": token.user_name,
@@ -4518,67 +4518,50 @@ async def api_status(request: Request) -> dict:
 
 @router.post("/api/login")
 async def api_login(request: LoginRequest) -> JSONResponse:
-    """Login and create a session token via Keystone."""
-    try:
-        # Authenticate with Keystone using password
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            auth_request = {
-                "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {
-                            "user": {
-                                "name": request.username,
-                                "password": request.password,
-                                "domain": {"name": "Default"},
-                            }
-                        },
-                    },
-                    "scope": {
-                        "project": {
-                            "name": request.project_name or "admin",
-                            "domain": {"name": "Default"},
-                        }
-                    },
-                }
-            }
+    """Login and create a session token with proper validation."""
+    # Find the user and validate credentials
+    user = db.get_user_by_name(request.username)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-            response = await client.post("http://localhost:5000/v3/auth/tokens", json=auth_request)
+    # Validate password (simple check for emulator)
+    import hashlib
+    password_hash = hashlib.sha256(request.password.encode()).hexdigest()
+    if user.password_hash != password_hash:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid username or password")
+    # Find the project (optional)
+    project = None
+    if request.project_name:
+        project = db.get_project_by_name(request.project_name)
+        if not project:
+            raise HTTPException(status_code=401, detail="Project not found")
+    else:
+        project = db.get_project_by_name("admin")
 
-        # Extract token from response
-        token_id = response.headers.get("X-Subject-Token")
-        token_data = response.json()
+    if not project:
+        raise HTTPException(status_code=401, detail="Default project not found")
 
-        if not token_id:
-            raise HTTPException(status_code=500, detail="Authentication failed")
+    # Create a token using the database
+    token = db.create_token(
+        user_name=user.name,
+        project_name=project.name,
+        domain_id=user.domain_id,
+    )
 
-        # Extract user and project info from token response
-        token_info = token_data.get("token", {})
-        user_info = token_info.get("user", {})
-        project_info = token_info.get("project", {})
-
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail="Authentication service unavailable")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Authentication error")
+    user_info = {"id": user.id, "name": user.name}
+    project_info = {"id": project.id, "name": project.name}
 
     response = JSONResponse(
         content={
-            "token": token_id,
-            "user": {"id": user_info.get("id"), "name": user_info.get("name")},
-            "project": (
-                {"id": project_info.get("id"), "name": project_info.get("name")}
-                if project_info
-                else None
-            ),
+            "token": token.id,
+            "user": user_info,
+            "project": project_info,
         }
     )
     response.set_cookie(
         key="auth_token",
-        value=token_id,
+        value=token.id,
         httponly=True,
         max_age=86400,  # 24 hours
         samesite="lax",

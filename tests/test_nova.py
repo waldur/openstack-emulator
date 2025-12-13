@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
@@ -22,32 +22,20 @@ def reset_db():
 @pytest.fixture
 def client():
     """Create test client."""
-    return TestClient(app)
+    apps = create_all_service_apps()
+    return TestClient(apps["nova"])
 
 
 @pytest.fixture
 def auth_token(client):
-    """Get an authentication token."""
-    response = client.post(
-        "/v3/auth/tokens",
-        json={
-            "auth": {
-                "identity": {
-                    "methods": ["password"],
-                    "password": {
-                        "user": {
-                            "name": "admin",
-                            "domain": {"name": "Default"},
-                            "password": "secret",
-                        }
-                    },
-                },
-                "scope": {"project": {"name": "admin", "domain": {"name": "Default"}}},
-            }
-        },
+    """Get an authentication token by creating it directly in the database."""
+    # Create token directly in database for simplified testing
+    token = db.create_token(
+        user_name="admin",
+        project_name="admin", 
+        domain_id="default"
     )
-    assert response.status_code == 200
-    return response.headers["X-Subject-Token"]
+    return token.id
 
 
 class TestVersionEndpoints:

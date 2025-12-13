@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.auth import validate_token_with_keystone
+from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter(tags=["octavia"])
 
@@ -16,7 +16,7 @@ def _get_project_id(auth_token: str | None) -> str:
     if not auth_token:
         return "admin"
     try:
-        token = validate_token_with_keystone(auth_token, "Octavia")
+        token = validate_token_simple(auth_token, "Octavia")
         return token.project_id
     except HTTPException:
         return "admin"  # Fallback for development

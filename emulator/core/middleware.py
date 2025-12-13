@@ -1,8 +1,6 @@
-"""Middleware for scenario-based failure and load injection.
+"""Simplified middleware for scenario-based failure and load injection.
 
-This middleware synchronizes with shared state to enable cross-process
-scenario coordination. The scenarios service writes state to a shared file,
-and other service processes read from it.
+Uses direct in-memory state sharing in single-process architecture.
 """
 
 import asyncio
@@ -12,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
-from emulator.core.scenario_manager import scenario_manager
+from emulator.core.simple_scenarios import simple_scenario_manager
 
 
 def get_operation_from_method(method: str) -> str:
@@ -100,19 +98,10 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(excluded) for excluded in self.exclude_paths):
             return await call_next(request)
 
-        # Sync local state from shared file (enables cross-process coordination)
-        # This is cached with a short TTL to avoid excessive file reads
-        scenario_manager.sync_from_shared_state()
-
-        # Get operation and resource for filtering
-        operation = get_operation_from_method(request.method)
-        resource = get_resource_from_path(path)
-
-        # Check for failure scenarios first
-        failure = scenario_manager.should_fail(
-            service=self.service_name,
-            operation=operation,
-            resource=resource,
+        # Check for failure scenarios (simplified - no sync needed in single process)
+        failure = simple_scenario_manager.should_inject_failure(
+            service_name=self.service_name,
+            endpoint=path,
         )
 
         if failure and failure.should_fail:
@@ -133,45 +122,12 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Calculate and apply delay
-        delay_result = scenario_manager.calculate_delay(
-            service=self.service_name,
-            operation=operation,
-        )
-
-        # Check for timeout before applying delay
-        if delay_result.should_timeout:
-            # Simulate timeout by waiting a bit then returning error
-            await asyncio.sleep(min(delay_result.delay_ms / 1000.0, 30.0))
-            return JSONResponse(
-                status_code=504,
-                content={
-                    "error": {
-                        "message": "Gateway Timeout: Request timed out",
-                        "code": 504,
-                        "scenarios": delay_result.scenario_ids,
-                    }
-                },
-                headers={
-                    "X-Scenario-Injection": ",".join(delay_result.scenario_ids or []),
-                    "X-Timeout-Injected": "true",
-                },
-            )
-
-        # Apply delay if any
-        if delay_result.delay_ms > 0:
-            await asyncio.sleep(delay_result.delay_ms / 1000.0)
+        # Apply delay if any (simplified)
+        if failure.delay_seconds > 0:
+            await asyncio.sleep(failure.delay_seconds)
 
         # Process the actual request
-        response = await call_next(request)
-
-        # Add headers indicating scenario injection (for debugging)
-        if delay_result.delay_ms > 0 or delay_result.scenario_ids:
-            # Note: We can't modify response headers directly on streaming responses
-            # so we only add these for JSONResponse or similar
-            pass
-
-        return response
+        return await call_next(request)
 
 
 def create_scenario_middleware(
