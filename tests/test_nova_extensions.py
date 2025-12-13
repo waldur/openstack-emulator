@@ -439,7 +439,7 @@ class TestTenantIsolation:
         keystone_client = TestClient(keystone_app)
 
         # Create a new project for isolation testing
-        project_response = keystone_client.post(
+        _project_response = keystone_client.post(
             "/v3/projects",
             json={
                 "project": {
@@ -475,7 +475,7 @@ class TestTenantIsolation:
         # Try to access volume attachments with wrong token
         response = client.get(
             f"/v2.1/servers/{server_id}/os-volume_attachments",
-            headers={"X-Auth-Token": other_token.id},
+            headers={"X-Auth-Token": other_token},
         )
         assert response.status_code == 404  # Server not found due to tenant isolation
 
@@ -500,7 +500,7 @@ class TestTenantIsolation:
         keystone_client = TestClient(keystone_app)
 
         # Create a new project for isolation testing
-        project_response = keystone_client.post(
+        _project_response = keystone_client.post(
             "/v3/projects",
             json={
                 "project": {
@@ -538,6 +538,6 @@ class TestTenantIsolation:
         # Try to access interfaces with wrong token
         response = client.get(
             f"/v2.1/servers/{server_id}/os-interface",
-            headers={"X-Auth-Token": other_token.id},
+            headers={"X-Auth-Token": other_token},
         )
         assert response.status_code == 404  # Server not found due to tenant isolation
