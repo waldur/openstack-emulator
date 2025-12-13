@@ -6,7 +6,7 @@ import os
 from typing import Dict
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from emulator.api.cinder import router as cinder_router
 from emulator.api.glance import router as glance_router
@@ -41,7 +41,11 @@ logger = logging.getLogger(__name__)
 
 
 def create_service_app(
-    service_name: str, router, api_version: str, description: str, include_scenarios: bool = True
+    service_name: str,
+    router: APIRouter,
+    api_version: str,
+    description: str,
+    include_scenarios: bool = True,
 ) -> FastAPI:
     """Create a FastAPI app for a specific OpenStack service.
 

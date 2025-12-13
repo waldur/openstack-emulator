@@ -2,7 +2,8 @@
 
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 
 def add_openstack_headers_middleware(app: FastAPI, service_name: str, api_version: str) -> None:
@@ -15,7 +16,9 @@ def add_openstack_headers_middleware(app: FastAPI, service_name: str, api_versio
     """
 
     @app.middleware("http")
-    async def openstack_headers_middleware(request: Request, call_next):
+    async def openstack_headers_middleware(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         """Add standard OpenStack headers to responses."""
         response = await call_next(request)
 

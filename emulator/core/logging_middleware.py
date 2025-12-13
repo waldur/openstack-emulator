@@ -9,6 +9,7 @@ import os
 
 from fastapi import FastAPI, Request, Response
 from starlette.background import BackgroundTask
+from starlette.middleware.base import RequestResponseEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,10 @@ def log_request_response(
     req_body: bytes,
     res_body: bytes,
     status_code: int,
-    headers: dict,
+    headers: dict[str, str],
     method: str,
     url: str,
-):
+) -> None:
     """Log request and response details using background task."""
     try:
         # Skip verbose logging for UI service (HTML responses are too large)
@@ -64,7 +65,9 @@ def log_request_response(
         logger.error("%s LOGGING ERROR: %s", service_name.upper(), e)
 
 
-async def debug_logging_middleware(request: Request, call_next):
+async def debug_logging_middleware(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
     """Middleware to log request and response bodies."""
     # Check if debug logging is enabled
     debug_enabled = (

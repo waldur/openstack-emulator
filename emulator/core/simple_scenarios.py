@@ -37,7 +37,7 @@ class SimpleScenarioManager:
     Uses direct in-memory state sharing instead of file-based synchronization.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the scenario manager."""
         self._lock = threading.RLock()
         self._enabled_scenarios: Dict[str, Scenario] = {}
@@ -46,7 +46,9 @@ class SimpleScenarioManager:
         # Load built-in scenarios
         self._available_scenarios = {s.id: s for s in get_builtin_scenarios()}
 
-    def enable_scenario(self, scenario_id: str, config_override: Dict[str, Any] = None) -> bool:
+    def enable_scenario(
+        self, scenario_id: str, config_override: Dict[str, Any] | None = None
+    ) -> bool:
         """
         Enable a scenario by ID.
 
