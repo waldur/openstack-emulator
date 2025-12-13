@@ -35,7 +35,7 @@ def auth_token():
     # Use the keystone app to get a proper token
     keystone_app = create_all_service_apps()["keystone"]
     keystone_client = TestClient(keystone_app)
-    
+
     response = keystone_client.post(
         "/v3/auth/tokens",
         json={
@@ -57,7 +57,7 @@ def auth_token():
     return response.headers["X-Subject-Token"]
 
 
-@pytest.fixture  
+@pytest.fixture
 def test_server(auth_token):
     """Create a test server."""
     response = client.post(
@@ -82,11 +82,11 @@ class TestNovaExtensions:
         """Test listing Nova extensions."""
         response = client.get("/v2.1/extensions", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "extensions" in data
         assert len(data["extensions"]) > 0
-        
+
         # Check for specific extensions
         extension_aliases = [ext["alias"] for ext in data["extensions"]]
         assert "os-volume_attachments" in extension_aliases
@@ -97,11 +97,10 @@ class TestNovaExtensions:
     def test_get_extension(self, auth_token):
         """Test getting a specific extension."""
         response = client.get(
-            "/v2.1/extensions/os-volume_attachments", 
-            headers={"X-Auth-Token": auth_token}
+            "/v2.1/extensions/os-volume_attachments", headers={"X-Auth-Token": auth_token}
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "extension" in data
         assert data["extension"]["alias"] == "os-volume_attachments"
@@ -109,10 +108,7 @@ class TestNovaExtensions:
 
     def test_get_extension_not_found(self, auth_token):
         """Test getting a non-existent extension."""
-        response = client.get(
-            "/v2.1/extensions/nonexistent", 
-            headers={"X-Auth-Token": auth_token}
-        )
+        response = client.get("/v2.1/extensions/nonexistent", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 404
 
 
@@ -126,7 +122,7 @@ class TestServerVolumeAttachments:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "volumeAttachments" in data
         assert data["volumeAttachments"] == []
@@ -136,7 +132,7 @@ class TestServerVolumeAttachments:
         # First create a volume using Cinder API
         cinder_app = create_all_service_apps()["cinder"]
         cinder_client = TestClient(cinder_app)
-        
+
         volume_response = cinder_client.post(
             "/v3/admin/volumes",  # Use admin project since our token is for admin
             json={
@@ -162,7 +158,7 @@ class TestServerVolumeAttachments:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "volumeAttachment" in data
         assert data["volumeAttachment"]["volumeId"] == volume_id
@@ -174,7 +170,7 @@ class TestServerVolumeAttachments:
         # Create and attach a volume using Cinder API
         cinder_app = create_all_service_apps()["cinder"]
         cinder_client = TestClient(cinder_app)
-        
+
         volume_response = cinder_client.post(
             "/v3/admin/volumes",
             json={"volume": {"name": "test-volume", "size": 1}},
@@ -194,7 +190,7 @@ class TestServerVolumeAttachments:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert len(data["volumeAttachments"]) == 1
         assert data["volumeAttachments"][0]["volumeId"] == volume_id
@@ -210,7 +206,7 @@ class TestServerNetworkInterfaces:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "interfaceAttachments" in data
         assert data["interfaceAttachments"] == []
@@ -228,7 +224,7 @@ class TestServerNetworkInterfaces:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "interfaceAttachment" in data
         assert data["interfaceAttachment"]["net_id"] == "test-network-id"
@@ -246,7 +242,7 @@ class TestServerDiagnostics:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "state" in data
         assert "driver" in data
@@ -266,7 +262,7 @@ class TestServerConsoles:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "consoles" in data
         assert data["consoles"] == []
@@ -279,7 +275,7 @@ class TestServerConsoles:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "console" in data
         assert data["console"]["console_type"] == "novnc"
@@ -298,7 +294,7 @@ class TestServerConsoles:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "remote_console" in data
         assert data["remote_console"]["type"] == "novnc"
@@ -316,7 +312,7 @@ class TestServerTags:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "tags" in data
         assert data["tags"] == []
@@ -345,7 +341,7 @@ class TestServerTags:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert set(data["tags"]) == {"web", "production", "database"}
 
@@ -441,7 +437,7 @@ class TestTenantIsolation:
         # Create a different project and get token
         keystone_app = create_all_service_apps()["keystone"]
         keystone_client = TestClient(keystone_app)
-        
+
         # Create a new project for isolation testing
         project_response = keystone_client.post(
             "/v3/projects",
@@ -454,7 +450,7 @@ class TestTenantIsolation:
             },
             headers={"X-Auth-Token": auth_token},
         )
-        
+
         # Get token scoped to the other project
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
@@ -484,7 +480,7 @@ class TestTenantIsolation:
         assert response.status_code == 404  # Server not found due to tenant isolation
 
     def test_interface_attachment_tenant_isolation(self, auth_token):
-        """Test that users cannot manage interfaces on other tenants' servers.""" 
+        """Test that users cannot manage interfaces on other tenants' servers."""
         # Create server
         server_response = client.post(
             "/v2.1/servers",
@@ -502,7 +498,7 @@ class TestTenantIsolation:
         # Create a different project and get token
         keystone_app = create_all_service_apps()["keystone"]
         keystone_client = TestClient(keystone_app)
-        
+
         # Create a new project for isolation testing
         project_response = keystone_client.post(
             "/v3/projects",
@@ -515,7 +511,7 @@ class TestTenantIsolation:
             },
             headers={"X-Auth-Token": auth_token},
         )
-        
+
         # Get token scoped to the other project
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
@@ -531,7 +527,9 @@ class TestTenantIsolation:
                             }
                         },
                     },
-                    "scope": {"project": {"name": "interface-test-project", "domain": {"id": "default"}}},
+                    "scope": {
+                        "project": {"name": "interface-test-project", "domain": {"id": "default"}}
+                    },
                 }
             },
         )
