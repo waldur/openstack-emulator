@@ -42,6 +42,7 @@ from emulator.core.models import (
     LoadBalancerProvisioningStatus,
     Network,
     NeutronQuota,
+    NovaExtension,
     NovaQuota,
     Pool,
     PoolLBAlgorithm,
@@ -53,14 +54,19 @@ from emulator.core.models import (
     QosSpec,
     RbacPolicy,
     Region,
+    RemoteConsole,
     Role,
     RoleAssignment,
     Router,
     SecurityGroup,
     SecurityGroupRule,
     Server,
+    ServerConsole,
+    ServerDiagnostics,
     ServerGroup,
+    ServerNetworkInterface,
     ServerStatus,
+    ServerVolumeAttachment,
     Service,
     Snapshot,
     SnapshotStatus,
@@ -150,6 +156,17 @@ class Database:
         self._l7rules: dict[str, L7Rule] = {}  # key: policy_id:rule_id
         self._next_lb_vip: int = 1  # For generating sequential VIP addresses
 
+        # Storage dictionaries - Nova Extensions
+        self._server_volume_attachments: dict[str, list[ServerVolumeAttachment]] = (
+            {}
+        )  # server_id -> attachments
+        self._server_network_interfaces: dict[str, list[ServerNetworkInterface]] = (
+            {}
+        )  # server_id -> interfaces
+        self._server_consoles: dict[str, list[ServerConsole]] = {}  # server_id -> consoles
+        self._server_tags: dict[str, set[str]] = {}  # server_id -> tags
+        self._nova_extensions: dict[str, NovaExtension] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -158,6 +175,7 @@ class Database:
         self._init_default_volume_types()
         self._init_default_neutron_data()
         self._init_default_tokens()
+        self._init_nova_extensions()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -6002,6 +6020,312 @@ class Database:
         """Initialize tokens - currently empty, tokens should be created via authentication."""
         logger.info("Token initialization - no default tokens created")
         logger.info("Tokens will be created through proper authentication flow")
+
+    def _init_nova_extensions(self) -> None:
+        """Initialize Nova API extensions."""
+        extensions = [
+            NovaExtension(
+                alias="os-volume_attachments",
+                name="VolumeAttachments",
+                namespace="http://docs.openstack.org/compute/ext/volume_attachments/api/v1.1",
+                description="Volume attachment support.",
+                updated="2011-06-09T00:00:00Z",
+            ),
+            NovaExtension(
+                alias="os-interface",
+                name="ServerNetworkInterfaces",
+                namespace="http://docs.openstack.org/compute/ext/interfaces/api/v1.1",
+                description="Server network interface support.",
+                updated="2012-07-22T00:00:00Z",
+            ),
+            NovaExtension(
+                alias="os-consoles",
+                name="Consoles",
+                namespace="http://docs.openstack.org/compute/ext/consoles/api/v2",
+                description="Interactive Console support.",
+                updated="2011-12-23T00:00:00Z",
+            ),
+            NovaExtension(
+                alias="os-remote-consoles",
+                name="RemoteConsoles",
+                namespace="http://docs.openstack.org/compute/ext/remote_consoles/api/v1",
+                description="Remote VNC console support.",
+                updated="2014-12-04T00:00:00Z",
+            ),
+            NovaExtension(
+                alias="os-server-diagnostics",
+                name="ServerDiagnostics",
+                namespace="http://docs.openstack.org/compute/ext/server-diagnostics/api/v1.1",
+                description="Allow Admins to view server diagnostics through server action.",
+                updated="2011-12-21T00:00:00Z",
+            ),
+            NovaExtension(
+                alias="os-server-tags",
+                name="ServerTags",
+                namespace="http://docs.openstack.org/compute/ext/server_tags/api/v2",
+                description="Server tags support.",
+                updated="2016-01-19T00:00:00Z",
+            ),
+        ]
+
+        for ext in extensions:
+            self._nova_extensions[ext.alias] = ext
+
+    # Nova Extensions API Methods
+
+    def list_nova_extensions(self) -> list[NovaExtension]:
+        """List all available Nova extensions."""
+        with self._lock:
+            return list(self._nova_extensions.values())
+
+    def get_nova_extension(self, alias: str) -> NovaExtension | None:
+        """Get a Nova extension by alias."""
+        with self._lock:
+            return self._nova_extensions.get(alias)
+
+    # Server Volume Attachments
+
+    def attach_volume_to_server(
+        self,
+        server_id: str,
+        volume_id: str,
+        device: str | None = None,
+        tag: str | None = None,
+        delete_on_termination: bool = False,
+    ) -> ServerVolumeAttachment:
+        """Attach a volume to a server."""
+        with self._lock:
+            if server_id not in self._server_volume_attachments:
+                self._server_volume_attachments[server_id] = []
+
+            attachment = ServerVolumeAttachment(
+                volume_id=volume_id,
+                server_id=server_id,
+                device=device,
+                tag=tag,
+                delete_on_termination=delete_on_termination,
+            )
+
+            self._server_volume_attachments[server_id].append(attachment)
+            return attachment
+
+    def list_server_volume_attachments(self, server_id: str) -> list[ServerVolumeAttachment]:
+        """List volume attachments for a server."""
+        with self._lock:
+            return self._server_volume_attachments.get(server_id, [])
+
+    def get_server_volume_attachment(
+        self, server_id: str, attachment_id: str
+    ) -> ServerVolumeAttachment | None:
+        """Get a specific volume attachment."""
+        with self._lock:
+            attachments = self._server_volume_attachments.get(server_id, [])
+            return next((a for a in attachments if a.attachment_id == attachment_id), None)
+
+    def detach_volume_from_server(self, server_id: str, attachment_id: str) -> bool:
+        """Detach a volume from a server."""
+        with self._lock:
+            attachments = self._server_volume_attachments.get(server_id, [])
+            for i, attachment in enumerate(attachments):
+                if attachment.attachment_id == attachment_id:
+                    del attachments[i]
+                    return True
+            return False
+
+    # Server Network Interfaces
+
+    def attach_interface_to_server(
+        self,
+        server_id: str,
+        net_id: str | None = None,
+        port_id: str | None = None,
+        fixed_ip: str | None = None,
+    ) -> ServerNetworkInterface:
+        """Attach a network interface to a server."""
+        with self._lock:
+            if server_id not in self._server_network_interfaces:
+                self._server_network_interfaces[server_id] = []
+
+            # Generate MAC address
+            import random
+
+            mac_addr = "fa:16:3e:{:02x}:{:02x}:{:02x}".format(
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(0, 255),
+            )
+
+            # Set fixed IP if provided
+            fixed_ips = []
+            if fixed_ip:
+                fixed_ips.append(
+                    {"ip_address": fixed_ip, "subnet_id": "subnet-" + str(uuid4())[:8]}
+                )
+
+            interface = ServerNetworkInterface(
+                port_id=port_id or str(uuid4()),
+                net_id=net_id or str(uuid4()),
+                mac_addr=mac_addr,
+                fixed_ips=fixed_ips,
+            )
+
+            self._server_network_interfaces[server_id].append(interface)
+            return interface
+
+    def list_server_network_interfaces(self, server_id: str) -> list[ServerNetworkInterface]:
+        """List network interfaces for a server."""
+        with self._lock:
+            return self._server_network_interfaces.get(server_id, [])
+
+    def get_server_network_interface(
+        self, server_id: str, port_id: str
+    ) -> ServerNetworkInterface | None:
+        """Get a specific network interface."""
+        with self._lock:
+            interfaces = self._server_network_interfaces.get(server_id, [])
+            return next((i for i in interfaces if i.port_id == port_id), None)
+
+    def detach_interface_from_server(self, server_id: str, port_id: str) -> bool:
+        """Detach a network interface from a server."""
+        with self._lock:
+            interfaces = self._server_network_interfaces.get(server_id, [])
+            for i, interface in enumerate(interfaces):
+                if interface.port_id == port_id:
+                    del interfaces[i]
+                    return True
+            return False
+
+    # Server Console Support
+
+    def create_server_console(self, server_id: str, console_type: str = "novnc") -> ServerConsole:
+        """Create a console for a server."""
+        with self._lock:
+            if server_id not in self._server_consoles:
+                self._server_consoles[server_id] = []
+
+            console = ServerConsole(
+                console_type=console_type,
+                url=f"http://console.example.com:6080/vnc_auto.html?token={str(uuid4())}",
+            )
+
+            self._server_consoles[server_id].append(console)
+            return console
+
+    def list_server_consoles(self, server_id: str) -> list[ServerConsole]:
+        """List consoles for a server."""
+        with self._lock:
+            return self._server_consoles.get(server_id, [])
+
+    def get_server_console(self, server_id: str, console_id: str) -> ServerConsole | None:
+        """Get a specific console."""
+        with self._lock:
+            consoles = self._server_consoles.get(server_id, [])
+            return next((c for c in consoles if c.id == console_id), None)
+
+    def delete_server_console(self, server_id: str, console_id: str) -> bool:
+        """Delete a server console."""
+        with self._lock:
+            consoles = self._server_consoles.get(server_id, [])
+            for i, console in enumerate(consoles):
+                if console.id == console_id:
+                    del consoles[i]
+                    return True
+            return False
+
+    def create_remote_console(
+        self, server_id: str, console_type: str = "novnc", protocol: str = "vnc"
+    ) -> RemoteConsole:
+        """Create a remote console for server access."""
+        with self._lock:
+            console = RemoteConsole(
+                type=console_type,
+                protocol=protocol,
+                url=f"http://console.example.com:6080/vnc_auto.html?token={str(uuid4())}",
+            )
+            return console
+
+    # Server Diagnostics
+
+    def get_server_diagnostics(self, server_id: str) -> ServerDiagnostics:
+        """Get server diagnostics information."""
+        with self._lock:
+            server = self._servers.get(server_id)
+            if not server:
+                raise ValueError(f"Server {server_id} not found")
+
+            flavor = self._flavors.get(server.flavor_id)
+
+            # Generate realistic diagnostics
+            import random
+
+            uptime = random.randint(3600, 86400 * 30)  # 1 hour to 30 days
+
+            diagnostics = ServerDiagnostics(
+                server_id=server_id,
+                uptime=uptime,
+                num_cpus=flavor.vcpus if flavor else 1,
+                memory=flavor.ram if flavor else 512,
+                cpu_details=[
+                    {
+                        "id": i,
+                        "time": random.randint(100, 1000),
+                        "utilization": f"{random.randint(10, 90)}%",
+                    }
+                    for i in range(flavor.vcpus if flavor else 1)
+                ],
+                nic_details=[
+                    {
+                        "mac_address": "fa:16:3e:xx:xx:xx",
+                        "rx_bytes": random.randint(1000000, 10000000),
+                        "tx_bytes": random.randint(1000000, 10000000),
+                    }
+                ],
+                disk_details=[
+                    {
+                        "device": "/dev/vda",
+                        "read_bytes": random.randint(1000000, 100000000),
+                        "write_bytes": random.randint(1000000, 100000000),
+                    }
+                ],
+            )
+            return diagnostics
+
+    # Server Tags
+
+    def add_server_tag(self, server_id: str, tag: str) -> bool:
+        """Add a tag to a server."""
+        with self._lock:
+            if server_id not in self._server_tags:
+                self._server_tags[server_id] = set()
+            self._server_tags[server_id].add(tag)
+            return True
+
+    def remove_server_tag(self, server_id: str, tag: str) -> bool:
+        """Remove a tag from a server."""
+        with self._lock:
+            if server_id in self._server_tags and tag in self._server_tags[server_id]:
+                self._server_tags[server_id].remove(tag)
+                return True
+            return False
+
+    def list_server_tags(self, server_id: str) -> list[str]:
+        """List tags for a server."""
+        with self._lock:
+            return list(self._server_tags.get(server_id, set()))
+
+    def replace_server_tags(self, server_id: str, tags: list[str]) -> bool:
+        """Replace all tags for a server."""
+        with self._lock:
+            self._server_tags[server_id] = set(tags)
+            return True
+
+    def clear_server_tags(self, server_id: str) -> bool:
+        """Clear all tags for a server."""
+        with self._lock:
+            if server_id in self._server_tags:
+                del self._server_tags[server_id]
+                return True
+            return False
 
 
 # Global database instance

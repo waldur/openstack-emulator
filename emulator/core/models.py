@@ -2026,3 +2026,144 @@ class LoadBalancer:
             "updated_at": self.updated_at.isoformat() + "Z",
             "tags": self.tags,
         }
+
+
+# Nova Extensions and Additional Models
+
+
+@dataclass
+class ServerVolumeAttachment:
+    """Represents a volume attachment to a server."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    volume_id: str = ""
+    server_id: str = ""
+    device: str | None = None  # e.g., /dev/vdb
+    attachment_id: str = field(default_factory=lambda: str(uuid4()))
+    tag: str | None = None
+    delete_on_termination: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.attachment_id,
+            "volumeId": self.volume_id,
+            "serverId": self.server_id,
+            "device": self.device,
+            "tag": self.tag,
+            "delete_on_termination": self.delete_on_termination,
+        }
+
+
+@dataclass
+class ServerNetworkInterface:
+    """Represents a network interface attached to a server."""
+
+    port_id: str = field(default_factory=lambda: str(uuid4()))
+    net_id: str = ""
+    mac_addr: str = ""
+    port_state: str = "ACTIVE"  # ACTIVE, DOWN, BUILD, ERROR
+    fixed_ips: list[dict[str, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "port_id": self.port_id,
+            "net_id": self.net_id,
+            "mac_addr": self.mac_addr,
+            "port_state": self.port_state,
+            "fixed_ips": self.fixed_ips,
+        }
+
+
+@dataclass
+class ServerConsole:
+    """Represents a console session for a server."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    console_type: str = "novnc"  # novnc, spice, serial, etc.
+    url: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "console_type": self.console_type,
+        }
+
+
+@dataclass
+class RemoteConsole:
+    """Represents a remote console for server access."""
+
+    type: str = "novnc"  # novnc, spice-html5, serial, etc.
+    protocol: str = "vnc"  # vnc, spice, etc.
+    url: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "type": self.type,
+            "protocol": self.protocol,
+            "url": self.url,
+        }
+
+
+@dataclass
+class ServerDiagnostics:
+    """Represents server diagnostics information."""
+
+    server_id: str = ""
+    state: str = "running"
+    driver: str = "libvirt"
+    hypervisor: str = "kvm"
+    hypervisor_os: str = "linux"
+    uptime: int = 0
+    config_drive: bool = False
+    num_cpus: int = 1
+    num_nics: int = 1
+    num_disks: int = 1
+    memory: int = 512  # MB
+    cpu_details: list[dict[str, Any]] = field(default_factory=list)
+    nic_details: list[dict[str, Any]] = field(default_factory=list)
+    disk_details: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "state": self.state,
+            "driver": self.driver,
+            "hypervisor": self.hypervisor,
+            "hypervisor_os": self.hypervisor_os,
+            "uptime": self.uptime,
+            "config_drive": self.config_drive,
+            "num_cpus": self.num_cpus,
+            "num_nics": self.num_nics,
+            "num_disks": self.num_disks,
+            "memory": self.memory,
+            "cpu_details": self.cpu_details,
+            "nic_details": self.nic_details,
+            "disk_details": self.disk_details,
+        }
+
+
+@dataclass
+class NovaExtension:
+    """Represents a Nova API extension."""
+
+    alias: str = ""
+    name: str = ""
+    namespace: str = ""
+    description: str = ""
+    updated: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "alias": self.alias,
+            "name": self.name,
+            "namespace": self.namespace,
+            "description": self.description,
+            "updated": self.updated,
+            "links": [],
+        }

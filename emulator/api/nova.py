@@ -1074,3 +1074,512 @@ async def get_quota_set_defaults(
 
     default_quota = NovaQuota(project_id=tenant_id)
     return {"quota_set": default_quota.to_dict()}
+
+
+# Extensions endpoints
+
+
+@router.get("/v2.1/extensions")
+async def list_extensions(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List all available Nova extensions."""
+    get_token_or_raise(x_auth_token)
+
+    extensions = db.list_nova_extensions()
+    return {"extensions": [ext.to_dict() for ext in extensions]}
+
+
+@router.get("/v2.1/extensions/{extension_alias}")
+async def get_extension(
+    extension_alias: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a specific extension."""
+    get_token_or_raise(x_auth_token)
+
+    extension = db.get_nova_extension(extension_alias)
+    if not extension:
+        raise HTTPException(status_code=404, detail=f"Extension {extension_alias} not found")
+
+    return {"extension": extension.to_dict()}
+
+
+# Server Volume Attachments
+
+
+class VolumeAttachmentRequest(BaseModel):
+    """Volume attachment request."""
+
+    volumeId: str
+    device: str | None = None
+    tag: str | None = None
+    delete_on_termination: bool = False
+
+
+class VolumeAttachmentBody(BaseModel):
+    """Wrapper for volume attachment request."""
+
+    volumeAttachment: VolumeAttachmentRequest
+
+
+@router.get("/v2.1/servers/{server_id}/os-volume_attachments")
+async def list_server_volume_attachments(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List volume attachments for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    attachments = db.list_server_volume_attachments(server_id)
+    return {"volumeAttachments": [attachment.to_dict() for attachment in attachments]}
+
+
+@router.post("/v2.1/servers/{server_id}/os-volume_attachments", status_code=200)
+async def attach_volume_to_server(
+    server_id: str,
+    body: VolumeAttachmentBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Attach a volume to a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    # Verify volume exists
+    volume = db.get_volume(body.volumeAttachment.volumeId, project_id=token.project_id)
+    if not volume:
+        raise HTTPException(status_code=404, detail="Volume not found")
+
+    attachment = db.attach_volume_to_server(
+        server_id=server_id,
+        volume_id=body.volumeAttachment.volumeId,
+        device=body.volumeAttachment.device,
+        tag=body.volumeAttachment.tag,
+        delete_on_termination=body.volumeAttachment.delete_on_termination,
+    )
+
+    return {"volumeAttachment": attachment.to_dict()}
+
+
+@router.get("/v2.1/servers/{server_id}/os-volume_attachments/{attachment_id}")
+async def get_server_volume_attachment(
+    server_id: str,
+    attachment_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a specific volume attachment."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    attachment = db.get_server_volume_attachment(server_id, attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Volume attachment not found")
+
+    return {"volumeAttachment": attachment.to_dict()}
+
+
+@router.delete("/v2.1/servers/{server_id}/os-volume_attachments/{attachment_id}", status_code=202)
+async def detach_volume_from_server(
+    server_id: str,
+    attachment_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Detach a volume from a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    success = db.detach_volume_from_server(server_id, attachment_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Volume attachment not found")
+
+    return Response(status_code=202)
+
+
+# Server Network Interfaces
+
+
+class InterfaceAttachmentRequest(BaseModel):
+    """Interface attachment request."""
+
+    net_id: str | None = None
+    port_id: str | None = None
+    fixed_ip: str | None = None
+
+
+class InterfaceAttachmentBody(BaseModel):
+    """Wrapper for interface attachment request."""
+
+    interfaceAttachment: InterfaceAttachmentRequest
+
+
+@router.get("/v2.1/servers/{server_id}/os-interface")
+async def list_server_interfaces(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List network interfaces for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    interfaces = db.list_server_network_interfaces(server_id)
+    return {"interfaceAttachments": [interface.to_dict() for interface in interfaces]}
+
+
+@router.post("/v2.1/servers/{server_id}/os-interface", status_code=200)
+async def attach_interface_to_server(
+    server_id: str,
+    body: InterfaceAttachmentBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Attach a network interface to a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    interface = db.attach_interface_to_server(
+        server_id=server_id,
+        net_id=body.interfaceAttachment.net_id,
+        port_id=body.interfaceAttachment.port_id,
+        fixed_ip=body.interfaceAttachment.fixed_ip,
+    )
+
+    return {"interfaceAttachment": interface.to_dict()}
+
+
+@router.get("/v2.1/servers/{server_id}/os-interface/{port_id}")
+async def get_server_interface(
+    server_id: str,
+    port_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a specific network interface."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    interface = db.get_server_network_interface(server_id, port_id)
+    if not interface:
+        raise HTTPException(status_code=404, detail="Interface not found")
+
+    return {"interfaceAttachment": interface.to_dict()}
+
+
+@router.delete("/v2.1/servers/{server_id}/os-interface/{port_id}", status_code=202)
+async def detach_interface_from_server(
+    server_id: str,
+    port_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Detach a network interface from a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    success = db.detach_interface_from_server(server_id, port_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Interface not found")
+
+    return Response(status_code=202)
+
+
+# Server Diagnostics
+
+
+@router.get("/v2.1/servers/{server_id}/diagnostics")
+async def get_server_diagnostics(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get diagnostics for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    try:
+        diagnostics = db.get_server_diagnostics(server_id)
+        return diagnostics.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# Server Console Support
+
+
+class ConsoleRequest(BaseModel):
+    """Console creation request."""
+
+    type: str = "novnc"  # novnc, spice, serial
+
+
+class ConsoleBody(BaseModel):
+    """Wrapper for console request."""
+
+    console: ConsoleRequest
+
+
+class RemoteConsoleRequest(BaseModel):
+    """Remote console creation request."""
+
+    type: str = "novnc"  # novnc, spice-html5, serial
+    protocol: str = "vnc"  # vnc, spice
+
+
+class RemoteConsoleBody(BaseModel):
+    """Wrapper for remote console request."""
+
+    remote_console: RemoteConsoleRequest
+
+
+@router.get("/v2.1/servers/{server_id}/consoles")
+async def list_server_consoles(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List consoles for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    consoles = db.list_server_consoles(server_id)
+    return {"consoles": [console.to_dict() for console in consoles]}
+
+
+@router.post("/v2.1/servers/{server_id}/consoles", status_code=200)
+async def create_server_console(
+    server_id: str,
+    body: ConsoleBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a console for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    console = db.create_server_console(server_id, body.console.type)
+    return {"console": console.to_dict()}
+
+
+@router.get("/v2.1/servers/{server_id}/consoles/{console_id}")
+async def get_server_console(
+    server_id: str,
+    console_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a specific console."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    console = db.get_server_console(server_id, console_id)
+    if not console:
+        raise HTTPException(status_code=404, detail="Console not found")
+
+    return {"console": console.to_dict()}
+
+
+@router.delete("/v2.1/servers/{server_id}/consoles/{console_id}", status_code=202)
+async def delete_server_console(
+    server_id: str,
+    console_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a server console."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    success = db.delete_server_console(server_id, console_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Console not found")
+
+    return Response(status_code=202)
+
+
+@router.post("/v2.1/servers/{server_id}/remote-consoles", status_code=200)
+async def create_remote_console(
+    server_id: str,
+    body: RemoteConsoleBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a remote console for server access."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    console = db.create_remote_console(
+        server_id, body.remote_console.type, body.remote_console.protocol
+    )
+    return {"remote_console": console.to_dict()}
+
+
+# Server Tags
+
+
+class ServerTagsBody(BaseModel):
+    """Server tags update request."""
+
+    tags: list[str]
+
+
+@router.get("/v2.1/servers/{server_id}/tags")
+async def list_server_tags(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List tags for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    tags = db.list_server_tags(server_id)
+    return {"tags": tags}
+
+
+@router.put("/v2.1/servers/{server_id}/tags", status_code=200)
+async def replace_server_tags(
+    server_id: str,
+    body: ServerTagsBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Replace all tags for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    db.replace_server_tags(server_id, body.tags)
+    return {"tags": body.tags}
+
+
+@router.delete("/v2.1/servers/{server_id}/tags", status_code=204)
+async def clear_server_tags(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Clear all tags from a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    db.clear_server_tags(server_id)
+    return Response(status_code=204)
+
+
+@router.get("/v2.1/servers/{server_id}/tags/{tag}")
+async def check_server_tag(
+    server_id: str,
+    tag: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Check if a server has a specific tag."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    tags = db.list_server_tags(server_id)
+    if tag not in tags:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    return Response(status_code=204)
+
+
+@router.put("/v2.1/servers/{server_id}/tags/{tag}", status_code=201)
+async def add_server_tag(
+    server_id: str,
+    tag: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Add a tag to a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    # Check if tag already exists
+    tags = db.list_server_tags(server_id)
+    status_code = 200 if tag in tags else 201
+
+    db.add_server_tag(server_id, tag)
+    return Response(status_code=status_code)
+
+
+@router.delete("/v2.1/servers/{server_id}/tags/{tag}", status_code=204)
+async def remove_server_tag(
+    server_id: str,
+    tag: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Remove a tag from a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    # Verify server exists and user has access
+    server = db.get_server(server_id)
+    if not server or server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    success = db.remove_server_tag(server_id, tag)
+    if not success:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    return Response(status_code=204)

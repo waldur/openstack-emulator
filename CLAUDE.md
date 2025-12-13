@@ -139,3 +139,43 @@ For detailed tenant isolation documentation, see [docs/architecture/tenant-isola
 | Octavia | 9876 |
 
 For full port list and development instructions, see [docs/development.md](docs/development.md).
+
+## API Compliance Testing
+
+**IMPORTANT: When adding or modifying API endpoints, ensure compliance with OpenStack specifications.**
+
+The emulator includes automated tools to compare our API implementation with official OpenStack OpenAPI specifications:
+
+### Quick Compliance Check
+
+```bash
+# Start the emulator
+openstack-emulator
+
+# Run API compliance analysis  
+scripts/check-api-compliance.sh
+
+# Generate summary report
+python3 scripts/generate_compliance_report.py reports/
+```
+
+### Key Files
+
+- **Documentation**: [docs/api-compliance.md](docs/api-compliance.md) - Complete testing process
+- **Main script**: `scripts/check-api-compliance.sh` - Export specs and run comparisons  
+- **Analysis tool**: `scripts/compare_apis.py` - Detailed endpoint/schema comparison
+- **Report generator**: `scripts/generate_compliance_report.py` - Summary dashboard
+
+### Workflow Integration
+
+1. **Before implementing new endpoints**: Check official OpenStack specs in `/Users/ilja/workspace/openstack-openapi/specs/`
+2. **After API changes**: Run compliance check to verify alignment
+3. **Before releases**: Generate full compliance report for documentation
+
+The tools automatically:
+- Export OpenAPI specs from running emulator services
+- Compare with official OpenStack specifications  
+- Generate detailed gap analysis and coverage reports
+- Provide actionable recommendations for missing endpoints
+
+See [docs/api-compliance.md](docs/api-compliance.md) for complete documentation and setup instructions.
