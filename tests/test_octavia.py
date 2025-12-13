@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from emulator.api.app_octavia import app
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
 
@@ -14,7 +14,9 @@ def reset_database():
     yield
 
 
-client = TestClient(app)
+# Create the app once at module level
+_apps = create_all_service_apps()
+client = TestClient(_apps["octavia"])
 
 
 class TestHealthCheck:

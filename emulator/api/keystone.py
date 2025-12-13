@@ -291,7 +291,7 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         logger.debug("Existing token ID: %s", existing_token_id)
 
         # Validate the existing token
-        existing_token = db.validate_token(existing_token_id)
+        existing_token = db.validate_token(existing_token_id) if existing_token_id else None
         if existing_token:
             logger.debug("Existing token is valid, using its user info")
             user_name = existing_token.user_name

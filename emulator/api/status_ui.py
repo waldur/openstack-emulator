@@ -4526,6 +4526,7 @@ async def api_login(request: LoginRequest) -> JSONResponse:
 
     # Validate password (simple check for emulator)
     import hashlib
+
     password_hash = hashlib.sha256(request.password.encode()).hexdigest()
     if user.password_hash != password_hash:
         raise HTTPException(status_code=401, detail="Invalid username or password")

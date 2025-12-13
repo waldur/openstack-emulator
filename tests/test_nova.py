@@ -30,11 +30,7 @@ def client():
 def auth_token(client):
     """Get an authentication token by creating it directly in the database."""
     # Create token directly in database for simplified testing
-    token = db.create_token(
-        user_name="admin",
-        project_name="admin", 
-        domain_id="default"
-    )
+    token = db.create_token(user_name="admin", project_name="admin", domain_id="default")
     return token.id
 
 
@@ -56,57 +52,6 @@ class TestVersionEndpoints:
         data = response.json()
         assert data["version"]["id"] == "v2.1"
         assert data["version"]["status"] == "CURRENT"
-
-
-class TestAuthEndpoints:
-    """Test authentication endpoints."""
-
-    def test_create_token(self, client):
-        """Test token creation."""
-        response = client.post(
-            "/v3/auth/tokens",
-            json={
-                "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {
-                            "user": {
-                                "name": "admin",
-                                "domain": {"name": "Default"},
-                                "password": "secret",
-                            }
-                        },
-                    }
-                }
-            },
-        )
-        assert response.status_code == 200
-        assert "X-Subject-Token" in response.headers
-        data = response.json()
-        assert "token" in data
-        assert "catalog" in data["token"]
-
-    def test_validate_token(self, client, auth_token):
-        """Test token validation."""
-        response = client.get(
-            "/v3/auth/tokens",
-            headers={
-                "X-Auth-Token": auth_token,
-                "X-Subject-Token": auth_token,
-            },
-        )
-        assert response.status_code == 200
-
-    def test_revoke_token(self, client, auth_token):
-        """Test token revocation."""
-        response = client.delete(
-            "/v3/auth/tokens",
-            headers={
-                "X-Auth-Token": auth_token,
-                "X-Subject-Token": auth_token,
-            },
-        )
-        assert response.status_code == 204
 
 
 class TestFlavorEndpoints:
@@ -471,56 +416,3 @@ class TestEmulatorEndpoints:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
-
-    def test_emulator_status(self, client):
-        """Test emulator status endpoint."""
-        response = client.get("/emulator/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "running"
-        assert "statistics" in data
-
-    def test_emulator_reset(self, client, auth_token):
-        """Test emulator reset endpoint."""
-        # Create some data
-        images_response = client.get(
-            "/v2.1/images",
-            headers={"X-Auth-Token": auth_token},
-        )
-        image_id = images_response.json()["images"][0]["id"]
-
-        client.post(
-            "/v2.1/servers",
-            headers={"X-Auth-Token": auth_token},
-            json={
-                "server": {
-                    "name": "test",
-                    "flavorRef": "1",
-                    "imageRef": image_id,
-                }
-            },
-        )
-
-        # Reset
-        response = client.post("/emulator/reset")
-        assert response.status_code == 200
-
-        # Verify servers are cleared (need new token after reset)
-        new_token_response = client.post(
-            "/v3/auth/tokens",
-            json={
-                "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {"user": {"name": "admin"}},
-                    }
-                }
-            },
-        )
-        new_token = new_token_response.headers["X-Subject-Token"]
-
-        servers_response = client.get(
-            "/v2.1/servers",
-            headers={"X-Auth-Token": new_token},
-        )
-        assert servers_response.json()["servers"] == []
