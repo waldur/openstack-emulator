@@ -6,10 +6,12 @@ Based on StackOverflow solution for proper response body capture.
 import json
 import logging
 import os
+from typing import cast
 
 from fastapi import FastAPI, Request, Response
 from starlette.background import BackgroundTask
 from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +103,10 @@ async def debug_logging_middleware(
     logger.debug("%s RESPONSE: %s", service_name.upper(), response.status_code)
     logger.debug("%s RESPONSE HEADERS: %s", service_name.upper(), dict(response.headers))
 
-    # Capture response body
-    chunks = []
-    async for chunk in response.body_iterator:
+    # Capture response body (call_next returns StreamingResponse in practice)
+    streaming_response = cast(StreamingResponse, response)
+    chunks: list[bytes] = []
+    async for chunk in streaming_response.body_iterator:
         chunks.append(chunk)
     res_body = b"".join(chunks)
 
