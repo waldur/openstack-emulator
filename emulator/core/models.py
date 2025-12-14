@@ -2349,3 +2349,137 @@ class NeutronExtension:
             "updated": self.updated,
             "links": [],
         }
+
+
+# Octavia Extensions and Additional Models
+
+
+@dataclass
+class OctaviaQuota:
+    """Represents Octavia load balancer quotas for a project."""
+
+    project_id: str = ""
+    loadbalancer: int = 10
+    listener: int = -1  # -1 means unlimited
+    pool: int = 10
+    member: int = 50
+    healthmonitor: int = -1
+    l7policy: int = 50
+    l7rule: int = 100
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "loadbalancer": self.loadbalancer,
+            "listener": self.listener,
+            "pool": self.pool,
+            "member": self.member,
+            "healthmonitor": self.healthmonitor,
+            "l7policy": self.l7policy,
+            "l7rule": self.l7rule,
+        }
+
+    def to_detail_dict(self, usage: dict[str, int]) -> dict[str, Any]:
+        """Convert to detailed quota response with usage."""
+        return {
+            "loadbalancer": {"limit": self.loadbalancer, "used": usage.get("loadbalancer", 0)},
+            "listener": {"limit": self.listener, "used": usage.get("listener", 0)},
+            "pool": {"limit": self.pool, "used": usage.get("pool", 0)},
+            "member": {"limit": self.member, "used": usage.get("member", 0)},
+            "healthmonitor": {"limit": self.healthmonitor, "used": usage.get("healthmonitor", 0)},
+            "l7policy": {"limit": self.l7policy, "used": usage.get("l7policy", 0)},
+            "l7rule": {"limit": self.l7rule, "used": usage.get("l7rule", 0)},
+        }
+
+
+@dataclass
+class LoadBalancerFlavor:
+    """Represents an Octavia load balancer flavor."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    enabled: bool = True
+    flavor_profile_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "enabled": self.enabled,
+            "flavor_profile_id": self.flavor_profile_id,
+        }
+
+
+@dataclass
+class LoadBalancerFlavorProfile:
+    """Represents an Octavia flavor profile."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    provider_name: str = "amphora"
+    flavor_data: str = "{}"  # JSON string
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "provider_name": self.provider_name,
+            "flavor_data": self.flavor_data,
+        }
+
+
+@dataclass
+class LoadBalancerAvailabilityZone:
+    """Represents an Octavia availability zone."""
+
+    name: str = ""
+    description: str = ""
+    enabled: bool = True
+    availability_zone_profile_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "enabled": self.enabled,
+            "availability_zone_profile_id": self.availability_zone_profile_id,
+        }
+
+
+@dataclass
+class LoadBalancerAvailabilityZoneProfile:
+    """Represents an Octavia availability zone profile."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    provider_name: str = "amphora"
+    availability_zone_data: str = "{}"  # JSON string
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "provider_name": self.provider_name,
+            "availability_zone_data": self.availability_zone_data,
+        }
+
+
+@dataclass
+class LoadBalancerProvider:
+    """Represents an Octavia load balancer provider."""
+
+    name: str = ""
+    description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "name": self.name,
+            "description": self.description,
+        }

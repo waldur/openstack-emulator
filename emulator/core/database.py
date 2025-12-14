@@ -38,7 +38,12 @@ from emulator.core.models import (
     Listener,
     ListenerProtocol,
     LoadBalancer,
+    LoadBalancerAvailabilityZone,
+    LoadBalancerAvailabilityZoneProfile,
+    LoadBalancerFlavor,
+    LoadBalancerFlavorProfile,
     LoadBalancerOperatingStatus,
+    LoadBalancerProvider,
     LoadBalancerProvisioningStatus,
     Network,
     NeutronAgent,
@@ -46,6 +51,7 @@ from emulator.core.models import (
     NeutronQuota,
     NovaExtension,
     NovaQuota,
+    OctaviaQuota,
     Pool,
     PoolLBAlgorithm,
     PoolMember,
@@ -180,6 +186,14 @@ class Database:
         self._trunks: dict[str, Trunk] = {}
         self._neutron_extensions: dict[str, NeutronExtension] = {}
 
+        # Storage dictionaries - Octavia Extensions
+        self._octavia_quotas: dict[str, OctaviaQuota] = {}
+        self._lb_flavors: dict[str, LoadBalancerFlavor] = {}
+        self._lb_flavor_profiles: dict[str, LoadBalancerFlavorProfile] = {}
+        self._lb_availability_zones: dict[str, LoadBalancerAvailabilityZone] = {}
+        self._lb_availability_zone_profiles: dict[str, LoadBalancerAvailabilityZoneProfile] = {}
+        self._lb_providers: dict[str, LoadBalancerProvider] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -190,6 +204,7 @@ class Database:
         self._init_default_tokens()
         self._init_nova_extensions()
         self._init_neutron_extensions()
+        self._init_octavia_extensions()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -6447,7 +6462,29 @@ class Database:
                             {
                                 "parameter_name": "dscp_mark",
                                 "parameter_type": "choices",
-                                "parameter_values": [0, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 46, 48, 56],
+                                "parameter_values": [
+                                    0,
+                                    8,
+                                    10,
+                                    12,
+                                    14,
+                                    16,
+                                    18,
+                                    20,
+                                    22,
+                                    24,
+                                    26,
+                                    28,
+                                    30,
+                                    32,
+                                    34,
+                                    36,
+                                    38,
+                                    40,
+                                    46,
+                                    48,
+                                    56,
+                                ],
                             }
                         ],
                     }
@@ -6837,6 +6874,193 @@ class Database:
             trunk.sub_ports = [sp for sp in trunk.sub_ports if sp.port_id not in port_ids_to_remove]
             trunk.updated_at = datetime.utcnow()
             return trunk
+
+    def _init_octavia_extensions(self) -> None:
+        """Initialize Octavia extensions and default data."""
+        # Initialize default providers
+        providers = [
+            LoadBalancerProvider(
+                name="amphora",
+                description="The Octavia Amphora driver",
+            ),
+            LoadBalancerProvider(
+                name="ovn",
+                description="The OVN Octavia provider driver",
+            ),
+        ]
+
+        # Initialize default availability zones
+        az_profiles = [
+            LoadBalancerAvailabilityZoneProfile(
+                name="nova-az1-profile",
+                provider_name="amphora",
+                availability_zone_data='{"compute_zone": "nova"}',
+            ),
+        ]
+
+        availability_zones = [
+            LoadBalancerAvailabilityZone(
+                name="nova",
+                description="Default availability zone",
+                enabled=True,
+                availability_zone_profile_id="nova-az1-profile",
+            ),
+        ]
+
+        # Initialize default flavor profiles
+        flavor_profiles = [
+            LoadBalancerFlavorProfile(
+                name="default-amphora-profile",
+                provider_name="amphora",
+                flavor_data='{"loadbalancer_topology": "SINGLE"}',
+            ),
+            LoadBalancerFlavorProfile(
+                name="ha-amphora-profile",
+                provider_name="amphora",
+                flavor_data='{"loadbalancer_topology": "ACTIVE_STANDBY"}',
+            ),
+        ]
+
+        # Initialize default flavors
+        flavors = [
+            LoadBalancerFlavor(
+                name="default",
+                description="Default load balancer flavor",
+                enabled=True,
+                flavor_profile_id="default-amphora-profile",
+            ),
+            LoadBalancerFlavor(
+                name="ha",
+                description="High availability load balancer flavor",
+                enabled=True,
+                flavor_profile_id="ha-amphora-profile",
+            ),
+        ]
+
+        for provider in providers:
+            self._lb_providers[provider.name] = provider
+
+        for profile in az_profiles:
+            self._lb_availability_zone_profiles[profile.id] = profile
+
+        for az in availability_zones:
+            self._lb_availability_zones[az.name] = az
+
+        for profile in flavor_profiles:
+            self._lb_flavor_profiles[profile.id] = profile
+
+        for flavor in flavors:
+            self._lb_flavors[flavor.id] = flavor
+
+    # Octavia Extensions API Methods
+
+    def get_octavia_quota(self, project_id: str) -> OctaviaQuota:
+        """Get Octavia quota for a project."""
+        with self._lock:
+            quota = self._octavia_quotas.get(project_id)
+            if not quota:
+                quota = OctaviaQuota(project_id=project_id)
+                self._octavia_quotas[project_id] = quota
+            return quota
+
+    def list_octavia_quotas(self) -> list[OctaviaQuota]:
+        """List all Octavia quotas."""
+        with self._lock:
+            return list(self._octavia_quotas.values())
+
+    def update_octavia_quota(self, project_id: str, **kwargs) -> OctaviaQuota:
+        """Update Octavia quota for a project."""
+        with self._lock:
+            quota = self.get_octavia_quota(project_id)
+            for key, value in kwargs.items():
+                if hasattr(quota, key) and value is not None:
+                    setattr(quota, key, value)
+            return quota
+
+    def delete_octavia_quota(self, project_id: str) -> bool:
+        """Reset Octavia quota to defaults for a project."""
+        with self._lock:
+            if project_id in self._octavia_quotas:
+                del self._octavia_quotas[project_id]
+                return True
+            return False
+
+    def get_octavia_quota_usage(self, project_id: str) -> dict[str, int]:
+        """Calculate Octavia quota usage for a project."""
+        with self._lock:
+            loadbalancers = [
+                lb for lb in self._load_balancers.values() if lb.project_id == project_id
+            ]
+            listeners = [listener for listener in self._listeners.values() if listener.project_id == project_id]
+            pools = [p for p in self._pools.values() if p.project_id == project_id]
+            members = [m for m in self._pool_members.values() if m.project_id == project_id]
+            health_monitors = [
+                h for h in self._health_monitors.values() if h.project_id == project_id
+            ]
+            l7policies = [p for p in self._l7policies.values() if p.project_id == project_id]
+            l7rules = [r for r in self._l7rules.values() if r.project_id == project_id]
+
+            return {
+                "loadbalancer": len(loadbalancers),
+                "listener": len(listeners),
+                "pool": len(pools),
+                "member": len(members),
+                "healthmonitor": len(health_monitors),
+                "l7policy": len(l7policies),
+                "l7rule": len(l7rules),
+            }
+
+    def list_lb_providers(self) -> list[LoadBalancerProvider]:
+        """List load balancer providers."""
+        with self._lock:
+            return list(self._lb_providers.values())
+
+    def get_lb_provider(self, provider_name: str) -> LoadBalancerProvider | None:
+        """Get a load balancer provider by name."""
+        with self._lock:
+            return self._lb_providers.get(provider_name)
+
+    def list_lb_flavors(self) -> list[LoadBalancerFlavor]:
+        """List load balancer flavors."""
+        with self._lock:
+            return list(self._lb_flavors.values())
+
+    def get_lb_flavor(self, flavor_id: str) -> LoadBalancerFlavor | None:
+        """Get a load balancer flavor by ID."""
+        with self._lock:
+            return self._lb_flavors.get(flavor_id)
+
+    def list_lb_flavor_profiles(self) -> list[LoadBalancerFlavorProfile]:
+        """List load balancer flavor profiles."""
+        with self._lock:
+            return list(self._lb_flavor_profiles.values())
+
+    def get_lb_flavor_profile(self, profile_id: str) -> LoadBalancerFlavorProfile | None:
+        """Get a load balancer flavor profile by ID."""
+        with self._lock:
+            return self._lb_flavor_profiles.get(profile_id)
+
+    def list_lb_availability_zones(self) -> list[LoadBalancerAvailabilityZone]:
+        """List load balancer availability zones."""
+        with self._lock:
+            return list(self._lb_availability_zones.values())
+
+    def get_lb_availability_zone(self, az_name: str) -> LoadBalancerAvailabilityZone | None:
+        """Get a load balancer availability zone by name."""
+        with self._lock:
+            return self._lb_availability_zones.get(az_name)
+
+    def list_lb_availability_zone_profiles(self) -> list[LoadBalancerAvailabilityZoneProfile]:
+        """List load balancer availability zone profiles."""
+        with self._lock:
+            return list(self._lb_availability_zone_profiles.values())
+
+    def get_lb_availability_zone_profile(
+        self, profile_id: str
+    ) -> LoadBalancerAvailabilityZoneProfile | None:
+        """Get a load balancer availability zone profile by ID."""
+        with self._lock:
+            return self._lb_availability_zone_profiles.get(profile_id)
 
 
 # Global database instance

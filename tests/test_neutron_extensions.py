@@ -37,7 +37,7 @@ def auth_token():
     """Get a valid auth token for testing."""
     keystone_app = create_all_service_apps()["keystone"]
     keystone_client = TestClient(keystone_app)
-    
+
     response = keystone_client.post(
         "/v3/auth/tokens",
         json={
@@ -66,11 +66,11 @@ class TestNeutronExtensions:
         """Test listing Neutron extensions."""
         response = client.get("/v2.0/extensions", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "extensions" in data
         assert len(data["extensions"]) > 0
-        
+
         # Check for specific extensions
         extension_aliases = [ext["alias"] for ext in data["extensions"]]
         assert "qos" in extension_aliases
@@ -79,12 +79,9 @@ class TestNeutronExtensions:
 
     def test_get_extension(self, auth_token):
         """Test getting a specific extension."""
-        response = client.get(
-            "/v2.0/extensions/qos", 
-            headers={"X-Auth-Token": auth_token}
-        )
+        response = client.get("/v2.0/extensions/qos", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "extension" in data
         assert data["extension"]["alias"] == "qos"
@@ -92,10 +89,7 @@ class TestNeutronExtensions:
 
     def test_get_extension_not_found(self, auth_token):
         """Test getting a non-existent extension."""
-        response = client.get(
-            "/v2.0/extensions/nonexistent", 
-            headers={"X-Auth-Token": auth_token}
-        )
+        response = client.get("/v2.0/extensions/nonexistent", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 404
 
 
@@ -106,7 +100,7 @@ class TestQoSPolicies:
         """Test listing QoS policies when none exist."""
         response = client.get("/v2.0/qos/policies", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "policies" in data
         assert data["policies"] == []
@@ -125,7 +119,7 @@ class TestQoSPolicies:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 201
-        
+
         data = response.json()
         assert "policy" in data
         assert data["policy"]["name"] == "test-policy"
@@ -148,7 +142,7 @@ class TestQoSPolicies:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["policy"]["id"] == policy_id
         assert data["policy"]["name"] == "get-test-policy"
@@ -175,7 +169,7 @@ class TestQoSPolicies:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["policy"]["name"] == "updated-policy"
         assert data["policy"]["description"] == "Updated description"
@@ -208,11 +202,11 @@ class TestQoSPolicies:
         """Test listing QoS rule types."""
         response = client.get("/v2.0/qos/rule-types", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "rule_types" in data
         assert len(data["rule_types"]) > 0
-        
+
         # Check for expected rule types
         rule_type_names = [rt["type"] for rt in data["rule_types"]]
         assert "bandwidth_limit" in rule_type_names
@@ -227,11 +221,11 @@ class TestNeutronAgents:
         """Test listing Neutron agents."""
         response = client.get("/v2.0/agents", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "agents" in data
         assert len(data["agents"]) > 0  # Should have default agents
-        
+
         # Check agent types
         agent_types = [agent["agent_type"] for agent in data["agents"]]
         assert "Open vSwitch agent" in agent_types
@@ -252,7 +246,7 @@ class TestNeutronAgents:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "agent" in data
         assert data["agent"]["id"] == agent_id
@@ -276,7 +270,7 @@ class TestNeutronAgents:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["agent"]["admin_state_up"] is False
 
@@ -287,11 +281,11 @@ class TestNeutronAgents:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "agents" in data
         assert len(data["agents"]) >= 1
-        
+
         # All returned agents should be DHCP agents
         for agent in data["agents"]:
             assert agent["agent_type"] == "DHCP agent"
@@ -304,7 +298,7 @@ class TestTrunks:
         """Test listing trunks when none exist."""
         response = client.get("/v2.0/trunks", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "trunks" in data
         assert data["trunks"] == []
@@ -339,7 +333,7 @@ class TestTrunks:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 201
-        
+
         data = response.json()
         assert "trunk" in data
         assert data["trunk"]["name"] == "test-trunk"
@@ -376,7 +370,7 @@ class TestTrunks:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["trunk"]["id"] == trunk_id
         assert data["trunk"]["name"] == "get-test-trunk"
@@ -419,7 +413,7 @@ class TestTrunks:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["trunk"]["name"] == "updated-trunk"
         assert data["trunk"]["description"] == "Updated description"
@@ -480,8 +474,8 @@ class TestTenantIsolation:
         # Create a different project and get token
         keystone_app = create_all_service_apps()["keystone"]
         keystone_client = TestClient(keystone_app)
-        
-        project_response = keystone_client.post(
+
+        _project_response = keystone_client.post(
             "/v3/projects",
             json={
                 "project": {
@@ -492,7 +486,7 @@ class TestTenantIsolation:
             },
             headers={"X-Auth-Token": auth_token},
         )
-        
+
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
             json={

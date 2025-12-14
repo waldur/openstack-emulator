@@ -1218,3 +1218,247 @@ async def delete_l7rule(
     project_id = _get_project_id(x_auth_token)
     if not db.delete_l7rule(l7policy_id, rule_id, project_id=project_id):
         raise HTTPException(status_code=404, detail="L7 rule not found")
+
+
+# Quota Management
+
+
+class OctaviaQuotaRequest(BaseModel):
+    """Octavia quota update request."""
+
+    loadbalancer: int | None = None
+    listener: int | None = None
+    pool: int | None = None
+    member: int | None = None
+    healthmonitor: int | None = None
+    l7policy: int | None = None
+    l7rule: int | None = None
+
+
+class OctaviaQuotaBody(BaseModel):
+    """Wrapper for Octavia quota request."""
+
+    quota: OctaviaQuotaRequest
+
+
+@router.get("/v2.0/lbaas/quotas")
+@router.get("/v2/lbaas/quotas")
+async def list_octavia_quotas(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List Octavia quotas for all projects."""
+    _get_project_id(x_auth_token)  # Validate token (admin operation)
+
+    quotas = db.list_octavia_quotas()
+    return {"quotas": [quota.to_dict() for quota in quotas]}
+
+
+@router.get("/v2.0/lbaas/quotas/{project_id}")
+@router.get("/v2/lbaas/quotas/{project_id}")
+async def get_octavia_quota(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get Octavia quota for a specific project."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    quota = db.get_octavia_quota(project_id)
+    return {"quota": quota.to_dict()}
+
+
+@router.get("/v2.0/lbaas/quotas/{project_id}/detail")
+@router.get("/v2/lbaas/quotas/{project_id}/detail")
+async def get_octavia_quota_detail(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get detailed Octavia quota with usage for a project."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    quota = db.get_octavia_quota(project_id)
+    usage = db.get_octavia_quota_usage(project_id)
+    return {"quota": quota.to_detail_dict(usage)}
+
+
+@router.put("/v2.0/lbaas/quotas/{project_id}")
+@router.put("/v2/lbaas/quotas/{project_id}")
+async def update_octavia_quota(
+    project_id: str,
+    body: OctaviaQuotaBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update Octavia quota for a project."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    quota = db.update_octavia_quota(
+        project_id=project_id,
+        loadbalancer=body.quota.loadbalancer,
+        listener=body.quota.listener,
+        pool=body.quota.pool,
+        member=body.quota.member,
+        healthmonitor=body.quota.healthmonitor,
+        l7policy=body.quota.l7policy,
+        l7rule=body.quota.l7rule,
+    )
+    return {"quota": quota.to_dict()}
+
+
+@router.delete("/v2.0/lbaas/quotas/{project_id}", status_code=204)
+@router.delete("/v2/lbaas/quotas/{project_id}", status_code=204)
+async def reset_octavia_quota(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> None:
+    """Reset Octavia quota to defaults for a project."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    db.delete_octavia_quota(project_id)
+
+
+# Provider Management
+
+
+@router.get("/v2.0/lbaas/providers")
+@router.get("/v2/lbaas/providers")
+async def list_providers(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List load balancer providers."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    providers = db.list_lb_providers()
+    return {"providers": [provider.to_dict() for provider in providers]}
+
+
+@router.get("/v2.0/lbaas/providers/{provider_name}")
+@router.get("/v2/lbaas/providers/{provider_name}")
+async def get_provider(
+    provider_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a load balancer provider."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    provider = db.get_lb_provider(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    return {"provider": provider.to_dict()}
+
+
+# Flavor Management
+
+
+@router.get("/v2.0/lbaas/flavors")
+@router.get("/v2/lbaas/flavors")
+async def list_flavors(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List load balancer flavors."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavors = db.list_lb_flavors()
+    return {"flavors": [flavor.to_dict() for flavor in flavors]}
+
+
+@router.get("/v2.0/lbaas/flavors/{flavor_id}")
+@router.get("/v2/lbaas/flavors/{flavor_id}")
+async def get_flavor(
+    flavor_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a load balancer flavor."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavor = db.get_lb_flavor(flavor_id)
+    if not flavor:
+        raise HTTPException(status_code=404, detail="Flavor not found")
+
+    return {"flavor": flavor.to_dict()}
+
+
+@router.get("/v2.0/lbaas/flavorprofiles")
+@router.get("/v2/lbaas/flavorprofiles")
+async def list_flavor_profiles(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List load balancer flavor profiles."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profiles = db.list_lb_flavor_profiles()
+    return {"flavorprofiles": [profile.to_dict() for profile in profiles]}
+
+
+@router.get("/v2.0/lbaas/flavorprofiles/{profile_id}")
+@router.get("/v2/lbaas/flavorprofiles/{profile_id}")
+async def get_flavor_profile(
+    profile_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a load balancer flavor profile."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profile = db.get_lb_flavor_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Flavor profile not found")
+
+    return {"flavorprofile": profile.to_dict()}
+
+
+# Availability Zone Management
+
+
+@router.get("/v2.0/lbaas/availabilityzones")
+@router.get("/v2/lbaas/availabilityzones")
+async def list_availability_zones(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List load balancer availability zones."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    zones = db.list_lb_availability_zones()
+    return {"availabilityzones": [zone.to_dict() for zone in zones]}
+
+
+@router.get("/v2.0/lbaas/availabilityzones/{zone_name}")
+@router.get("/v2/lbaas/availabilityzones/{zone_name}")
+async def get_availability_zone(
+    zone_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a load balancer availability zone."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    zone = db.get_lb_availability_zone(zone_name)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Availability zone not found")
+
+    return {"availabilityzone": zone.to_dict()}
+
+
+@router.get("/v2.0/lbaas/availabilityzoneprofiles")
+@router.get("/v2/lbaas/availabilityzoneprofiles")
+async def list_availability_zone_profiles(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List load balancer availability zone profiles."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profiles = db.list_lb_availability_zone_profiles()
+    return {"availabilityzoneprofiles": [profile.to_dict() for profile in profiles]}
+
+
+@router.get("/v2.0/lbaas/availabilityzoneprofiles/{profile_id}")
+@router.get("/v2/lbaas/availabilityzoneprofiles/{profile_id}")
+async def get_availability_zone_profile(
+    profile_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a load balancer availability zone profile."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profile = db.get_lb_availability_zone_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Availability zone profile not found")
+
+    return {"availabilityzoneprofile": profile.to_dict()}
