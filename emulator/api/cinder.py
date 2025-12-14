@@ -229,7 +229,7 @@ async def list_volumes(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (summary)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volumes = db.list_volumes(
         project_id=token.project_id if not all_tenants else None,
         status=status,
@@ -252,7 +252,7 @@ async def list_volumes_detail(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (detailed)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volumes = db.list_volumes(
         project_id=token.project_id if not all_tenants else None,
         status=status,
@@ -271,7 +271,7 @@ async def create_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a new volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     req = body.volume
 
     volume = db.create_volume(
@@ -299,7 +299,7 @@ async def show_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show volume details."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -314,7 +314,7 @@ async def update_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     req = body.volume
 
     volume = db.update_volume(
@@ -337,7 +337,7 @@ async def delete_volume(
     force: bool = Query(False),
 ) -> Response:
     """Delete a volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -358,7 +358,7 @@ async def volume_action(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response | dict[str, Any]:
     """Perform an action on a volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -448,7 +448,7 @@ async def list_snapshots(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List snapshots (summary)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     snapshots = db.list_snapshots(
         project_id=token.project_id if not all_tenants else None,
         volume_id=volume_id,
@@ -473,7 +473,7 @@ async def list_snapshots_detail(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List snapshots (detailed)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     snapshots = db.list_snapshots(
         project_id=token.project_id if not all_tenants else None,
         volume_id=volume_id,
@@ -493,7 +493,7 @@ async def create_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a new snapshot."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     req = body.snapshot
 
     snapshot = db.create_snapshot(
@@ -522,7 +522,7 @@ async def show_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show snapshot details."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     snapshot = db.get_snapshot(snapshot_id, project_id=token.project_id)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
@@ -537,7 +537,7 @@ async def update_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a snapshot."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     req = body.snapshot
 
     snapshot = db.update_snapshot(
@@ -558,7 +558,7 @@ async def delete_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a snapshot."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     if not db.get_snapshot(snapshot_id, project_id=token.project_id):
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
@@ -574,7 +574,7 @@ async def list_snapshot_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List snapshot metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     snapshot = db.get_snapshot(snapshot_id, project_id=token.project_id)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
@@ -589,7 +589,7 @@ async def update_snapshot_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update snapshot metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     body = await request.json()
     metadata = body.get("metadata", {})
 
@@ -785,7 +785,7 @@ async def get_limits(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get volume limits for a project."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     return db.get_volume_limits(token.project_id)
 
 
@@ -815,7 +815,7 @@ async def list_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List volume metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -830,7 +830,7 @@ async def create_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create or replace volume metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     body = await request.json()
     metadata = body.get("metadata", {})
 
@@ -850,7 +850,7 @@ async def update_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update volume metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     body = await request.json()
     metadata = body.get("metadata", {})
 
@@ -868,7 +868,7 @@ async def show_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show a volume metadata item."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -886,7 +886,7 @@ async def update_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a volume metadata item."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     body = await request.json()
     meta = body.get("meta", {})
 
@@ -909,7 +909,7 @@ async def delete_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a volume metadata item."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=token.project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -1075,3 +1075,490 @@ async def get_quota_set_defaults(
 
     default_quota = CinderQuota(project_id=tenant_id)
     return {"quota_set": default_quota.to_dict()}
+
+
+# Volume Transfers
+
+
+class VolumeTransferRequest(BaseModel):
+    """Volume transfer request."""
+
+    name: str
+    volume_id: str
+
+
+class VolumeTransferBody(BaseModel):
+    """Wrapper for volume transfer request."""
+
+    transfer: VolumeTransferRequest
+
+
+class VolumeTransferAcceptRequest(BaseModel):
+    """Volume transfer accept request."""
+
+    auth_key: str
+
+
+class VolumeTransferAcceptBody(BaseModel):
+    """Wrapper for volume transfer accept request."""
+
+    accept: VolumeTransferAcceptRequest
+
+
+@router.get("/v3/{project_id}/os-volume-transfer")
+async def list_volume_transfers(
+    project_id: str,
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List volume transfers."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    transfers = db.list_volume_transfers(
+        project_id=project_id if not all_tenants else None,
+        all_tenants=all_tenants,
+    )
+    return {"transfers": [transfer.to_dict() for transfer in transfers]}
+
+
+@router.get("/v3/{project_id}/os-volume-transfer/detail")
+async def list_volume_transfers_detail(
+    project_id: str,
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List volume transfers with details."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    transfers = db.list_volume_transfers(
+        project_id=project_id if not all_tenants else None,
+        all_tenants=all_tenants,
+    )
+    return {"transfers": [transfer.to_dict() for transfer in transfers]}
+
+
+@router.post("/v3/{project_id}/os-volume-transfer", status_code=202)
+async def create_volume_transfer(
+    project_id: str,
+    body: VolumeTransferBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a volume transfer."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    try:
+        transfer = db.create_volume_transfer(
+            name=body.transfer.name,
+            volume_id=body.transfer.volume_id,
+            project_id=project_id,
+        )
+        return {"transfer": transfer.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/v3/{project_id}/os-volume-transfer/{transfer_id}")
+async def get_volume_transfer(
+    project_id: str,
+    transfer_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a volume transfer by ID."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    transfer = db.get_volume_transfer(transfer_id, project_id=project_id)
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Volume transfer not found")
+
+    return {"transfer": transfer.to_dict()}
+
+
+@router.post("/v3/{project_id}/os-volume-transfer/{transfer_id}/accept", status_code=202)
+async def accept_volume_transfer(
+    project_id: str,
+    transfer_id: str,
+    body: VolumeTransferAcceptBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Accept a volume transfer."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    transfer = db.accept_volume_transfer(
+        transfer_id=transfer_id,
+        auth_key=body.accept.auth_key,
+        destination_project_id=project_id,
+    )
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Volume transfer not found or invalid auth key")
+
+    return {"transfer": transfer.to_dict()}
+
+
+@router.delete("/v3/{project_id}/os-volume-transfer/{transfer_id}", status_code=202)
+async def delete_volume_transfer(
+    project_id: str,
+    transfer_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a volume transfer."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    success = db.delete_volume_transfer(transfer_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Volume transfer not found")
+
+    return Response(status_code=202)
+
+
+# Volume Backups
+
+
+class VolumeBackupRequest(BaseModel):
+    """Volume backup request."""
+
+    name: str
+    volume_id: str
+    description: str = ""
+    container: str = "volumebackups"
+    incremental: bool = False
+    snapshot_id: str | None = None
+
+
+class VolumeBackupBody(BaseModel):
+    """Wrapper for volume backup request."""
+
+    backup: VolumeBackupRequest
+
+
+class VolumeBackupRestoreRequest(BaseModel):
+    """Volume backup restore request."""
+
+    volume_id: str | None = None
+    name: str | None = None
+
+
+class VolumeBackupRestoreBody(BaseModel):
+    """Wrapper for volume backup restore request."""
+
+    restore: VolumeBackupRestoreRequest
+
+
+@router.get("/v3/{project_id}/backups")
+async def list_volume_backups(
+    project_id: str,
+    volume_id: str | None = Query(None),
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List volume backups."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    backups = db.list_volume_backups(
+        project_id=project_id if not all_tenants else None,
+        volume_id=volume_id,
+        all_tenants=all_tenants,
+    )
+    return {"backups": [backup.to_dict() for backup in backups]}
+
+
+@router.get("/v3/{project_id}/backups/detail")
+async def list_volume_backups_detail(
+    project_id: str,
+    volume_id: str | None = Query(None),
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List volume backups with details."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    backups = db.list_volume_backups(
+        project_id=project_id if not all_tenants else None,
+        volume_id=volume_id,
+        all_tenants=all_tenants,
+    )
+    return {"backups": [backup.to_dict() for backup in backups]}
+
+
+@router.post("/v3/{project_id}/backups", status_code=202)
+async def create_volume_backup(
+    project_id: str,
+    body: VolumeBackupBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a volume backup."""
+    token = get_token_or_raise(x_auth_token)
+
+    try:
+        backup = db.create_volume_backup(
+            name=body.backup.name,
+            volume_id=body.backup.volume_id,
+            description=body.backup.description,
+            container=body.backup.container,
+            incremental=body.backup.incremental,
+            snapshot_id=body.backup.snapshot_id,
+            project_id=project_id,
+            user_id=token.user_id,
+        )
+        return {"backup": backup.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/v3/{project_id}/backups/{backup_id}")
+async def get_volume_backup(
+    project_id: str,
+    backup_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a volume backup by ID."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    backup = db.get_volume_backup(backup_id, project_id=project_id)
+    if not backup:
+        raise HTTPException(status_code=404, detail="Volume backup not found")
+
+    return {"backup": backup.to_dict()}
+
+
+@router.delete("/v3/{project_id}/backups/{backup_id}", status_code=202)
+async def delete_volume_backup(
+    project_id: str,
+    backup_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a volume backup."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    success = db.delete_volume_backup(backup_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Volume backup not found")
+
+    return Response(status_code=202)
+
+
+@router.post("/v3/{project_id}/backups/{backup_id}/restore", status_code=202)
+async def restore_volume_backup(
+    project_id: str,
+    backup_id: str,
+    body: VolumeBackupRestoreBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Restore a volume from backup."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    volume = db.restore_volume_backup(
+        backup_id=backup_id,
+        volume_id=body.restore.volume_id,
+        name=body.restore.name,
+        project_id=project_id,
+    )
+    if not volume:
+        raise HTTPException(status_code=404, detail="Volume backup not found")
+
+    return {"restore": {"volume_id": volume.id, "backup_id": backup_id}}
+
+
+# Consistency Groups
+
+
+class ConsistencyGroupRequest(BaseModel):
+    """Consistency group request."""
+
+    name: str
+    description: str = ""
+    volume_types: list[str] = Field(default_factory=list)
+    availability_zone: str = "nova"
+
+
+class ConsistencyGroupBody(BaseModel):
+    """Wrapper for consistency group request."""
+
+    group: ConsistencyGroupRequest
+
+
+class GroupSnapshotRequest(BaseModel):
+    """Group snapshot request."""
+
+    name: str
+    description: str = ""
+    group_id: str
+
+
+class GroupSnapshotBody(BaseModel):
+    """Wrapper for group snapshot request."""
+
+    group_snapshot: GroupSnapshotRequest
+
+
+@router.get("/v3/{project_id}/groups")
+async def list_consistency_groups(
+    project_id: str,
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List consistency groups."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    groups = db.list_consistency_groups(
+        project_id=project_id if not all_tenants else None,
+        all_tenants=all_tenants,
+    )
+    return {"groups": [group.to_dict() for group in groups]}
+
+
+@router.get("/v3/{project_id}/groups/detail")
+async def list_consistency_groups_detail(
+    project_id: str,
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List consistency groups with details."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    groups = db.list_consistency_groups(
+        project_id=project_id if not all_tenants else None,
+        all_tenants=all_tenants,
+    )
+    return {"groups": [group.to_dict() for group in groups]}
+
+
+@router.post("/v3/{project_id}/groups", status_code=202)
+async def create_consistency_group(
+    project_id: str,
+    body: ConsistencyGroupBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a consistency group."""
+    token = get_token_or_raise(x_auth_token)
+
+    group = db.create_consistency_group(
+        name=body.group.name,
+        description=body.group.description,
+        volume_types=body.group.volume_types,
+        availability_zone=body.group.availability_zone,
+        project_id=project_id,
+        user_id=token.user_id,
+    )
+    return {"group": group.to_dict()}
+
+
+@router.get("/v3/{project_id}/groups/{group_id}")
+async def get_consistency_group(
+    project_id: str,
+    group_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a consistency group by ID."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    group = db.get_consistency_group(group_id, project_id=project_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Consistency group not found")
+
+    return {"group": group.to_dict()}
+
+
+@router.delete("/v3/{project_id}/groups/{group_id}", status_code=202)
+async def delete_consistency_group(
+    project_id: str,
+    group_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a consistency group."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    success = db.delete_consistency_group(group_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Consistency group not found")
+
+    return Response(status_code=202)
+
+
+@router.get("/v3/{project_id}/group_snapshots")
+async def list_group_snapshots(
+    project_id: str,
+    group_id: str | None = Query(None),
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List group snapshots."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    snapshots = db.list_group_snapshots(
+        project_id=project_id if not all_tenants else None,
+        group_id=group_id,
+        all_tenants=all_tenants,
+    )
+    return {"group_snapshots": [snapshot.to_dict() for snapshot in snapshots]}
+
+
+@router.get("/v3/{project_id}/group_snapshots/detail")
+async def list_group_snapshots_detail(
+    project_id: str,
+    group_id: str | None = Query(None),
+    all_tenants: bool = Query(False),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List group snapshots with details."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    snapshots = db.list_group_snapshots(
+        project_id=project_id if not all_tenants else None,
+        group_id=group_id,
+        all_tenants=all_tenants,
+    )
+    return {"group_snapshots": [snapshot.to_dict() for snapshot in snapshots]}
+
+
+@router.post("/v3/{project_id}/group_snapshots", status_code=202)
+async def create_group_snapshot(
+    project_id: str,
+    body: GroupSnapshotBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a group snapshot."""
+    token = get_token_or_raise(x_auth_token)
+
+    try:
+        snapshot = db.create_group_snapshot(
+            name=body.group_snapshot.name,
+            group_id=body.group_snapshot.group_id,
+            description=body.group_snapshot.description,
+            project_id=project_id,
+            user_id=token.user_id,
+        )
+        return {"group_snapshot": snapshot.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/v3/{project_id}/group_snapshots/{snapshot_id}")
+async def get_group_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a group snapshot by ID."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    snapshot = db.get_group_snapshot(snapshot_id, project_id=project_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Group snapshot not found")
+
+    return {"group_snapshot": snapshot.to_dict()}
+
+
+@router.delete("/v3/{project_id}/group_snapshots/{snapshot_id}", status_code=202)
+async def delete_group_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a group snapshot."""
+    get_token_or_raise(x_auth_token)  # Validate token
+
+    success = db.delete_group_snapshot(snapshot_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Group snapshot not found")
+
+    return Response(status_code=202)
