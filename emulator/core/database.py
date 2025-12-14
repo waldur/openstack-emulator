@@ -10,7 +10,9 @@ from uuid import uuid4
 
 from emulator.core.models import (
     AllocationPool,
+    BackupStatus,
     CinderQuota,
+    ConsistencyGroup,
     ContainerFormat,
     Credential,
     DiskFormat,
@@ -22,12 +24,17 @@ from emulator.core.models import (
     FloatingIP,
     FloatingIPStatus,
     GlanceImage,
+    GlanceStore,
     Group,
+    GroupSnapshot,
+    GroupStatus,
     HealthMonitor,
     HealthMonitorType,
     Image,
+    ImageCacheEntry,
     ImageMember,
     ImageStatus,
+    ImageTask,
     ImageVisibility,
     Keypair,
     L7Policy,
@@ -45,6 +52,7 @@ from emulator.core.models import (
     LoadBalancerOperatingStatus,
     LoadBalancerProvider,
     LoadBalancerProvisioningStatus,
+    MetadefNamespace,
     Network,
     NeutronAgent,
     NeutronExtension,
@@ -81,13 +89,17 @@ from emulator.core.models import (
     Snapshot,
     SnapshotStatus,
     Subnet,
+    TaskStatus,
+    TaskType,
     Token,
     Trunk,
     TrunkSubPort,
     User,
     Volume,
     VolumeAttachment,
+    VolumeBackup,
     VolumeStatus,
+    VolumeTransfer,
     VolumeType,
 )
 
@@ -194,6 +206,18 @@ class Database:
         self._lb_availability_zone_profiles: dict[str, LoadBalancerAvailabilityZoneProfile] = {}
         self._lb_providers: dict[str, LoadBalancerProvider] = {}
 
+        # Storage dictionaries - Cinder Extensions
+        self._volume_transfers: dict[str, VolumeTransfer] = {}
+        self._volume_backups: dict[str, VolumeBackup] = {}
+        self._consistency_groups: dict[str, ConsistencyGroup] = {}
+        self._group_snapshots: dict[str, GroupSnapshot] = {}
+
+        # Storage dictionaries - Glance Extensions
+        self._image_tasks: dict[str, ImageTask] = {}
+        self._metadef_namespaces: dict[str, MetadefNamespace] = {}
+        self._image_cache: dict[str, ImageCacheEntry] = {}
+        self._glance_stores: dict[str, GlanceStore] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -205,6 +229,7 @@ class Database:
         self._init_nova_extensions()
         self._init_neutron_extensions()
         self._init_octavia_extensions()
+        self._init_glance_extensions()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -6991,7 +7016,11 @@ class Database:
             loadbalancers = [
                 lb for lb in self._load_balancers.values() if lb.project_id == project_id
             ]
-            listeners = [listener for listener in self._listeners.values() if listener.project_id == project_id]
+            listeners = [
+                listener
+                for listener in self._listeners.values()
+                if listener.project_id == project_id
+            ]
             pools = [p for p in self._pools.values() if p.project_id == project_id]
             members = [m for m in self._pool_members.values() if m.project_id == project_id]
             health_monitors = [
@@ -7061,6 +7090,529 @@ class Database:
         """Get a load balancer availability zone profile by ID."""
         with self._lock:
             return self._lb_availability_zone_profiles.get(profile_id)
+
+    # Cinder Extensions API Methods
+
+    # Volume Transfers
+
+    def create_volume_transfer(
+        self,
+        name: str,
+        volume_id: str,
+        project_id: str,
+    ) -> VolumeTransfer:
+        """Create a volume transfer."""
+        with self._lock:
+            # Verify volume exists and belongs to project
+            volume = self.get_volume(volume_id, project_id=project_id)
+            if not volume:
+                raise ValueError("Volume not found or access denied")
+
+            transfer = VolumeTransfer(
+                name=name,
+                volume_id=volume_id,
+                source_project_id=project_id,
+            )
+            self._volume_transfers[transfer.id] = transfer
+            return transfer
+
+    def list_volume_transfers(
+        self,
+        project_id: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[VolumeTransfer]:
+        """List volume transfers."""
+        with self._lock:
+            transfers = list(self._volume_transfers.values())
+            if project_id and not all_tenants:
+                transfers = [t for t in transfers if t.source_project_id == project_id]
+            return transfers
+
+    def get_volume_transfer(
+        self, transfer_id: str, project_id: str | None = None
+    ) -> VolumeTransfer | None:
+        """Get a volume transfer by ID."""
+        with self._lock:
+            transfer = self._volume_transfers.get(transfer_id)
+            if not transfer:
+                return None
+            if project_id and transfer.source_project_id != project_id:
+                return None
+            return transfer
+
+    def accept_volume_transfer(
+        self,
+        transfer_id: str,
+        auth_key: str,
+        destination_project_id: str,
+    ) -> VolumeTransfer | None:
+        """Accept a volume transfer."""
+        with self._lock:
+            transfer = self._volume_transfers.get(transfer_id)
+            if not transfer or transfer.auth_key != auth_key:
+                return None
+
+            # Move volume to destination project
+            volume = self._volumes.get(transfer.volume_id)
+            if volume:
+                volume.project_id = destination_project_id
+
+            transfer.destination_project_id = destination_project_id
+            transfer.accepted = True
+            return transfer
+
+    def delete_volume_transfer(self, transfer_id: str, project_id: str | None = None) -> bool:
+        """Delete a volume transfer."""
+        with self._lock:
+            transfer = self._volume_transfers.get(transfer_id)
+            if not transfer:
+                return False
+            if project_id and transfer.source_project_id != project_id:
+                return False
+            del self._volume_transfers[transfer_id]
+            return True
+
+    # Volume Backups
+
+    def create_volume_backup(
+        self,
+        name: str,
+        volume_id: str,
+        description: str = "",
+        container: str = "volumebackups",
+        incremental: bool = False,
+        snapshot_id: str | None = None,
+        project_id: str = "",
+        user_id: str = "",
+    ) -> VolumeBackup:
+        """Create a volume backup."""
+        with self._lock:
+            # Get volume to inherit size
+            volume = self.get_volume(volume_id, project_id=project_id)
+            if not volume:
+                raise ValueError("Volume not found")
+
+            backup = VolumeBackup(
+                name=name,
+                description=description,
+                volume_id=volume_id,
+                container=container,
+                size=volume.size,
+                project_id=project_id,
+                user_id=user_id,
+                is_incremental=incremental,
+                snapshot_id=snapshot_id,
+            )
+            # Simulate immediate availability
+            backup.status = BackupStatus.AVAILABLE
+            self._volume_backups[backup.id] = backup
+            return backup
+
+    def list_volume_backups(
+        self,
+        project_id: str | None = None,
+        volume_id: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[VolumeBackup]:
+        """List volume backups."""
+        with self._lock:
+            backups = list(self._volume_backups.values())
+            if project_id and not all_tenants:
+                backups = [b for b in backups if b.project_id == project_id]
+            if volume_id:
+                backups = [b for b in backups if b.volume_id == volume_id]
+            return backups
+
+    def get_volume_backup(
+        self, backup_id: str, project_id: str | None = None
+    ) -> VolumeBackup | None:
+        """Get a volume backup by ID."""
+        with self._lock:
+            backup = self._volume_backups.get(backup_id)
+            if not backup:
+                return None
+            if project_id and backup.project_id != project_id:
+                return None
+            return backup
+
+    def delete_volume_backup(self, backup_id: str, project_id: str | None = None) -> bool:
+        """Delete a volume backup."""
+        with self._lock:
+            backup = self._volume_backups.get(backup_id)
+            if not backup:
+                return False
+            if project_id and backup.project_id != project_id:
+                return False
+            del self._volume_backups[backup_id]
+            return True
+
+    def restore_volume_backup(
+        self,
+        backup_id: str,
+        volume_id: str | None = None,
+        name: str | None = None,
+        project_id: str | None = None,
+    ) -> Volume | None:
+        """Restore a volume from backup."""
+        with self._lock:
+            backup = self.get_volume_backup(backup_id, project_id=project_id)
+            if not backup:
+                return None
+
+            if volume_id:
+                # Restore to existing volume
+                volume = self.get_volume(volume_id, project_id=project_id)
+                if not volume:
+                    return None
+                # In reality this would overwrite volume data
+                return volume
+            else:
+                # Create new volume from backup
+                volume_name = name or f"restore-{backup.name}"
+                return self.create_volume(
+                    name=volume_name,
+                    size=backup.size,
+                    project_id=backup.project_id,
+                    user_id=backup.user_id,
+                    availability_zone=backup.availability_zone,
+                )
+
+    # Consistency Groups
+
+    def create_consistency_group(
+        self,
+        name: str,
+        description: str = "",
+        volume_types: list[str] | None = None,
+        availability_zone: str = "nova",
+        project_id: str = "",
+        user_id: str = "",
+    ) -> ConsistencyGroup:
+        """Create a consistency group."""
+        with self._lock:
+            group = ConsistencyGroup(
+                name=name,
+                description=description,
+                volume_types=volume_types or [],
+                availability_zone=availability_zone,
+                project_id=project_id,
+                user_id=user_id,
+            )
+            # Simulate immediate availability
+            group.status = GroupStatus.AVAILABLE
+            self._consistency_groups[group.id] = group
+            return group
+
+    def list_consistency_groups(
+        self,
+        project_id: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[ConsistencyGroup]:
+        """List consistency groups."""
+        with self._lock:
+            groups = list(self._consistency_groups.values())
+            if project_id and not all_tenants:
+                groups = [g for g in groups if g.project_id == project_id]
+            return groups
+
+    def get_consistency_group(
+        self, group_id: str, project_id: str | None = None
+    ) -> ConsistencyGroup | None:
+        """Get a consistency group by ID."""
+        with self._lock:
+            group = self._consistency_groups.get(group_id)
+            if not group:
+                return None
+            if project_id and group.project_id != project_id:
+                return None
+            return group
+
+    def delete_consistency_group(self, group_id: str, project_id: str | None = None) -> bool:
+        """Delete a consistency group."""
+        with self._lock:
+            group = self._consistency_groups.get(group_id)
+            if not group:
+                return False
+            if project_id and group.project_id != project_id:
+                return False
+            del self._consistency_groups[group_id]
+            return True
+
+    def create_group_snapshot(
+        self,
+        name: str,
+        group_id: str,
+        description: str = "",
+        project_id: str = "",
+        user_id: str = "",
+    ) -> GroupSnapshot:
+        """Create a group snapshot."""
+        with self._lock:
+            group = self.get_consistency_group(group_id, project_id=project_id)
+            if not group:
+                raise ValueError("Consistency group not found")
+
+            snapshot = GroupSnapshot(
+                name=name,
+                description=description,
+                group_id=group_id,
+                group_type_id=group.group_type,
+                project_id=project_id,
+                user_id=user_id,
+            )
+            # Simulate immediate availability
+            snapshot.status = GroupStatus.AVAILABLE
+            self._group_snapshots[snapshot.id] = snapshot
+            return snapshot
+
+    def list_group_snapshots(
+        self,
+        project_id: str | None = None,
+        group_id: str | None = None,
+        all_tenants: bool = False,
+    ) -> list[GroupSnapshot]:
+        """List group snapshots."""
+        with self._lock:
+            snapshots = list(self._group_snapshots.values())
+            if project_id and not all_tenants:
+                snapshots = [s for s in snapshots if s.project_id == project_id]
+            if group_id:
+                snapshots = [s for s in snapshots if s.group_id == group_id]
+            return snapshots
+
+    def get_group_snapshot(
+        self, snapshot_id: str, project_id: str | None = None
+    ) -> GroupSnapshot | None:
+        """Get a group snapshot by ID."""
+        with self._lock:
+            snapshot = self._group_snapshots.get(snapshot_id)
+            if not snapshot:
+                return None
+            if project_id and snapshot.project_id != project_id:
+                return None
+            return snapshot
+
+    def delete_group_snapshot(self, snapshot_id: str, project_id: str | None = None) -> bool:
+        """Delete a group snapshot."""
+        with self._lock:
+            snapshot = self._group_snapshots.get(snapshot_id)
+            if not snapshot:
+                return False
+            if project_id and snapshot.project_id != project_id:
+                return False
+            del self._group_snapshots[snapshot_id]
+            return True
+
+    def _init_glance_extensions(self) -> None:
+        """Initialize Glance extensions and default data."""
+        # Initialize default stores
+        stores = [
+            GlanceStore(
+                id="default",
+                type="file",
+                description="Default file-based store",
+                default=True,
+            ),
+            GlanceStore(
+                id="swift",
+                type="swift",
+                description="Swift object storage",
+                default=False,
+            ),
+        ]
+
+        for store in stores:
+            self._glance_stores[store.id] = store
+
+    # Glance Extensions API Methods
+
+    # Image Tasks
+
+    def create_image_task(
+        self,
+        task_type: TaskType,
+        input_data: dict[str, Any],
+        owner: str = "",
+    ) -> ImageTask:
+        """Create an image task."""
+        with self._lock:
+            task = ImageTask(
+                type=task_type,
+                owner=owner,
+                input=input_data,
+            )
+            # Simulate immediate success for testing
+            task.status = TaskStatus.SUCCESS
+            task.result = {"image_id": str(uuid4())} if task_type == TaskType.IMPORT else {}
+            self._image_tasks[task.id] = task
+            return task
+
+    def list_image_tasks(
+        self,
+        owner: str | None = None,
+        status: TaskStatus | None = None,
+        type: TaskType | None = None,
+    ) -> list[ImageTask]:
+        """List image tasks."""
+        with self._lock:
+            tasks = list(self._image_tasks.values())
+            if owner:
+                tasks = [t for t in tasks if t.owner == owner]
+            if status:
+                tasks = [t for t in tasks if t.status == status]
+            if type:
+                tasks = [t for t in tasks if t.type == type]
+            return tasks
+
+    def get_image_task(self, task_id: str, owner: str | None = None) -> ImageTask | None:
+        """Get an image task by ID."""
+        with self._lock:
+            task = self._image_tasks.get(task_id)
+            if not task:
+                return None
+            if owner and task.owner != owner:
+                return None
+            return task
+
+    def delete_image_task(self, task_id: str, owner: str | None = None) -> bool:
+        """Delete an image task."""
+        with self._lock:
+            task = self._image_tasks.get(task_id)
+            if not task:
+                return False
+            if owner and task.owner != owner:
+                return False
+            del self._image_tasks[task_id]
+            return True
+
+    # Metadata Definitions
+
+    def create_metadef_namespace(
+        self,
+        namespace: str,
+        display_name: str = "",
+        description: str = "",
+        visibility: str = "private",
+        owner: str = "",
+        properties: dict[str, Any] | None = None,
+    ) -> MetadefNamespace:
+        """Create a metadata definition namespace."""
+        with self._lock:
+            metadef = MetadefNamespace(
+                namespace=namespace,
+                display_name=display_name,
+                description=description,
+                visibility=visibility,
+                owner=owner,
+                properties=properties or {},
+            )
+            self._metadef_namespaces[namespace] = metadef
+            return metadef
+
+    def list_metadef_namespaces(
+        self,
+        owner: str | None = None,
+        visibility: str | None = None,
+    ) -> list[MetadefNamespace]:
+        """List metadata definition namespaces."""
+        with self._lock:
+            namespaces = list(self._metadef_namespaces.values())
+            if owner:
+                namespaces = [n for n in namespaces if n.owner == owner or n.visibility == "public"]
+            if visibility:
+                namespaces = [n for n in namespaces if n.visibility == visibility]
+            return namespaces
+
+    def get_metadef_namespace(
+        self, namespace: str, owner: str | None = None
+    ) -> MetadefNamespace | None:
+        """Get a metadata definition namespace."""
+        with self._lock:
+            metadef = self._metadef_namespaces.get(namespace)
+            if not metadef:
+                return None
+            if owner and metadef.owner != owner and metadef.visibility != "public":
+                return None
+            return metadef
+
+    def update_metadef_namespace(
+        self, namespace: str, owner: str | None = None, **kwargs
+    ) -> MetadefNamespace | None:
+        """Update a metadata definition namespace."""
+        with self._lock:
+            metadef = self._metadef_namespaces.get(namespace)
+            if not metadef:
+                return None
+            if owner and metadef.owner != owner:
+                return None
+
+            for key, value in kwargs.items():
+                if hasattr(metadef, key) and value is not None:
+                    setattr(metadef, key, value)
+            metadef.updated_at = datetime.utcnow()
+            return metadef
+
+    def delete_metadef_namespace(self, namespace: str, owner: str | None = None) -> bool:
+        """Delete a metadata definition namespace."""
+        with self._lock:
+            metadef = self._metadef_namespaces.get(namespace)
+            if not metadef:
+                return False
+            if owner and metadef.owner != owner:
+                return False
+            del self._metadef_namespaces[namespace]
+            return True
+
+    # Image Cache
+
+    def get_image_cache_status(self) -> dict[str, Any]:
+        """Get image cache status."""
+        with self._lock:
+            cached_images = list(self._image_cache.values())
+            total_size = sum(entry.size for entry in cached_images)
+            return {
+                "cached_images": [entry.to_dict() for entry in cached_images],
+                "queued_images": [],  # Simplified - no queue in this implementation
+                "total_size": total_size,
+                "cache_count": len(cached_images),
+            }
+
+    def cache_image(self, image_id: str, size: int = 0) -> ImageCacheEntry:
+        """Add an image to cache."""
+        with self._lock:
+            entry = ImageCacheEntry(
+                image_id=image_id,
+                size=size,
+                hits=0,
+            )
+            self._image_cache[image_id] = entry
+            return entry
+
+    def delete_cached_image(self, image_id: str) -> bool:
+        """Remove an image from cache."""
+        with self._lock:
+            if image_id in self._image_cache:
+                del self._image_cache[image_id]
+                return True
+            return False
+
+    def clear_image_cache(self) -> bool:
+        """Clear all cached images."""
+        with self._lock:
+            self._image_cache.clear()
+            return True
+
+    # Glance Stores
+
+    def list_glance_stores(self) -> list[GlanceStore]:
+        """List available Glance stores."""
+        with self._lock:
+            return list(self._glance_stores.values())
+
+    def get_glance_store(self, store_id: str) -> GlanceStore | None:
+        """Get a Glance store by ID."""
+        with self._lock:
+            return self._glance_stores.get(store_id)
 
 
 # Global database instance

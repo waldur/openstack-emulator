@@ -2483,3 +2483,321 @@ class LoadBalancerProvider:
             "name": self.name,
             "description": self.description,
         }
+
+
+# Cinder Extensions and Additional Models
+
+
+class VolumeTransferStatus(str, Enum):
+    """Volume transfer status enumeration."""
+
+    CREATING = "creating"
+    AVAILABLE = "available"
+    DELETING = "deleting"
+    ERROR = "error"
+    ERROR_DELETING = "error_deleting"
+
+
+@dataclass
+class VolumeTransfer:
+    """Represents a Cinder volume transfer."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    volume_id: str = ""
+    auth_key: str = field(default_factory=lambda: str(uuid4()).replace("-", "")[:16])
+    source_project_id: str = ""
+    destination_project_id: str | None = None
+    accepted: bool = False
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "volume_id": self.volume_id,
+            "auth_key": self.auth_key,
+            "created_at": self.created_at.isoformat() + "Z",
+            "links": [
+                {"rel": "self", "href": f"/v3/os-volume-transfer/{self.id}"},
+            ],
+        }
+
+
+class BackupStatus(str, Enum):
+    """Backup status enumeration."""
+
+    CREATING = "creating"
+    AVAILABLE = "available"
+    DELETING = "deleting"
+    ERROR = "error"
+    ERROR_DELETING = "error_deleting"
+    RESTORING = "restoring"
+
+
+@dataclass
+class VolumeBackup:
+    """Represents a Cinder volume backup."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: BackupStatus = BackupStatus.CREATING
+    volume_id: str = ""
+    container: str = "volumebackups"
+    size: int = 0  # GB (inherited from volume)
+    object_count: int = 0
+    availability_zone: str = "nova"
+    project_id: str = ""
+    user_id: str = ""
+    is_incremental: bool = False
+    has_dependent_backups: bool = False
+    snapshot_id: str | None = None
+    parent_id: str | None = None
+    temp_volume_id: str | None = None
+    temp_snapshot_id: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    data_timestamp: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value,
+            "volume_id": self.volume_id,
+            "container": self.container,
+            "size": self.size,
+            "object_count": self.object_count,
+            "availability_zone": self.availability_zone,
+            "project_id": self.project_id,
+            "user_id": self.user_id,
+            "is_incremental": self.is_incremental,
+            "has_dependent_backups": self.has_dependent_backups,
+            "snapshot_id": self.snapshot_id,
+            "parent_id": self.parent_id,
+            "temp_volume_id": self.temp_volume_id,
+            "temp_snapshot_id": self.temp_snapshot_id,
+            "metadata": self.metadata,
+            "data_timestamp": self.data_timestamp.isoformat() + "Z",
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "links": [
+                {"rel": "self", "href": f"/v3/backups/{self.id}"},
+            ],
+        }
+
+
+class GroupStatus(str, Enum):
+    """Consistency group status enumeration."""
+
+    CREATING = "creating"
+    AVAILABLE = "available"
+    ERROR = "error"
+    DELETING = "deleting"
+    ERROR_DELETING = "error_deleting"
+    UPDATING = "updating"
+
+
+@dataclass
+class ConsistencyGroup:
+    """Represents a Cinder consistency group."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: GroupStatus = GroupStatus.CREATING
+    availability_zone: str = "nova"
+    group_type: str = ""
+    group_snapshot_id: str | None = None
+    source_group_id: str | None = None
+    project_id: str = ""
+    user_id: str = ""
+    volume_types: list[str] = field(default_factory=list)
+    volumes: list[str] = field(default_factory=list)  # volume IDs
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value,
+            "availability_zone": self.availability_zone,
+            "group_type": self.group_type,
+            "group_snapshot_id": self.group_snapshot_id,
+            "source_group_id": self.source_group_id,
+            "project_id": self.project_id,
+            "user_id": self.user_id,
+            "volume_types": self.volume_types,
+            "volumes": self.volumes,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+        }
+
+
+@dataclass
+class GroupSnapshot:
+    """Represents a Cinder group snapshot."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    status: GroupStatus = GroupStatus.CREATING
+    group_id: str = ""
+    group_type_id: str = ""
+    project_id: str = ""
+    user_id: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value,
+            "group_id": self.group_id,
+            "group_type_id": self.group_type_id,
+            "project_id": self.project_id,
+            "user_id": self.user_id,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+        }
+
+
+# Glance Extensions and Additional Models
+
+
+class TaskStatus(str, Enum):
+    """Image task status enumeration."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
+class TaskType(str, Enum):
+    """Image task type enumeration."""
+
+    IMPORT = "import"
+    EXPORT = "export"
+    CLONE = "clone"
+
+
+@dataclass
+class ImageTask:
+    """Represents a Glance image task."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    type: TaskType = TaskType.IMPORT
+    status: TaskStatus = TaskStatus.PENDING
+    owner: str = ""  # project_id
+    expires_at: datetime | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    input: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] = field(default_factory=dict)
+    message: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result_dict = {
+            "id": self.id,
+            "type": self.type.value,
+            "status": self.status.value,
+            "owner": self.owner,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "input": self.input,
+            "result": self.result,
+            "message": self.message,
+            "self": f"/v2/tasks/{self.id}",
+            "schema": "/v2/schemas/task",
+        }
+        if self.expires_at:
+            result_dict["expires_at"] = self.expires_at.isoformat() + "Z"
+        return result_dict
+
+
+@dataclass
+class MetadefNamespace:
+    """Represents a Glance metadata definition namespace."""
+
+    namespace: str = ""
+    display_name: str = ""
+    description: str = ""
+    visibility: str = "private"  # public, private
+    protected: bool = False
+    owner: str = ""  # project_id
+    properties: dict[str, Any] = field(default_factory=dict)
+    objects: list[dict[str, Any]] = field(default_factory=list)
+    resource_type_associations: list[dict[str, str]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "namespace": self.namespace,
+            "display_name": self.display_name,
+            "description": self.description,
+            "visibility": self.visibility,
+            "protected": self.protected,
+            "owner": self.owner,
+            "properties": self.properties,
+            "objects": self.objects,
+            "resource_type_associations": self.resource_type_associations,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "self": f"/v2/metadefs/namespaces/{self.namespace}",
+            "schema": "/v2/schemas/metadefs/namespace",
+        }
+
+
+@dataclass
+class ImageCacheEntry:
+    """Represents an image in the cache."""
+
+    image_id: str = ""
+    last_accessed: datetime = field(default_factory=datetime.utcnow)
+    last_modified: datetime = field(default_factory=datetime.utcnow)
+    size: int = 0
+    hits: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "image_id": self.image_id,
+            "last_accessed": self.last_accessed.isoformat() + "Z",
+            "last_modified": self.last_modified.isoformat() + "Z",
+            "size": self.size,
+            "hits": self.hits,
+        }
+
+
+@dataclass
+class GlanceStore:
+    """Represents a Glance store."""
+
+    id: str = ""
+    type: str = "file"  # file, swift, s3, etc.
+    description: str = ""
+    default: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "description": self.description,
+            "default": self.default,
+        }

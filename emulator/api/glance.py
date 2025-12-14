@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.models import ContainerFormat, DiskFormat, ImageVisibility
+from emulator.core.models import ContainerFormat, DiskFormat, ImageStatus, ImageVisibility, TaskStatus, TaskType
 from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
@@ -573,6 +573,444 @@ async def get_members_schema() -> dict[str, Any]:
         "name": "members",
         "properties": {
             "members": {"type": "array", "items": {"$ref": "/v2/schemas/member"}},
+            "schema": {"type": "string"},
+        },
+    }
+
+
+# Image Import/Export
+
+
+class ImageImportRequest(BaseModel):
+    """Image import request."""
+
+    method: dict[str, Any]
+
+
+class ImageImportBody(BaseModel):
+    """Wrapper for image import request."""
+
+    import_request: ImageImportRequest = Field(alias="import")
+
+
+@router.post("/v2/images/{image_id}/import", status_code=202)
+async def import_image(
+    image_id: str,
+    body: ImageImportBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Import image data using the specified method."""
+    project_id = _get_project_id(x_auth_token)
+
+    # Verify image exists and user has access
+    image = db.get_glance_image(image_id, project_id=project_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # Create an import task
+    task = db.create_image_task(
+        task_type=TaskType.IMPORT,
+        input_data={"image_id": image_id, "import_method": body.import_request.method},
+        owner=project_id,
+    )
+
+    # In a real implementation, this would trigger async import
+    # For the emulator, we simulate immediate success
+    image.status = ImageStatus.ACTIVE
+    image.size = 1024 * 1024 * 100  # 100MB simulated
+
+    return Response(status_code=202)
+
+
+@router.get("/v2/images/{image_id}/tasks")
+async def list_image_tasks(
+    image_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List tasks for a specific image."""
+    project_id = _get_project_id(x_auth_token)
+
+    # Verify image exists and user has access
+    image = db.get_glance_image(image_id, project_id=project_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    tasks = db.list_image_tasks(owner=project_id)
+    # Filter for tasks related to this image
+    image_tasks = [t for t in tasks if t.input.get("image_id") == image_id]
+
+    return {"tasks": [task.to_dict() for task in image_tasks]}
+
+
+# Image Tasks
+
+
+class TaskCreateRequest(BaseModel):
+    """Task creation request."""
+
+    type: str  # import, export, clone
+    input: dict[str, Any]
+
+
+@router.get("/v2/tasks")
+async def list_tasks(
+    status: str | None = Query(None),
+    type: str | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List image tasks."""
+    project_id = _get_project_id(x_auth_token)
+
+    # Convert string parameters to enums if provided
+    status_enum = None
+    type_enum = None
+    if status:
+        try:
+            status_enum = TaskStatus(status)
+        except ValueError:
+            pass
+    if type:
+        try:
+            type_enum = TaskType(type)
+        except ValueError:
+            pass
+
+    tasks = db.list_image_tasks(owner=project_id, status=status_enum, type=type_enum)
+    return {"tasks": [task.to_dict() for task in tasks]}
+
+
+@router.post("/v2/tasks", status_code=201)
+async def create_task(
+    body: TaskCreateRequest,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create an image task."""
+    project_id = _get_project_id(x_auth_token)
+
+    try:
+        task_type = TaskType(body.type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid task type: {body.type}")
+
+    task = db.create_image_task(
+        task_type=task_type,
+        input_data=body.input,
+        owner=project_id,
+    )
+
+    return {"task": task.to_dict()}
+
+
+@router.get("/v2/tasks/{task_id}")
+async def get_task(
+    task_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get an image task by ID."""
+    project_id = _get_project_id(x_auth_token)
+
+    task = db.get_image_task(task_id, owner=project_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {"task": task.to_dict()}
+
+
+@router.delete("/v2/tasks/{task_id}", status_code=204)
+async def delete_task(
+    task_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete an image task."""
+    project_id = _get_project_id(x_auth_token)
+
+    success = db.delete_image_task(task_id, owner=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return Response(status_code=204)
+
+
+# Metadata Definitions
+
+
+class MetadefNamespaceRequest(BaseModel):
+    """Metadef namespace request."""
+
+    namespace: str
+    display_name: str = ""
+    description: str = ""
+    visibility: str = "private"
+    protected: bool = False
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/v2/metadefs/namespaces")
+async def list_metadef_namespaces(
+    visibility: str | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List metadata definition namespaces."""
+    project_id = _get_project_id(x_auth_token)
+
+    namespaces = db.list_metadef_namespaces(owner=project_id, visibility=visibility)
+    return {"namespaces": [ns.to_dict() for ns in namespaces]}
+
+
+@router.post("/v2/metadefs/namespaces", status_code=201)
+async def create_metadef_namespace(
+    body: MetadefNamespaceRequest,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a metadata definition namespace."""
+    project_id = _get_project_id(x_auth_token)
+
+    namespace = db.create_metadef_namespace(
+        namespace=body.namespace,
+        display_name=body.display_name,
+        description=body.description,
+        visibility=body.visibility,
+        owner=project_id,
+        properties=body.properties,
+    )
+
+    return namespace.to_dict()
+
+
+@router.get("/v2/metadefs/namespaces/{namespace_name}")
+async def get_metadef_namespace(
+    namespace_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a metadata definition namespace."""
+    project_id = _get_project_id(x_auth_token)
+
+    namespace = db.get_metadef_namespace(namespace_name, owner=project_id)
+    if not namespace:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+
+    return namespace.to_dict()
+
+
+@router.put("/v2/metadefs/namespaces/{namespace_name}")
+async def update_metadef_namespace(
+    namespace_name: str,
+    body: MetadefNamespaceRequest,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a metadata definition namespace."""
+    project_id = _get_project_id(x_auth_token)
+
+    namespace = db.update_metadef_namespace(
+        namespace=namespace_name,
+        owner=project_id,
+        display_name=body.display_name,
+        description=body.description,
+        visibility=body.visibility,
+        protected=body.protected,
+        properties=body.properties,
+    )
+    if not namespace:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+
+    return namespace.to_dict()
+
+
+@router.delete("/v2/metadefs/namespaces/{namespace_name}", status_code=204)
+async def delete_metadef_namespace(
+    namespace_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a metadata definition namespace."""
+    project_id = _get_project_id(x_auth_token)
+
+    success = db.delete_metadef_namespace(namespace_name, owner=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+
+    return Response(status_code=204)
+
+
+# Image Cache Management
+
+
+@router.get("/v2/cache")
+async def get_cache_status(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get image cache status."""
+    _get_project_id(x_auth_token)  # Validate token (admin operation)
+
+    return db.get_image_cache_status()
+
+
+@router.delete("/v2/cache", status_code=204)
+async def clear_cache(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Clear image cache."""
+    _get_project_id(x_auth_token)  # Validate token (admin operation)
+
+    db.clear_image_cache()
+    return Response(status_code=204)
+
+
+@router.put("/v2/cache/{image_id}", status_code=202)
+async def cache_image(
+    image_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Queue an image for caching."""
+    project_id = _get_project_id(x_auth_token)
+
+    # Verify image exists
+    image = db.get_glance_image(image_id, project_id=project_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    db.cache_image(image_id, size=image.size or 0)
+    return Response(status_code=202)
+
+
+@router.delete("/v2/cache/{image_id}", status_code=204)
+async def delete_cached_image(
+    image_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Remove an image from cache."""
+    _get_project_id(x_auth_token)  # Validate token (admin operation)
+
+    success = db.delete_cached_image(image_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Image not found in cache")
+
+    return Response(status_code=204)
+
+
+# Discovery and Information
+
+
+@router.get("/v2/info/stores")
+async def get_stores_info(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get information about available stores."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    stores = db.list_glance_stores()
+    return {"stores": [store.to_dict() for store in stores]}
+
+
+@router.get("/v2/info/import")
+async def get_import_info(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get information about image import methods."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    return {
+        "import-methods": {
+            "description": "Import methods available to the cloud operator.",
+            "type": "array",
+            "items": {
+                "description": "An import method available to the cloud operator",
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "identifier to use when specifying this import method",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "description of this import method",
+                    },
+                    "disabled": {
+                        "type": "boolean",
+                        "description": "whether this import method is currently disabled",
+                    },
+                },
+            },
+        },
+        "import-methods-list": [
+            {"name": "glance-direct", "description": "Direct upload to Glance", "disabled": False},
+            {"name": "web-download", "description": "Download from web URL", "disabled": False},
+        ],
+    }
+
+
+# Additional Schema Endpoints
+
+
+@router.get("/v2/schemas/task")
+async def get_task_schema() -> dict[str, Any]:
+    """Get task schema."""
+    return {
+        "name": "task",
+        "properties": {
+            "id": {"type": "string", "description": "An identifier for the task"},
+            "type": {
+                "type": "string",
+                "description": "The type of task represented by this content",
+            },
+            "status": {"type": "string", "description": "The current status of this task"},
+            "owner": {"type": "string", "description": "The tenant ID of the task owner"},
+            "created_at": {"type": "string", "description": "Date and time of task creation"},
+            "updated_at": {
+                "type": "string",
+                "description": "Date and time of last task modification",
+            },
+            "expires_at": {"type": "string", "description": "Date and time of task expiration"},
+            "input": {"type": "object", "description": "The parameters required by task"},
+            "result": {"type": "object", "description": "The result of task execution"},
+            "message": {"type": "string", "description": "Human-readable informational message"},
+            "self": {"type": "string"},
+            "schema": {"type": "string"},
+        },
+        "links": [
+            {"rel": "self", "href": "/v2/schemas/task"},
+            {"rel": "describedby", "href": "/v2/schemas/task"},
+        ],
+    }
+
+
+@router.get("/v2/schemas/tasks")
+async def get_tasks_schema() -> dict[str, Any]:
+    """Get tasks collection schema."""
+    return {
+        "name": "tasks",
+        "properties": {
+            "tasks": {"type": "array", "items": {"$ref": "/v2/schemas/task"}},
+            "first": {"type": "string"},
+            "next": {"type": "string"},
+            "schema": {"type": "string"},
+        },
+    }
+
+
+@router.get("/v2/schemas/metadefs/namespace")
+async def get_metadef_namespace_schema() -> dict[str, Any]:
+    """Get metadef namespace schema."""
+    return {
+        "name": "namespace",
+        "properties": {
+            "namespace": {"type": "string", "description": "The unique namespace text"},
+            "display_name": {"type": "string", "description": "The user-friendly name"},
+            "description": {"type": "string", "description": "The description of the namespace"},
+            "visibility": {"type": "string", "enum": ["public", "private"]},
+            "protected": {
+                "type": "boolean",
+                "description": "Whether namespace is protected from deletion",
+            },
+            "owner": {"type": "string", "description": "The tenant ID of the namespace owner"},
+            "properties": {"type": "object", "description": "Property definitions"},
+            "objects": {"type": "array", "description": "Object definitions"},
+            "resource_type_associations": {
+                "type": "array",
+                "description": "Resource type associations",
+            },
+            "created_at": {"type": "string"},
+            "updated_at": {"type": "string"},
+            "self": {"type": "string"},
             "schema": {"type": "string"},
         },
     }
