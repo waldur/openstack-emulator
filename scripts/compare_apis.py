@@ -8,9 +8,10 @@ to generate detailed compliance reports.
 
 import json
 import sys
-import yaml
 from pathlib import Path
-from typing import Dict, List, Set, Any
+from typing import Any, Dict, List, Set
+
+import yaml
 
 
 def load_spec(file_path: str) -> Dict[str, Any]:
