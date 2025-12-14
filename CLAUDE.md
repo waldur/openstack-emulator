@@ -168,7 +168,7 @@ python3 scripts/generate_compliance_report.py reports/
 
 ### Workflow Integration
 
-1. **Before implementing new endpoints**: Check official OpenStack specs in `/Users/ilja/workspace/openstack-openapi/specs/`
+1. **Before implementing new endpoints**: Check official OpenStack specs (auto-downloaded from https://github.com/gtema/openstack)
 2. **After API changes**: Run compliance check to verify alignment
 3. **Before releases**: Generate full compliance report for documentation
 

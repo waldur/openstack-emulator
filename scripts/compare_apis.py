@@ -224,7 +224,7 @@ def main():
     """Main function for command-line usage."""
     if len(sys.argv) != 4:
         print("Usage: python3 compare_apis.py <reference_spec> <emulator_spec> <service_name>")
-        print("Example: python3 compare_apis.py openstack-nova.yaml emulator-nova.json nova")
+        print("Example: python3 compare_apis.py .openstack-specs/openstack_types/data/compute/v2.100.yaml specs/emulator/nova.json nova")
         sys.exit(1)
 
     reference_path = sys.argv[1]

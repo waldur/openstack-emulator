@@ -9,7 +9,14 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.models import ContainerFormat, DiskFormat, ImageStatus, ImageVisibility, TaskStatus, TaskType
+from emulator.core.models import (
+    ContainerFormat,
+    DiskFormat,
+    ImageStatus,
+    ImageVisibility,
+    TaskStatus,
+    TaskType,
+)
 from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()

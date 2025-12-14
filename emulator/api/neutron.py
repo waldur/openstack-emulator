@@ -1470,3 +1470,131 @@ async def get_trunk_subports(
         raise HTTPException(status_code=404, detail="Trunk not found")
 
     return {"sub_ports": [sp.to_dict() for sp in trunk.sub_ports]}
+
+
+# Service Flavors (useful for application developers)
+
+
+class NeutronFlavorRequest(BaseModel):
+    """Neutron service flavor request."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    description: str = ""
+    service_type: str
+    enabled: bool = True
+
+
+class NeutronFlavorBody(BaseModel):
+    """Wrapper for Neutron flavor request."""
+
+    flavor: NeutronFlavorRequest
+
+
+@router.get("/v2.0/flavors")
+async def list_neutron_flavors(
+    service_type: str | None = Query(None),
+    enabled: bool | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List Neutron service flavors."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavors = db.list_neutron_flavors(service_type=service_type, enabled=enabled)
+    return {"flavors": [flavor.to_dict() for flavor in flavors]}
+
+
+@router.post("/v2.0/flavors", status_code=201)
+async def create_neutron_flavor(
+    body: NeutronFlavorBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a Neutron service flavor."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavor = db.create_neutron_flavor(
+        name=body.flavor.name,
+        description=body.flavor.description,
+        service_type=body.flavor.service_type,
+        enabled=body.flavor.enabled,
+    )
+
+    return {"flavor": flavor.to_dict()}
+
+
+@router.get("/v2.0/flavors/{flavor_id}")
+async def get_neutron_flavor(
+    flavor_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a Neutron service flavor by ID."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavor = db.get_neutron_flavor(flavor_id)
+    if not flavor:
+        raise HTTPException(status_code=404, detail="Flavor not found")
+
+    return {"flavor": flavor.to_dict()}
+
+
+@router.put("/v2.0/flavors/{flavor_id}")
+async def update_neutron_flavor(
+    flavor_id: str,
+    body: NeutronFlavorBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a Neutron service flavor."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    flavor = db.update_neutron_flavor(
+        flavor_id=flavor_id,
+        name=body.flavor.name,
+        description=body.flavor.description,
+        enabled=body.flavor.enabled,
+    )
+    if not flavor:
+        raise HTTPException(status_code=404, detail="Flavor not found")
+
+    return {"flavor": flavor.to_dict()}
+
+
+@router.delete("/v2.0/flavors/{flavor_id}", status_code=204)
+async def delete_neutron_flavor(
+    flavor_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a Neutron service flavor."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    success = db.delete_neutron_flavor(flavor_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Flavor not found")
+
+    return Response(status_code=204)
+
+
+@router.get("/v2.0/service_profiles")
+async def list_service_profiles(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List Neutron service profiles."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profiles = db.list_service_profiles()
+    return {"service_profiles": [profile.to_dict() for profile in profiles]}
+
+
+@router.get("/v2.0/service_profiles/{profile_id}")
+async def get_service_profile(
+    profile_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a service profile by ID."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    profile = db.get_service_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Service profile not found")
+
+    return {"service_profile": profile.to_dict()}

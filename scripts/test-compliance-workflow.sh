@@ -46,24 +46,31 @@ else
     exit 1
 fi
 
-# Test 4: Check OpenStack specs path
-echo "✓ Checking OpenStack specifications..."
-SPECS_PATH="/Users/ilja/workspace/openstack-openapi/specs"
-if [[ -d "$SPECS_PATH" ]]; then
-    echo "  - OpenStack specs directory found: $SPECS_PATH"
+# Test 4: Check OpenStack specs cloning
+echo "✓ Testing OpenStack specification cloning..."
+SPECS_REPO="https://github.com/gtema/openstack"
+SPECS_PATH="$PROJECT_ROOT/.openstack-specs-test"
+
+# Test cloning (use a test directory)
+if git clone --quiet --depth 1 "$SPECS_REPO" "$SPECS_PATH" 2>/dev/null; then
+    echo "  - Successfully cloned OpenStack specs repository"
     
     # Check for key spec files
-    services=("compute/v2.96.yaml" "identity/v3.14.yaml" "network/v2.yaml")
+    ACTUAL_SPECS_PATH="$SPECS_PATH/openstack_types/data"
+    services=("compute/v2.100.yaml" "identity/v3.14.yaml" "network/v2.27.yaml")
     for spec in "${services[@]}"; do
-        if [[ -f "$SPECS_PATH/$spec" ]]; then
+        if [[ -f "$ACTUAL_SPECS_PATH/$spec" ]]; then
             echo "  - Found: $spec"
         else
             echo "  ⚠ Missing: $spec"
         fi
     done
+    
+    # Cleanup test directory
+    rm -rf "$SPECS_PATH"
 else
-    echo "  ⚠ OpenStack specs directory not found: $SPECS_PATH"
-    echo "    The comparison will work but may not find reference specifications"
+    echo "  ⚠ Could not clone OpenStack specs repository"
+    echo "    Network connection may be required for compliance checks"
 fi
 
 # Test 5: Check required dependencies

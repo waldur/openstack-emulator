@@ -513,3 +513,88 @@ class TestTenantIsolation:
             headers={"X-Auth-Token": other_token},
         )
         assert response.status_code == 404  # Should not be accessible
+
+
+class TestNeutronFlavors:
+    """Test Neutron service flavor endpoints."""
+
+    def test_list_neutron_flavors(self, auth_token):
+        """Test listing Neutron service flavors."""
+        response = client.get("/v2.0/flavors", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "flavors" in data
+        assert len(data["flavors"]) > 0  # Should have default flavors
+        
+        # Check for expected flavors
+        flavor_names = [flavor["name"] for flavor in data["flavors"]]
+        assert "default-router" in flavor_names
+        assert "ha-router" in flavor_names
+        assert "default-loadbalancer" in flavor_names
+
+    def test_get_neutron_flavor(self, auth_token):
+        """Test getting a specific Neutron flavor."""
+        # List flavors first to get an ID
+        list_response = client.get("/v2.0/flavors", headers={"X-Auth-Token": auth_token})
+        flavors = list_response.json()["flavors"]
+        flavor_id = flavors[0]["id"]
+
+        # Get the specific flavor
+        response = client.get(f"/v2.0/flavors/{flavor_id}", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "flavor" in data
+        assert data["flavor"]["id"] == flavor_id
+
+    def test_create_neutron_flavor(self, auth_token):
+        """Test creating a Neutron service flavor."""
+        response = client.post(
+            "/v2.0/flavors",
+            json={
+                "flavor": {
+                    "name": "test-router-flavor",
+                    "description": "Test router service flavor",
+                    "service_type": "L3_ROUTER_NAT",
+                    "enabled": True,
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 201
+        
+        data = response.json()
+        assert "flavor" in data
+        assert data["flavor"]["name"] == "test-router-flavor"
+        assert data["flavor"]["service_type"] == "L3_ROUTER_NAT"
+        assert data["flavor"]["enabled"] is True
+
+    def test_filter_flavors_by_service_type(self, auth_token):
+        """Test filtering flavors by service type."""
+        response = client.get(
+            "/v2.0/flavors?service_type=L3_ROUTER_NAT",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "flavors" in data
+        
+        # All returned flavors should be router flavors
+        for flavor in data["flavors"]:
+            assert flavor["service_type"] == "L3_ROUTER_NAT"
+
+    def test_list_service_profiles(self, auth_token):
+        """Test listing service profiles."""
+        response = client.get("/v2.0/service_profiles", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "service_profiles" in data
+        assert len(data["service_profiles"]) > 0  # Should have default profiles
+        
+        # Check for expected profiles
+        profile_descriptions = [profile["description"] for profile in data["service_profiles"]]
+        router_profiles = [desc for desc in profile_descriptions if "router" in desc.lower()]
+        assert len(router_profiles) >= 2  # Should have default and HA router profiles

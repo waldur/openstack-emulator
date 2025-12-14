@@ -2801,3 +2801,202 @@ class GlanceStore:
             "description": self.description,
             "default": self.default,
         }
+
+
+# Keystone Extensions and Additional Models
+
+
+@dataclass
+class ApplicationCredential:
+    """Represents a Keystone application credential."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    user_id: str = ""
+    project_id: str | None = None
+    system: str | None = None
+    expires_at: datetime | None = None
+    roles: list[dict[str, str]] = field(default_factory=list)
+    unrestricted: bool = False
+    secret: str = field(default_factory=lambda: str(uuid4()).replace("-", ""))
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self, include_secret: bool = False) -> dict[str, Any]:
+        """Convert to API response format."""
+        result = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "user_id": self.user_id,
+            "project_id": self.project_id,
+            "system": self.system,
+            "roles": self.roles,
+            "unrestricted": self.unrestricted,
+            "created_at": self.created_at.isoformat() + "Z",
+            "links": {"self": f"/v3/users/{self.user_id}/application_credentials/{self.id}"},
+        }
+        if self.expires_at:
+            result["expires_at"] = self.expires_at.isoformat() + "Z"
+        if include_secret:
+            result["secret"] = self.secret
+        return result
+
+
+@dataclass
+class PolicyDocument:
+    """Represents a Keystone policy document."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    blob: str = ""  # JSON policy document
+    type: str = "application/json"
+    user_id: str = ""
+    project_id: str | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "blob": self.blob,
+            "type": self.type,
+            "user_id": self.user_id,
+            "project_id": self.project_id,
+            "links": {"self": f"/v3/policies/{self.id}"},
+        }
+
+
+@dataclass
+class IdentityProvider:
+    """Represents a Keystone identity provider for federation."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    description: str = ""
+    enabled: bool = True
+    remote_ids: list[str] = field(default_factory=list)
+    domain_id: str = "default"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "enabled": self.enabled,
+            "remote_ids": self.remote_ids,
+            "domain_id": self.domain_id,
+            "links": {"self": f"/v3/OS-FEDERATION/identity_providers/{self.id}"},
+        }
+
+
+@dataclass
+class FederationProtocol:
+    """Represents a federation protocol."""
+
+    id: str = ""
+    mapping_id: str = ""
+    identity_provider_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "mapping_id": self.mapping_id,
+            "links": {
+                "self": f"/v3/OS-FEDERATION/identity_providers/{self.identity_provider_id}/protocols/{self.id}"
+            },
+        }
+
+
+@dataclass
+class FederationMapping:
+    """Represents a federation mapping."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    rules: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "rules": self.rules,
+            "links": {"self": f"/v3/OS-FEDERATION/mappings/{self.id}"},
+        }
+
+
+@dataclass
+class RegisteredLimit:
+    """Represents a Keystone registered limit."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    service_id: str = ""
+    resource_name: str = ""
+    default_limit: int = -1
+    description: str = ""
+    region_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result = {
+            "id": self.id,
+            "service_id": self.service_id,
+            "resource_name": self.resource_name,
+            "default_limit": self.default_limit,
+            "description": self.description,
+            "links": {"self": f"/v3/registered_limits/{self.id}"},
+        }
+        if self.region_id:
+            result["region_id"] = self.region_id
+        return result
+
+
+@dataclass
+class NeutronFlavor:
+    """Represents a Neutron service flavor."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    service_type: str = ""  # L3_ROUTER_NAT, LOADBALANCERV2, etc.
+    enabled: bool = True
+    service_profiles: list[str] = field(default_factory=list)  # service profile IDs
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "service_type": self.service_type,
+            "enabled": self.enabled,
+            "service_profiles": self.service_profiles,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+        }
+
+
+@dataclass
+class ServiceProfile:
+    """Represents a Neutron service profile."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    description: str = ""
+    driver: str = ""
+    enabled: bool = True
+    metainfo: str = "{}"  # JSON string with driver-specific info
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "driver": self.driver,
+            "enabled": self.enabled,
+            "metainfo": self.metainfo,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+        }

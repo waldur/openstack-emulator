@@ -84,3 +84,8 @@ Thumbs.db
 
 # UV lock file
 uv.lock
+reports
+specs
+
+# Downloaded OpenStack specs
+.openstack-specs/

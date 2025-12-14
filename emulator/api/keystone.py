@@ -2,10 +2,11 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from emulator.core.database import db
 
@@ -1508,4 +1509,484 @@ async def delete_credential(
     validate_token_header(x_auth_token)
     if not db.delete_credential(credential_id):
         raise HTTPException(status_code=404, detail="Credential not found")
+    return Response(status_code=204)
+
+
+# Application Credentials
+
+
+class ApplicationCredentialRequest(BaseModel):
+    """Application credential request."""
+
+    name: str
+    description: str = ""
+    project_id: str | None = None
+    expires_at: str | None = None
+    roles: list[dict[str, str]] = Field(default_factory=list)
+    unrestricted: bool = False
+
+
+class ApplicationCredentialBody(BaseModel):
+    """Wrapper for application credential request."""
+
+    application_credential: ApplicationCredentialRequest
+
+
+@router.get("/v3/users/{user_id}/application_credentials")
+async def list_application_credentials(
+    user_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List application credentials for a user."""
+    validate_token_header(x_auth_token)
+
+    credentials = db.list_application_credentials(user_id)
+    return {"application_credentials": [cred.to_dict() for cred in credentials]}
+
+
+@router.post("/v3/users/{user_id}/application_credentials", status_code=201)
+async def create_application_credential(
+    user_id: str,
+    body: ApplicationCredentialBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create an application credential."""
+    validate_token_header(x_auth_token)
+    req = body.application_credential
+
+    # Parse expires_at if provided
+    expires_at = None
+    if req.expires_at:
+        try:
+            expires_at = datetime.fromisoformat(req.expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid expires_at format")
+
+    credential = db.create_application_credential(
+        user_id=user_id,
+        name=req.name,
+        description=req.description,
+        project_id=req.project_id,
+        expires_at=expires_at,
+        roles=req.roles,
+        unrestricted=req.unrestricted,
+    )
+
+    return {"application_credential": credential.to_dict(include_secret=True)}
+
+
+@router.get("/v3/users/{user_id}/application_credentials/{credential_id}")
+async def get_application_credential(
+    user_id: str,
+    credential_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get an application credential."""
+    validate_token_header(x_auth_token)
+
+    credential = db.get_application_credential(user_id, credential_id)
+    if not credential:
+        raise HTTPException(status_code=404, detail="Application credential not found")
+
+    return {"application_credential": credential.to_dict()}
+
+
+@router.delete("/v3/users/{user_id}/application_credentials/{credential_id}")
+async def delete_application_credential(
+    user_id: str,
+    credential_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete an application credential."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_application_credential(user_id, credential_id):
+        raise HTTPException(status_code=404, detail="Application credential not found")
+
+    return Response(status_code=204)
+
+
+# Policy Management
+
+
+class PolicyRequest(BaseModel):
+    """Policy request."""
+
+    blob: str
+    type: str = "application/json"
+
+
+class PolicyBody(BaseModel):
+    """Wrapper for policy request."""
+
+    policy: PolicyRequest
+
+
+@router.get("/v3/policies")
+async def list_policies(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List policies."""
+    validate_token_header(x_auth_token)
+
+    policies = db.list_policies()
+    return {"policies": [policy.to_dict() for policy in policies]}
+
+
+@router.post("/v3/policies", status_code=201)
+async def create_policy(
+    body: PolicyBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a policy."""
+    validate_token_header(x_auth_token)
+
+    policy = db.create_policy(
+        blob=body.policy.blob,
+        type=body.policy.type,
+    )
+
+    return {"policy": policy.to_dict()}
+
+
+@router.get("/v3/policies/{policy_id}")
+async def get_policy(
+    policy_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a policy."""
+    validate_token_header(x_auth_token)
+
+    policy = db.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return {"policy": policy.to_dict()}
+
+
+@router.patch("/v3/policies/{policy_id}")
+async def update_policy(
+    policy_id: str,
+    body: PolicyBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a policy."""
+    validate_token_header(x_auth_token)
+
+    policy = db.update_policy(
+        policy_id=policy_id,
+        blob=body.policy.blob,
+        type=body.policy.type,
+    )
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return {"policy": policy.to_dict()}
+
+
+@router.delete("/v3/policies/{policy_id}")
+async def delete_policy(
+    policy_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a policy."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    return Response(status_code=204)
+
+
+# Federation - Identity Providers
+
+
+class IdentityProviderRequest(BaseModel):
+    """Identity provider request."""
+
+    description: str = ""
+    enabled: bool = True
+    remote_ids: list[str] = Field(default_factory=list)
+    domain_id: str = "default"
+
+
+class IdentityProviderBody(BaseModel):
+    """Wrapper for identity provider request."""
+
+    identity_provider: IdentityProviderRequest
+
+
+@router.get("/v3/OS-FEDERATION/identity_providers")
+async def list_identity_providers(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List identity providers."""
+    validate_token_header(x_auth_token)
+
+    providers = db.list_identity_providers()
+    return {"identity_providers": [idp.to_dict() for idp in providers]}
+
+
+@router.put("/v3/OS-FEDERATION/identity_providers/{idp_id}", status_code=201)
+async def create_identity_provider(
+    idp_id: str,
+    body: IdentityProviderBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create an identity provider."""
+    validate_token_header(x_auth_token)
+    req = body.identity_provider
+
+    provider = db.create_identity_provider(
+        idp_id=idp_id,
+        description=req.description,
+        enabled=req.enabled,
+        remote_ids=req.remote_ids,
+        domain_id=req.domain_id,
+    )
+
+    return {"identity_provider": provider.to_dict()}
+
+
+@router.get("/v3/OS-FEDERATION/identity_providers/{idp_id}")
+async def get_identity_provider(
+    idp_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get an identity provider."""
+    validate_token_header(x_auth_token)
+
+    provider = db.get_identity_provider(idp_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Identity provider not found")
+
+    return {"identity_provider": provider.to_dict()}
+
+
+@router.patch("/v3/OS-FEDERATION/identity_providers/{idp_id}")
+async def update_identity_provider(
+    idp_id: str,
+    body: IdentityProviderBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update an identity provider."""
+    validate_token_header(x_auth_token)
+    req = body.identity_provider
+
+    provider = db.update_identity_provider(
+        idp_id=idp_id,
+        description=req.description,
+        enabled=req.enabled,
+        remote_ids=req.remote_ids,
+    )
+    if not provider:
+        raise HTTPException(status_code=404, detail="Identity provider not found")
+
+    return {"identity_provider": provider.to_dict()}
+
+
+@router.delete("/v3/OS-FEDERATION/identity_providers/{idp_id}")
+async def delete_identity_provider(
+    idp_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete an identity provider."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_identity_provider(idp_id):
+        raise HTTPException(status_code=404, detail="Identity provider not found")
+
+    return Response(status_code=204)
+
+
+# Federation - Mappings
+
+
+class FederationMappingRequest(BaseModel):
+    """Federation mapping request."""
+
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FederationMappingBody(BaseModel):
+    """Wrapper for federation mapping request."""
+
+    mapping: FederationMappingRequest
+
+
+@router.get("/v3/OS-FEDERATION/mappings")
+async def list_federation_mappings(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List federation mappings."""
+    validate_token_header(x_auth_token)
+
+    mappings = db.list_federation_mappings()
+    return {"mappings": [mapping.to_dict() for mapping in mappings]}
+
+
+@router.put("/v3/OS-FEDERATION/mappings/{mapping_id}", status_code=201)
+async def create_federation_mapping(
+    mapping_id: str,
+    body: FederationMappingBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a federation mapping."""
+    validate_token_header(x_auth_token)
+
+    mapping = db.create_federation_mapping(
+        mapping_id=mapping_id,
+        rules=body.mapping.rules,
+    )
+
+    return {"mapping": mapping.to_dict()}
+
+
+@router.get("/v3/OS-FEDERATION/mappings/{mapping_id}")
+async def get_federation_mapping(
+    mapping_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a federation mapping."""
+    validate_token_header(x_auth_token)
+
+    mapping = db.get_federation_mapping(mapping_id)
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Federation mapping not found")
+
+    return {"mapping": mapping.to_dict()}
+
+
+@router.patch("/v3/OS-FEDERATION/mappings/{mapping_id}")
+async def update_federation_mapping(
+    mapping_id: str,
+    body: FederationMappingBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a federation mapping."""
+    validate_token_header(x_auth_token)
+
+    mapping = db.update_federation_mapping(
+        mapping_id=mapping_id,
+        rules=body.mapping.rules,
+    )
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Federation mapping not found")
+
+    return {"mapping": mapping.to_dict()}
+
+
+@router.delete("/v3/OS-FEDERATION/mappings/{mapping_id}")
+async def delete_federation_mapping(
+    mapping_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a federation mapping."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_federation_mapping(mapping_id):
+        raise HTTPException(status_code=404, detail="Federation mapping not found")
+
+    return Response(status_code=204)
+
+
+# Registered Limits
+
+
+class RegisteredLimitRequest(BaseModel):
+    """Registered limit request."""
+
+    service_id: str
+    resource_name: str
+    default_limit: int
+    description: str = ""
+    region_id: str | None = None
+
+
+class RegisteredLimitBody(BaseModel):
+    """Wrapper for registered limit request."""
+
+    registered_limit: RegisteredLimitRequest
+
+
+@router.get("/v3/registered_limits")
+async def list_registered_limits(
+    service_id: str | None = Query(None),
+    resource_name: str | None = Query(None),
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List registered limits."""
+    validate_token_header(x_auth_token)
+
+    limits = db.list_registered_limits(service_id=service_id, resource_name=resource_name)
+    return {"registered_limits": [limit.to_dict() for limit in limits]}
+
+
+@router.post("/v3/registered_limits", status_code=201)
+async def create_registered_limit(
+    body: RegisteredLimitBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a registered limit."""
+    validate_token_header(x_auth_token)
+    req = body.registered_limit
+
+    limit = db.create_registered_limit(
+        service_id=req.service_id,
+        resource_name=req.resource_name,
+        default_limit=req.default_limit,
+        description=req.description,
+        region_id=req.region_id,
+    )
+
+    return {"registered_limit": limit.to_dict()}
+
+
+@router.get("/v3/registered_limits/{limit_id}")
+async def get_registered_limit(
+    limit_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a registered limit."""
+    validate_token_header(x_auth_token)
+
+    limit = db.get_registered_limit(limit_id)
+    if not limit:
+        raise HTTPException(status_code=404, detail="Registered limit not found")
+
+    return {"registered_limit": limit.to_dict()}
+
+
+@router.patch("/v3/registered_limits/{limit_id}")
+async def update_registered_limit(
+    limit_id: str,
+    body: RegisteredLimitBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a registered limit."""
+    validate_token_header(x_auth_token)
+    req = body.registered_limit
+
+    limit = db.update_registered_limit(
+        limit_id=limit_id,
+        default_limit=req.default_limit,
+        description=req.description,
+    )
+    if not limit:
+        raise HTTPException(status_code=404, detail="Registered limit not found")
+
+    return {"registered_limit": limit.to_dict()}
+
+
+@router.delete("/v3/registered_limits/{limit_id}")
+async def delete_registered_limit(
+    limit_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Delete a registered limit."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_registered_limit(limit_id):
+        raise HTTPException(status_code=404, detail="Registered limit not found")
+
     return Response(status_code=204)

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from emulator.core.models import (
     AllocationPool,
+    ApplicationCredential,
     BackupStatus,
     CinderQuota,
     ConsistencyGroup,
@@ -19,6 +20,8 @@ from emulator.core.models import (
     Domain,
     Endpoint,
     ExternalGatewayInfo,
+    FederationMapping,
+    FederationProtocol,
     FixedIP,
     Flavor,
     FloatingIP,
@@ -30,6 +33,7 @@ from emulator.core.models import (
     GroupStatus,
     HealthMonitor,
     HealthMonitorType,
+    IdentityProvider,
     Image,
     ImageCacheEntry,
     ImageMember,
@@ -56,10 +60,12 @@ from emulator.core.models import (
     Network,
     NeutronAgent,
     NeutronExtension,
+    NeutronFlavor,
     NeutronQuota,
     NovaExtension,
     NovaQuota,
     OctaviaQuota,
+    PolicyDocument,
     Pool,
     PoolLBAlgorithm,
     PoolMember,
@@ -72,6 +78,7 @@ from emulator.core.models import (
     QosSpec,
     RbacPolicy,
     Region,
+    RegisteredLimit,
     RemoteConsole,
     Role,
     RoleAssignment,
@@ -79,6 +86,7 @@ from emulator.core.models import (
     SecurityGroup,
     SecurityGroupRule,
     Server,
+    ServiceProfile,
     ServerConsole,
     ServerDiagnostics,
     ServerGroup,
@@ -197,6 +205,8 @@ class Database:
         self._neutron_agents: dict[str, NeutronAgent] = {}
         self._trunks: dict[str, Trunk] = {}
         self._neutron_extensions: dict[str, NeutronExtension] = {}
+        self._neutron_flavors: dict[str, NeutronFlavor] = {}
+        self._service_profiles: dict[str, ServiceProfile] = {}
 
         # Storage dictionaries - Octavia Extensions
         self._octavia_quotas: dict[str, OctaviaQuota] = {}
@@ -218,6 +228,14 @@ class Database:
         self._image_cache: dict[str, ImageCacheEntry] = {}
         self._glance_stores: dict[str, GlanceStore] = {}
 
+        # Storage dictionaries - Keystone Extensions
+        self._application_credentials: dict[str, ApplicationCredential] = {}  # key: user_id:cred_id
+        self._policy_documents: dict[str, PolicyDocument] = {}
+        self._identity_providers: dict[str, IdentityProvider] = {}
+        self._federation_protocols: dict[str, FederationProtocol] = {}  # key: idp_id:protocol_id
+        self._federation_mappings: dict[str, FederationMapping] = {}
+        self._registered_limits: dict[str, RegisteredLimit] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -230,6 +248,7 @@ class Database:
         self._init_neutron_extensions()
         self._init_octavia_extensions()
         self._init_glance_extensions()
+        self._init_keystone_extensions()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -6601,6 +6620,59 @@ class Database:
         for agent in agents:
             self._neutron_agents[agent.id] = agent
 
+        # Initialize default service profiles
+        service_profiles = [
+            ServiceProfile(
+                description="Default L3 router service profile",
+                driver="neutron.services.l3_router.drivers.default.DefaultDriver",
+                enabled=True,
+                metainfo='{"router_type": "legacy"}',
+            ),
+            ServiceProfile(
+                description="High availability L3 router service profile",
+                driver="neutron.services.l3_router.drivers.ha.HADriver",
+                enabled=True,
+                metainfo='{"router_type": "ha"}',
+            ),
+            ServiceProfile(
+                description="Load balancer service profile",
+                driver="neutron_lbaas.drivers.octavia.driver.OctaviaDriver",
+                enabled=True,
+                metainfo='{"lb_provider": "octavia"}',
+            ),
+        ]
+
+        # Initialize default flavors
+        neutron_flavors = [
+            NeutronFlavor(
+                name="default-router",
+                description="Default L3 router flavor",
+                service_type="L3_ROUTER_NAT",
+                enabled=True,
+                service_profiles=[service_profiles[0].id],
+            ),
+            NeutronFlavor(
+                name="ha-router",
+                description="High availability L3 router flavor",
+                service_type="L3_ROUTER_NAT",
+                enabled=True,
+                service_profiles=[service_profiles[1].id],
+            ),
+            NeutronFlavor(
+                name="default-loadbalancer",
+                description="Default load balancer flavor",
+                service_type="LOADBALANCERV2",
+                enabled=True,
+                service_profiles=[service_profiles[2].id],
+            ),
+        ]
+
+        for profile in service_profiles:
+            self._service_profiles[profile.id] = profile
+
+        for flavor in neutron_flavors:
+            self._neutron_flavors[flavor.id] = flavor
+
     # Neutron Extensions API Methods
 
     def list_neutron_extensions(self) -> list[NeutronExtension]:
@@ -7613,6 +7685,444 @@ class Database:
         """Get a Glance store by ID."""
         with self._lock:
             return self._glance_stores.get(store_id)
+
+    def _init_keystone_extensions(self) -> None:
+        """Initialize Keystone extensions and default data."""
+        # Initialize default registered limits
+        limits = [
+            RegisteredLimit(
+                service_id="nova",
+                resource_name="instances",
+                default_limit=10,
+                description="Default instance limit per project",
+            ),
+            RegisteredLimit(
+                service_id="nova",
+                resource_name="cores",
+                default_limit=20,
+                description="Default core limit per project",
+            ),
+            RegisteredLimit(
+                service_id="cinder",
+                resource_name="volumes",
+                default_limit=10,
+                description="Default volume limit per project",
+            ),
+            RegisteredLimit(
+                service_id="neutron",
+                resource_name="networks",
+                default_limit=100,
+                description="Default network limit per project",
+            ),
+        ]
+
+        for limit in limits:
+            self._registered_limits[limit.id] = limit
+
+    # Keystone Extensions API Methods
+
+    # Application Credentials
+
+    def create_application_credential(
+        self,
+        user_id: str,
+        name: str,
+        description: str = "",
+        project_id: str | None = None,
+        expires_at: datetime | None = None,
+        roles: list[dict[str, str]] | None = None,
+        unrestricted: bool = False,
+    ) -> ApplicationCredential:
+        """Create an application credential."""
+        with self._lock:
+            cred = ApplicationCredential(
+                name=name,
+                description=description,
+                user_id=user_id,
+                project_id=project_id,
+                expires_at=expires_at,
+                roles=roles or [],
+                unrestricted=unrestricted,
+            )
+            key = f"{user_id}:{cred.id}"
+            self._application_credentials[key] = cred
+            return cred
+
+    def list_application_credentials(self, user_id: str) -> list[ApplicationCredential]:
+        """List application credentials for a user."""
+        with self._lock:
+            return [
+                cred
+                for key, cred in self._application_credentials.items()
+                if key.startswith(f"{user_id}:")
+            ]
+
+    def get_application_credential(
+        self, user_id: str, cred_id: str
+    ) -> ApplicationCredential | None:
+        """Get an application credential."""
+        with self._lock:
+            key = f"{user_id}:{cred_id}"
+            return self._application_credentials.get(key)
+
+    def delete_application_credential(self, user_id: str, cred_id: str) -> bool:
+        """Delete an application credential."""
+        with self._lock:
+            key = f"{user_id}:{cred_id}"
+            if key in self._application_credentials:
+                del self._application_credentials[key]
+                return True
+            return False
+
+    # Policy Management
+
+    def create_policy(
+        self,
+        blob: str,
+        type: str = "application/json",
+        user_id: str = "",
+        project_id: str | None = None,
+    ) -> PolicyDocument:
+        """Create a policy document."""
+        with self._lock:
+            policy = PolicyDocument(
+                blob=blob,
+                type=type,
+                user_id=user_id,
+                project_id=project_id,
+            )
+            self._policy_documents[policy.id] = policy
+            return policy
+
+    def list_policies(self) -> list[PolicyDocument]:
+        """List policy documents."""
+        with self._lock:
+            return list(self._policy_documents.values())
+
+    def get_policy(self, policy_id: str) -> PolicyDocument | None:
+        """Get a policy document by ID."""
+        with self._lock:
+            return self._policy_documents.get(policy_id)
+
+    def update_policy(
+        self,
+        policy_id: str,
+        blob: str | None = None,
+        type: str | None = None,
+    ) -> PolicyDocument | None:
+        """Update a policy document."""
+        with self._lock:
+            policy = self._policy_documents.get(policy_id)
+            if not policy:
+                return None
+            if blob is not None:
+                policy.blob = blob
+            if type is not None:
+                policy.type = type
+            policy.updated_at = datetime.utcnow()
+            return policy
+
+    def delete_policy(self, policy_id: str) -> bool:
+        """Delete a policy document."""
+        with self._lock:
+            if policy_id in self._policy_documents:
+                del self._policy_documents[policy_id]
+                return True
+            return False
+
+    # Federation
+
+    def create_identity_provider(
+        self,
+        idp_id: str,
+        description: str = "",
+        enabled: bool = True,
+        remote_ids: list[str] | None = None,
+        domain_id: str = "default",
+    ) -> IdentityProvider:
+        """Create an identity provider."""
+        with self._lock:
+            idp = IdentityProvider(
+                id=idp_id,
+                description=description,
+                enabled=enabled,
+                remote_ids=remote_ids or [],
+                domain_id=domain_id,
+            )
+            self._identity_providers[idp_id] = idp
+            return idp
+
+    def list_identity_providers(self) -> list[IdentityProvider]:
+        """List identity providers."""
+        with self._lock:
+            return list(self._identity_providers.values())
+
+    def get_identity_provider(self, idp_id: str) -> IdentityProvider | None:
+        """Get an identity provider by ID."""
+        with self._lock:
+            return self._identity_providers.get(idp_id)
+
+    def update_identity_provider(
+        self,
+        idp_id: str,
+        description: str | None = None,
+        enabled: bool | None = None,
+        remote_ids: list[str] | None = None,
+    ) -> IdentityProvider | None:
+        """Update an identity provider."""
+        with self._lock:
+            idp = self._identity_providers.get(idp_id)
+            if not idp:
+                return None
+            if description is not None:
+                idp.description = description
+            if enabled is not None:
+                idp.enabled = enabled
+            if remote_ids is not None:
+                idp.remote_ids = remote_ids
+            return idp
+
+    def delete_identity_provider(self, idp_id: str) -> bool:
+        """Delete an identity provider."""
+        with self._lock:
+            if idp_id in self._identity_providers:
+                del self._identity_providers[idp_id]
+                return True
+            return False
+
+    def create_federation_protocol(
+        self,
+        idp_id: str,
+        protocol_id: str,
+        mapping_id: str,
+    ) -> FederationProtocol:
+        """Create a federation protocol."""
+        with self._lock:
+            protocol = FederationProtocol(
+                id=protocol_id,
+                mapping_id=mapping_id,
+                identity_provider_id=idp_id,
+            )
+            key = f"{idp_id}:{protocol_id}"
+            self._federation_protocols[key] = protocol
+            return protocol
+
+    def list_federation_protocols(self, idp_id: str) -> list[FederationProtocol]:
+        """List federation protocols for an identity provider."""
+        with self._lock:
+            return [
+                protocol
+                for key, protocol in self._federation_protocols.items()
+                if key.startswith(f"{idp_id}:")
+            ]
+
+    def get_federation_protocol(self, idp_id: str, protocol_id: str) -> FederationProtocol | None:
+        """Get a federation protocol."""
+        with self._lock:
+            key = f"{idp_id}:{protocol_id}"
+            return self._federation_protocols.get(key)
+
+    def delete_federation_protocol(self, idp_id: str, protocol_id: str) -> bool:
+        """Delete a federation protocol."""
+        with self._lock:
+            key = f"{idp_id}:{protocol_id}"
+            if key in self._federation_protocols:
+                del self._federation_protocols[key]
+                return True
+            return False
+
+    def create_federation_mapping(
+        self,
+        mapping_id: str,
+        rules: list[dict[str, Any]],
+    ) -> FederationMapping:
+        """Create a federation mapping."""
+        with self._lock:
+            mapping = FederationMapping(
+                id=mapping_id,
+                rules=rules,
+            )
+            self._federation_mappings[mapping_id] = mapping
+            return mapping
+
+    def list_federation_mappings(self) -> list[FederationMapping]:
+        """List federation mappings."""
+        with self._lock:
+            return list(self._federation_mappings.values())
+
+    def get_federation_mapping(self, mapping_id: str) -> FederationMapping | None:
+        """Get a federation mapping by ID."""
+        with self._lock:
+            return self._federation_mappings.get(mapping_id)
+
+    def update_federation_mapping(
+        self,
+        mapping_id: str,
+        rules: list[dict[str, Any]],
+    ) -> FederationMapping | None:
+        """Update a federation mapping."""
+        with self._lock:
+            mapping = self._federation_mappings.get(mapping_id)
+            if not mapping:
+                return None
+            mapping.rules = rules
+            return mapping
+
+    def delete_federation_mapping(self, mapping_id: str) -> bool:
+        """Delete a federation mapping."""
+        with self._lock:
+            if mapping_id in self._federation_mappings:
+                del self._federation_mappings[mapping_id]
+                return True
+            return False
+
+    # Registered Limits
+
+    def list_registered_limits(
+        self,
+        service_id: str | None = None,
+        resource_name: str | None = None,
+    ) -> list[RegisteredLimit]:
+        """List registered limits."""
+        with self._lock:
+            limits = list(self._registered_limits.values())
+            if service_id:
+                limits = [l for l in limits if l.service_id == service_id]
+            if resource_name:
+                limits = [l for l in limits if l.resource_name == resource_name]
+            return limits
+
+    def get_registered_limit(self, limit_id: str) -> RegisteredLimit | None:
+        """Get a registered limit by ID."""
+        with self._lock:
+            return self._registered_limits.get(limit_id)
+
+    def create_registered_limit(
+        self,
+        service_id: str,
+        resource_name: str,
+        default_limit: int,
+        description: str = "",
+        region_id: str | None = None,
+    ) -> RegisteredLimit:
+        """Create a registered limit."""
+        with self._lock:
+            limit = RegisteredLimit(
+                service_id=service_id,
+                resource_name=resource_name,
+                default_limit=default_limit,
+                description=description,
+                region_id=region_id,
+            )
+            self._registered_limits[limit.id] = limit
+            return limit
+
+    def update_registered_limit(
+        self,
+        limit_id: str,
+        default_limit: int | None = None,
+        description: str | None = None,
+    ) -> RegisteredLimit | None:
+        """Update a registered limit."""
+        with self._lock:
+            limit = self._registered_limits.get(limit_id)
+            if not limit:
+                return None
+            if default_limit is not None:
+                limit.default_limit = default_limit
+            if description is not None:
+                limit.description = description
+            return limit
+
+    def delete_registered_limit(self, limit_id: str) -> bool:
+        """Delete a registered limit."""
+        with self._lock:
+            if limit_id in self._registered_limits:
+                del self._registered_limits[limit_id]
+                return True
+            return False
+
+    # Neutron Flavors
+
+    def list_neutron_flavors(
+        self,
+        service_type: str | None = None,
+        enabled: bool | None = None,
+    ) -> list[NeutronFlavor]:
+        """List Neutron service flavors."""
+        with self._lock:
+            flavors = list(self._neutron_flavors.values())
+            if service_type:
+                flavors = [f for f in flavors if f.service_type == service_type]
+            if enabled is not None:
+                flavors = [f for f in flavors if f.enabled == enabled]
+            return flavors
+
+    def get_neutron_flavor(self, flavor_id: str) -> NeutronFlavor | None:
+        """Get a Neutron service flavor by ID."""
+        with self._lock:
+            return self._neutron_flavors.get(flavor_id)
+
+    def create_neutron_flavor(
+        self,
+        name: str,
+        description: str = "",
+        service_type: str = "",
+        enabled: bool = True,
+        service_profiles: list[str] | None = None,
+    ) -> NeutronFlavor:
+        """Create a Neutron service flavor."""
+        with self._lock:
+            flavor = NeutronFlavor(
+                name=name,
+                description=description,
+                service_type=service_type,
+                enabled=enabled,
+                service_profiles=service_profiles or [],
+            )
+            self._neutron_flavors[flavor.id] = flavor
+            return flavor
+
+    def update_neutron_flavor(
+        self,
+        flavor_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+    ) -> NeutronFlavor | None:
+        """Update a Neutron service flavor."""
+        with self._lock:
+            flavor = self._neutron_flavors.get(flavor_id)
+            if not flavor:
+                return None
+            if name is not None:
+                flavor.name = name
+            if description is not None:
+                flavor.description = description
+            if enabled is not None:
+                flavor.enabled = enabled
+            flavor.updated_at = datetime.utcnow()
+            return flavor
+
+    def delete_neutron_flavor(self, flavor_id: str) -> bool:
+        """Delete a Neutron service flavor."""
+        with self._lock:
+            if flavor_id in self._neutron_flavors:
+                del self._neutron_flavors[flavor_id]
+                return True
+            return False
+
+    # Service Profiles
+
+    def list_service_profiles(self) -> list[ServiceProfile]:
+        """List Neutron service profiles."""
+        with self._lock:
+            return list(self._service_profiles.values())
+
+    def get_service_profile(self, profile_id: str) -> ServiceProfile | None:
+        """Get a service profile by ID."""
+        with self._lock:
+            return self._service_profiles.get(profile_id)
 
 
 # Global database instance
