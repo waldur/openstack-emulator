@@ -1066,41 +1066,407 @@ async def delete_rbac_policy(
     return Response(status_code=204)
 
 
-# Extensions endpoint
+# Replaced by dynamic extensions endpoint below
+
+
+# Extensions endpoints
+
+
 @router.get("/v2.0/extensions")
-async def list_extensions() -> dict[str, Any]:
-    """List available extensions."""
-    return {
-        "extensions": [
-            {
-                "alias": "security-group",
-                "description": "Security group support",
-                "name": "security-group",
-                "updated": "2023-01-01T00:00:00-00:00",
-            },
-            {
-                "alias": "router",
-                "description": "Router support",
-                "name": "router",
-                "updated": "2023-01-01T00:00:00-00:00",
-            },
-            {
-                "alias": "external-net",
-                "description": "External network support",
-                "name": "external-net",
-                "updated": "2023-01-01T00:00:00-00:00",
-            },
-            {
-                "alias": "quotas",
-                "description": "Quota management support",
-                "name": "quotas",
-                "updated": "2023-01-01T00:00:00-00:00",
-            },
-            {
-                "alias": "rbac-policies",
-                "description": "RBAC policy support for sharing resources",
-                "name": "rbac-policies",
-                "updated": "2023-01-01T00:00:00-00:00",
-            },
-        ]
-    }
+async def list_neutron_extensions(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List all available Neutron extensions."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    extensions = db.list_neutron_extensions()
+    return {"extensions": [ext.to_dict() for ext in extensions]}
+
+
+@router.get("/v2.0/extensions/{extension_alias}")
+async def get_neutron_extension(
+    extension_alias: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get details for a specific extension."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    extension = db.get_neutron_extension(extension_alias)
+    if not extension:
+        raise HTTPException(status_code=404, detail=f"Extension {extension_alias} not found")
+
+    return {"extension": extension.to_dict()}
+
+
+# QoS Policies
+
+
+class QosPolicyRequest(BaseModel):
+    """QoS policy request."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    description: str = ""
+    shared: bool = False
+    is_default: bool = False
+
+
+class QosPolicyBody(BaseModel):
+    """Wrapper for QoS policy request."""
+
+    policy: QosPolicyRequest
+
+
+@router.get("/v2.0/qos/policies")
+async def list_qos_policies(
+    name: str | None = Query(None),
+    shared: bool | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List QoS policies."""
+    project_id = _get_project_id(x_auth_token)
+
+    policies = db.list_qos_policies(
+        project_id=project_id,
+        name=name,
+        shared=shared,
+    )
+    return {"policies": [policy.to_dict() for policy in policies]}
+
+
+@router.post("/v2.0/qos/policies", status_code=201)
+async def create_qos_policy(
+    body: QosPolicyBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a QoS policy."""
+    project_id = _get_project_id(x_auth_token)
+
+    policy = db.create_qos_policy(
+        name=body.policy.name,
+        description=body.policy.description,
+        shared=body.policy.shared,
+        project_id=project_id,
+        is_default=body.policy.is_default,
+    )
+
+    return {"policy": policy.to_dict()}
+
+
+@router.get("/v2.0/qos/policies/{policy_id}")
+async def get_qos_policy(
+    policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a QoS policy by ID."""
+    project_id = _get_project_id(x_auth_token)
+
+    policy = db.get_qos_policy(policy_id, project_id=project_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="QoS policy not found")
+
+    return {"policy": policy.to_dict()}
+
+
+@router.put("/v2.0/qos/policies/{policy_id}")
+async def update_qos_policy(
+    policy_id: str,
+    body: QosPolicyBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a QoS policy."""
+    project_id = _get_project_id(x_auth_token)
+
+    policy = db.update_qos_policy(
+        policy_id=policy_id,
+        project_id=project_id,
+        name=body.policy.name,
+        description=body.policy.description,
+        shared=body.policy.shared,
+    )
+    if not policy:
+        raise HTTPException(status_code=404, detail="QoS policy not found")
+
+    return {"policy": policy.to_dict()}
+
+
+@router.delete("/v2.0/qos/policies/{policy_id}", status_code=204)
+async def delete_qos_policy(
+    policy_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a QoS policy."""
+    project_id = _get_project_id(x_auth_token)
+
+    success = db.delete_qos_policy(policy_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="QoS policy not found")
+
+    return Response(status_code=204)
+
+
+@router.get("/v2.0/qos/rule-types")
+async def list_qos_rule_types(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List available QoS rule types."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    rule_types = db.list_qos_rule_types()
+    return {"rule_types": [rt.to_dict() for rt in rule_types]}
+
+
+# Agent Management
+
+
+class AgentRequest(BaseModel):
+    """Agent update request."""
+
+    admin_state_up: bool | None = None
+    description: str | None = None
+
+
+class AgentBody(BaseModel):
+    """Wrapper for agent request."""
+
+    agent: AgentRequest
+
+
+@router.get("/v2.0/agents")
+async def list_agents(
+    agent_type: str | None = Query(None),
+    host: str | None = Query(None),
+    alive: bool | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List Neutron agents."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    agents = db.list_neutron_agents(
+        agent_type=agent_type,
+        host=host,
+        alive=alive,
+    )
+    return {"agents": [agent.to_dict() for agent in agents]}
+
+
+@router.get("/v2.0/agents/{agent_id}")
+async def get_agent(
+    agent_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a Neutron agent by ID."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    agent = db.get_neutron_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return {"agent": agent.to_dict()}
+
+
+@router.put("/v2.0/agents/{agent_id}")
+async def update_agent(
+    agent_id: str,
+    body: AgentBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a Neutron agent."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    agent = db.update_neutron_agent(
+        agent_id=agent_id,
+        admin_state_up=body.agent.admin_state_up,
+        description=body.agent.description,
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return {"agent": agent.to_dict()}
+
+
+@router.delete("/v2.0/agents/{agent_id}", status_code=204)
+async def delete_agent(
+    agent_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a Neutron agent."""
+    _get_project_id(x_auth_token)  # Validate token
+
+    success = db.delete_neutron_agent(agent_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return Response(status_code=204)
+
+
+# Trunk Networking
+
+
+class TrunkRequest(BaseModel):
+    """Trunk request."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    port_id: str
+    description: str = ""
+    admin_state_up: bool = True
+    sub_ports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TrunkBody(BaseModel):
+    """Wrapper for trunk request."""
+
+    trunk: TrunkRequest
+
+
+class TrunkSubPortsBody(BaseModel):
+    """Sub-ports modification request."""
+
+    sub_ports: list[dict[str, Any]]
+
+
+@router.get("/v2.0/trunks")
+async def list_trunks(
+    name: str | None = Query(None),
+    port_id: str | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List trunks."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunks = db.list_trunks(
+        project_id=project_id,
+        name=name,
+        port_id=port_id,
+    )
+    return {"trunks": [trunk.to_dict() for trunk in trunks]}
+
+
+@router.post("/v2.0/trunks", status_code=201)
+async def create_trunk(
+    body: TrunkBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Create a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.create_trunk(
+        name=body.trunk.name,
+        port_id=body.trunk.port_id,
+        description=body.trunk.description,
+        admin_state_up=body.trunk.admin_state_up,
+        project_id=project_id,
+        sub_ports=body.trunk.sub_ports,
+    )
+
+    return {"trunk": trunk.to_dict()}
+
+
+@router.get("/v2.0/trunks/{trunk_id}")
+async def get_trunk(
+    trunk_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a trunk by ID."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.get_trunk(trunk_id, project_id=project_id)
+    if not trunk:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return {"trunk": trunk.to_dict()}
+
+
+@router.put("/v2.0/trunks/{trunk_id}")
+async def update_trunk(
+    trunk_id: str,
+    body: TrunkBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.update_trunk(
+        trunk_id=trunk_id,
+        project_id=project_id,
+        name=body.trunk.name,
+        description=body.trunk.description,
+        admin_state_up=body.trunk.admin_state_up,
+    )
+    if not trunk:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return {"trunk": trunk.to_dict()}
+
+
+@router.delete("/v2.0/trunks/{trunk_id}", status_code=204)
+async def delete_trunk(
+    trunk_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    success = db.delete_trunk(trunk_id, project_id=project_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return Response(status_code=204)
+
+
+@router.put("/v2.0/trunks/{trunk_id}/add_subports", status_code=200)
+async def add_subports_to_trunk(
+    trunk_id: str,
+    body: TrunkSubPortsBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Add sub-ports to a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.add_subports_to_trunk(
+        trunk_id=trunk_id,
+        sub_ports=body.sub_ports,
+        project_id=project_id,
+    )
+    if not trunk:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return {"trunk": trunk.to_dict()}
+
+
+@router.put("/v2.0/trunks/{trunk_id}/remove_subports", status_code=200)
+async def remove_subports_from_trunk(
+    trunk_id: str,
+    body: TrunkSubPortsBody,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Remove sub-ports from a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.remove_subports_from_trunk(
+        trunk_id=trunk_id,
+        sub_ports=body.sub_ports,
+        project_id=project_id,
+    )
+    if not trunk:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return {"trunk": trunk.to_dict()}
+
+
+@router.get("/v2.0/trunks/{trunk_id}/get_subports")
+async def get_trunk_subports(
+    trunk_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get sub-ports of a trunk."""
+    project_id = _get_project_id(x_auth_token)
+
+    trunk = db.get_trunk(trunk_id, project_id=project_id)
+    if not trunk:
+        raise HTTPException(status_code=404, detail="Trunk not found")
+
+    return {"sub_ports": [sp.to_dict() for sp in trunk.sub_ports]}

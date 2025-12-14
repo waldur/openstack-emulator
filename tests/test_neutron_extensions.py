@@ -1,0 +1,521 @@
+"""Test Neutron extension endpoints."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from emulator.api.unified_app import create_all_service_apps
+from emulator.core.database import db
+
+# Create Neutron app for testing
+service_apps = create_all_service_apps()
+neutron_app = service_apps["neutron"]
+client = TestClient(neutron_app)
+
+
+@pytest.fixture(autouse=True)
+def reset_database():
+    """Reset database before each test."""
+    db._networks.clear()
+    db._subnets.clear()
+    db._ports.clear()
+    db._routers.clear()
+    db._floating_ips.clear()
+    db._security_groups.clear()
+    db._security_group_rules.clear()
+    db._qos_policies.clear()
+    db._neutron_agents.clear()
+    db._trunks.clear()
+    db._tokens.clear()
+    db._init_default_neutron_data()
+    db._init_neutron_extensions()
+    db.reset_keystone()
+    yield
+
+
+@pytest.fixture
+def auth_token():
+    """Get a valid auth token for testing."""
+    keystone_app = create_all_service_apps()["keystone"]
+    keystone_client = TestClient(keystone_app)
+    
+    response = keystone_client.post(
+        "/v3/auth/tokens",
+        json={
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": "admin",
+                            "domain": {"id": "default"},
+                            "password": "s4l4dus",
+                        }
+                    },
+                },
+                "scope": {"project": {"name": "admin", "domain": {"id": "default"}}},
+            }
+        },
+    )
+    return response.headers["X-Subject-Token"]
+
+
+class TestNeutronExtensions:
+    """Test Neutron extensions endpoints."""
+
+    def test_list_extensions(self, auth_token):
+        """Test listing Neutron extensions."""
+        response = client.get("/v2.0/extensions", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "extensions" in data
+        assert len(data["extensions"]) > 0
+        
+        # Check for specific extensions
+        extension_aliases = [ext["alias"] for ext in data["extensions"]]
+        assert "qos" in extension_aliases
+        assert "agent" in extension_aliases
+        assert "trunk" in extension_aliases
+
+    def test_get_extension(self, auth_token):
+        """Test getting a specific extension."""
+        response = client.get(
+            "/v2.0/extensions/qos", 
+            headers={"X-Auth-Token": auth_token}
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "extension" in data
+        assert data["extension"]["alias"] == "qos"
+        assert data["extension"]["name"] == "Quality of Service"
+
+    def test_get_extension_not_found(self, auth_token):
+        """Test getting a non-existent extension."""
+        response = client.get(
+            "/v2.0/extensions/nonexistent", 
+            headers={"X-Auth-Token": auth_token}
+        )
+        assert response.status_code == 404
+
+
+class TestQoSPolicies:
+    """Test QoS policy endpoints."""
+
+    def test_list_qos_policies_empty(self, auth_token):
+        """Test listing QoS policies when none exist."""
+        response = client.get("/v2.0/qos/policies", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "policies" in data
+        assert data["policies"] == []
+
+    def test_create_qos_policy(self, auth_token):
+        """Test creating a QoS policy."""
+        response = client.post(
+            "/v2.0/qos/policies",
+            json={
+                "policy": {
+                    "name": "test-policy",
+                    "description": "Test QoS policy",
+                    "shared": False,
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 201
+        
+        data = response.json()
+        assert "policy" in data
+        assert data["policy"]["name"] == "test-policy"
+        assert data["policy"]["description"] == "Test QoS policy"
+        assert data["policy"]["shared"] is False
+
+    def test_get_qos_policy(self, auth_token):
+        """Test getting a QoS policy by ID."""
+        # Create a policy first
+        create_response = client.post(
+            "/v2.0/qos/policies",
+            json={"policy": {"name": "get-test-policy"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        policy_id = create_response.json()["policy"]["id"]
+
+        # Get the policy
+        response = client.get(
+            f"/v2.0/qos/policies/{policy_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["policy"]["id"] == policy_id
+        assert data["policy"]["name"] == "get-test-policy"
+
+    def test_update_qos_policy(self, auth_token):
+        """Test updating a QoS policy."""
+        # Create a policy first
+        create_response = client.post(
+            "/v2.0/qos/policies",
+            json={"policy": {"name": "update-test-policy"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        policy_id = create_response.json()["policy"]["id"]
+
+        # Update the policy
+        response = client.put(
+            f"/v2.0/qos/policies/{policy_id}",
+            json={
+                "policy": {
+                    "name": "updated-policy",
+                    "description": "Updated description",
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["policy"]["name"] == "updated-policy"
+        assert data["policy"]["description"] == "Updated description"
+
+    def test_delete_qos_policy(self, auth_token):
+        """Test deleting a QoS policy."""
+        # Create a policy first
+        create_response = client.post(
+            "/v2.0/qos/policies",
+            json={"policy": {"name": "delete-test-policy"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        policy_id = create_response.json()["policy"]["id"]
+
+        # Delete the policy
+        response = client.delete(
+            f"/v2.0/qos/policies/{policy_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 204
+
+        # Verify it's deleted
+        response = client.get(
+            f"/v2.0/qos/policies/{policy_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 404
+
+    def test_list_qos_rule_types(self, auth_token):
+        """Test listing QoS rule types."""
+        response = client.get("/v2.0/qos/rule-types", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "rule_types" in data
+        assert len(data["rule_types"]) > 0
+        
+        # Check for expected rule types
+        rule_type_names = [rt["type"] for rt in data["rule_types"]]
+        assert "bandwidth_limit" in rule_type_names
+        assert "dscp_marking" in rule_type_names
+        assert "minimum_bandwidth" in rule_type_names
+
+
+class TestNeutronAgents:
+    """Test Neutron agent endpoints."""
+
+    def test_list_agents(self, auth_token):
+        """Test listing Neutron agents."""
+        response = client.get("/v2.0/agents", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "agents" in data
+        assert len(data["agents"]) > 0  # Should have default agents
+        
+        # Check agent types
+        agent_types = [agent["agent_type"] for agent in data["agents"]]
+        assert "Open vSwitch agent" in agent_types
+        assert "DHCP agent" in agent_types
+        assert "L3 agent" in agent_types
+        assert "Metadata agent" in agent_types
+
+    def test_get_agent(self, auth_token):
+        """Test getting a specific agent."""
+        # List agents first to get an ID
+        list_response = client.get("/v2.0/agents", headers={"X-Auth-Token": auth_token})
+        agents = list_response.json()["agents"]
+        agent_id = agents[0]["id"]
+
+        # Get the specific agent
+        response = client.get(
+            f"/v2.0/agents/{agent_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "agent" in data
+        assert data["agent"]["id"] == agent_id
+
+    def test_update_agent(self, auth_token):
+        """Test updating an agent."""
+        # List agents first to get an ID
+        list_response = client.get("/v2.0/agents", headers={"X-Auth-Token": auth_token})
+        agents = list_response.json()["agents"]
+        agent_id = agents[0]["id"]
+
+        # Update the agent
+        response = client.put(
+            f"/v2.0/agents/{agent_id}",
+            json={
+                "agent": {
+                    "admin_state_up": False,
+                    "description": "Updated agent",
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["agent"]["admin_state_up"] is False
+
+    def test_filter_agents_by_type(self, auth_token):
+        """Test filtering agents by type."""
+        response = client.get(
+            "/v2.0/agents?agent_type=DHCP agent",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "agents" in data
+        assert len(data["agents"]) >= 1
+        
+        # All returned agents should be DHCP agents
+        for agent in data["agents"]:
+            assert agent["agent_type"] == "DHCP agent"
+
+
+class TestTrunks:
+    """Test trunk networking endpoints."""
+
+    def test_list_trunks_empty(self, auth_token):
+        """Test listing trunks when none exist."""
+        response = client.get("/v2.0/trunks", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "trunks" in data
+        assert data["trunks"] == []
+
+    def test_create_trunk(self, auth_token):
+        """Test creating a trunk."""
+        # First create a network and port
+        network_response = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "trunk-network"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        network_id = network_response.json()["network"]["id"]
+
+        port_response = client.post(
+            "/v2.0/ports",
+            json={"port": {"network_id": network_id, "name": "trunk-port"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        port_id = port_response.json()["port"]["id"]
+
+        # Create trunk
+        response = client.post(
+            "/v2.0/trunks",
+            json={
+                "trunk": {
+                    "name": "test-trunk",
+                    "port_id": port_id,
+                    "description": "Test trunk",
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 201
+        
+        data = response.json()
+        assert "trunk" in data
+        assert data["trunk"]["name"] == "test-trunk"
+        assert data["trunk"]["port_id"] == port_id
+        assert data["trunk"]["status"] == "ACTIVE"
+
+    def test_get_trunk(self, auth_token):
+        """Test getting a trunk by ID."""
+        # Create a network, port, and trunk first
+        network_response = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "get-trunk-network"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        network_id = network_response.json()["network"]["id"]
+
+        port_response = client.post(
+            "/v2.0/ports",
+            json={"port": {"network_id": network_id, "name": "get-trunk-port"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        port_id = port_response.json()["port"]["id"]
+
+        create_response = client.post(
+            "/v2.0/trunks",
+            json={"trunk": {"name": "get-test-trunk", "port_id": port_id}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        trunk_id = create_response.json()["trunk"]["id"]
+
+        # Get the trunk
+        response = client.get(
+            f"/v2.0/trunks/{trunk_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["trunk"]["id"] == trunk_id
+        assert data["trunk"]["name"] == "get-test-trunk"
+
+    def test_update_trunk(self, auth_token):
+        """Test updating a trunk."""
+        # Create a network, port, and trunk first
+        network_response = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "update-trunk-network"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        network_id = network_response.json()["network"]["id"]
+
+        port_response = client.post(
+            "/v2.0/ports",
+            json={"port": {"network_id": network_id, "name": "update-trunk-port"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        port_id = port_response.json()["port"]["id"]
+
+        create_response = client.post(
+            "/v2.0/trunks",
+            json={"trunk": {"name": "update-test-trunk", "port_id": port_id}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        trunk_id = create_response.json()["trunk"]["id"]
+
+        # Update the trunk
+        response = client.put(
+            f"/v2.0/trunks/{trunk_id}",
+            json={
+                "trunk": {
+                    "name": "updated-trunk",
+                    "description": "Updated description",
+                    "admin_state_up": False,
+                    "port_id": port_id,  # Required field
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["trunk"]["name"] == "updated-trunk"
+        assert data["trunk"]["description"] == "Updated description"
+        assert data["trunk"]["admin_state_up"] is False
+
+    def test_delete_trunk(self, auth_token):
+        """Test deleting a trunk."""
+        # Create a network, port, and trunk first
+        network_response = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "delete-trunk-network"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        network_id = network_response.json()["network"]["id"]
+
+        port_response = client.post(
+            "/v2.0/ports",
+            json={"port": {"network_id": network_id, "name": "delete-trunk-port"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        port_id = port_response.json()["port"]["id"]
+
+        create_response = client.post(
+            "/v2.0/trunks",
+            json={"trunk": {"name": "delete-test-trunk", "port_id": port_id}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        trunk_id = create_response.json()["trunk"]["id"]
+
+        # Delete the trunk
+        response = client.delete(
+            f"/v2.0/trunks/{trunk_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 204
+
+        # Verify it's deleted
+        response = client.get(
+            f"/v2.0/trunks/{trunk_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 404
+
+
+class TestTenantIsolation:
+    """Test tenant isolation for new Neutron features."""
+
+    def test_qos_policy_tenant_isolation(self, auth_token):
+        """Test that QoS policies are properly isolated by tenant."""
+        # Create a policy in the admin project
+        create_response = client.post(
+            "/v2.0/qos/policies",
+            json={"policy": {"name": "admin-policy", "shared": False}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        policy_id = create_response.json()["policy"]["id"]
+
+        # Create a different project and get token
+        keystone_app = create_all_service_apps()["keystone"]
+        keystone_client = TestClient(keystone_app)
+        
+        project_response = keystone_client.post(
+            "/v3/projects",
+            json={
+                "project": {
+                    "name": "qos-test-project",
+                    "domain_id": "default",
+                    "description": "Test project for QoS isolation",
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        
+        other_token_response = keystone_client.post(
+            "/v3/auth/tokens",
+            json={
+                "auth": {
+                    "identity": {
+                        "methods": ["password"],
+                        "password": {
+                            "user": {
+                                "name": "admin",
+                                "domain": {"id": "default"},
+                                "password": "s4l4dus",
+                            }
+                        },
+                    },
+                    "scope": {"project": {"name": "qos-test-project", "domain": {"id": "default"}}},
+                }
+            },
+        )
+        other_token = other_token_response.headers["X-Subject-Token"]
+
+        # Try to access the policy with the other project's token
+        response = client.get(
+            f"/v2.0/qos/policies/{policy_id}",
+            headers={"X-Auth-Token": other_token},
+        )
+        assert response.status_code == 404  # Should not be accessible

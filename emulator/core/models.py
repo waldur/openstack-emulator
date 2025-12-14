@@ -2167,3 +2167,185 @@ class NovaExtension:
             "updated": self.updated,
             "links": [],
         }
+
+
+# Neutron Extensions and Additional Models
+
+
+@dataclass
+class QosPolicy:
+    """Represents a Neutron QoS policy."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    shared: bool = False
+    is_default: bool = False
+    project_id: str = ""
+    rules: list[dict[str, Any]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "shared": self.shared,
+            "is_default": self.is_default,
+            "project_id": self.project_id,
+            "tenant_id": self.project_id,  # Compatibility
+            "rules": self.rules,
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class QosRuleType:
+    """Represents a QoS rule type."""
+
+    type: str = ""  # bandwidth_limit, dscp_marking, minimum_bandwidth, etc.
+    drivers: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "type": self.type,
+            "drivers": self.drivers,
+        }
+
+
+class AgentType(str, Enum):
+    """Agent type enumeration."""
+
+    DHCP_AGENT = "DHCP agent"
+    L3_AGENT = "L3 agent"
+    NEUTRON_METADATA_AGENT = "Metadata agent"
+    NEUTRON_OPENVSWITCH_AGENT = "Open vSwitch agent"
+    NEUTRON_LINUXBRIDGE_AGENT = "Linux bridge agent"
+
+
+@dataclass
+class NeutronAgent:
+    """Represents a Neutron agent."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    agent_type: str = "Open vSwitch agent"
+    binary: str = "neutron-openvswitch-agent"
+    topic: str = "N/A"
+    host: str = "neutron-host-1"
+    availability_zone: str | None = None
+    admin_state_up: bool = True
+    alive: bool = True
+    configurations: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: datetime = field(default_factory=datetime.utcnow)
+    heartbeat_timestamp: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "agent_type": self.agent_type,
+            "binary": self.binary,
+            "topic": self.topic,
+            "host": self.host,
+            "availability_zone": self.availability_zone,
+            "admin_state_up": self.admin_state_up,
+            "alive": self.alive,
+            "configurations": self.configurations,
+            "created_at": self.created_at.isoformat() + "Z",
+            "started_at": self.started_at.isoformat() + "Z",
+            "heartbeat_timestamp": self.heartbeat_timestamp.isoformat() + "Z",
+        }
+
+
+class TrunkStatus(str, Enum):
+    """Trunk status enumeration."""
+
+    ACTIVE = "ACTIVE"
+    DOWN = "DOWN"
+    BUILD = "BUILD"
+    DEGRADED = "DEGRADED"
+    ERROR = "ERROR"
+
+
+@dataclass
+class TrunkSubPort:
+    """Represents a sub-port in a trunk."""
+
+    port_id: str = ""
+    segmentation_type: str = "vlan"  # vlan, inherit
+    segmentation_id: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        result = {
+            "port_id": self.port_id,
+            "segmentation_type": self.segmentation_type,
+        }
+        if self.segmentation_id is not None:
+            result["segmentation_id"] = self.segmentation_id
+        return result
+
+
+@dataclass
+class Trunk:
+    """Represents a Neutron trunk."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    description: str = ""
+    port_id: str = ""  # Parent port
+    status: TrunkStatus = TrunkStatus.ACTIVE
+    admin_state_up: bool = True
+    project_id: str = ""
+    sub_ports: list[TrunkSubPort] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "port_id": self.port_id,
+            "status": self.status.value,
+            "admin_state_up": self.admin_state_up,
+            "project_id": self.project_id,
+            "tenant_id": self.project_id,  # Compatibility
+            "sub_ports": [sp.to_dict() for sp in self.sub_ports],
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z",
+            "tags": self.tags,
+            "revision_number": 1,
+        }
+
+
+@dataclass
+class NeutronExtension:
+    """Represents a Neutron API extension."""
+
+    alias: str = ""
+    name: str = ""
+    namespace: str = ""
+    description: str = ""
+    updated: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "alias": self.alias,
+            "name": self.name,
+            "namespace": self.namespace,
+            "description": self.description,
+            "updated": self.updated,
+            "links": [],
+        }

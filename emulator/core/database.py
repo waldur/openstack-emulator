@@ -41,6 +41,8 @@ from emulator.core.models import (
     LoadBalancerOperatingStatus,
     LoadBalancerProvisioningStatus,
     Network,
+    NeutronAgent,
+    NeutronExtension,
     NeutronQuota,
     NovaExtension,
     NovaQuota,
@@ -51,6 +53,8 @@ from emulator.core.models import (
     Port,
     PowerState,
     Project,
+    QosPolicy,
+    QosRuleType,
     QosSpec,
     RbacPolicy,
     Region,
@@ -72,6 +76,8 @@ from emulator.core.models import (
     SnapshotStatus,
     Subnet,
     Token,
+    Trunk,
+    TrunkSubPort,
     User,
     Volume,
     VolumeAttachment,
@@ -167,6 +173,13 @@ class Database:
         self._server_tags: dict[str, set[str]] = {}  # server_id -> tags
         self._nova_extensions: dict[str, NovaExtension] = {}
 
+        # Storage dictionaries - Neutron Extensions
+        self._qos_policies: dict[str, QosPolicy] = {}
+        self._qos_rule_types: dict[str, QosRuleType] = {}
+        self._neutron_agents: dict[str, NeutronAgent] = {}
+        self._trunks: dict[str, Trunk] = {}
+        self._neutron_extensions: dict[str, NeutronExtension] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -176,6 +189,7 @@ class Database:
         self._init_default_neutron_data()
         self._init_default_tokens()
         self._init_nova_extensions()
+        self._init_neutron_extensions()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -6326,6 +6340,503 @@ class Database:
                 del self._server_tags[server_id]
                 return True
             return False
+
+    def _init_neutron_extensions(self) -> None:
+        """Initialize Neutron API extensions."""
+        extensions = [
+            # Existing core extensions
+            NeutronExtension(
+                alias="security-group",
+                name="security-group",
+                namespace="http://docs.openstack.org/ext/neutron/security-group/api/v1.0",
+                description="Security group support",
+                updated="2023-01-01T00:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="router",
+                name="router",
+                namespace="http://docs.openstack.org/ext/neutron/router/api/v1.0",
+                description="Router support",
+                updated="2023-01-01T00:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="external-net",
+                name="external-net",
+                namespace="http://docs.openstack.org/ext/neutron/external-net/api/v1.0",
+                description="External network support",
+                updated="2023-01-01T00:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="quotas",
+                name="quotas",
+                namespace="http://docs.openstack.org/ext/neutron/quotas/api/v1.0",
+                description="Quota management support",
+                updated="2023-01-01T00:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="rbac-policies",
+                name="rbac-policies",
+                namespace="http://docs.openstack.org/ext/neutron/rbac-policies/api/v1.0",
+                description="RBAC policy support for sharing resources",
+                updated="2023-01-01T00:00:00-00:00",
+            ),
+            # New extensions
+            NeutronExtension(
+                alias="qos",
+                name="Quality of Service",
+                namespace="http://docs.openstack.org/ext/neutron/qos/api/v1.0",
+                description="The Quality of Service extension.",
+                updated="2015-06-08T10:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="agent",
+                name="agent",
+                namespace="http://docs.openstack.org/ext/neutron/agent/api/v1.0",
+                description="The agent management extension.",
+                updated="2013-02-03T10:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="trunk",
+                name="Trunk Extension",
+                namespace="http://docs.openstack.org/neutron/ext/trunk/api/v1.0",
+                description="The trunk extension.",
+                updated="2016-01-01T10:00:00-00:00",
+            ),
+            NeutronExtension(
+                alias="trunk-details",
+                name="Trunk port details",
+                namespace="http://docs.openstack.org/neutron/ext/trunk-details/api/v1.0",
+                description="The trunk port details extension.",
+                updated="2016-01-01T10:00:00-00:00",
+            ),
+        ]
+
+        # Initialize default QoS rule types
+        rule_types = [
+            QosRuleType(
+                type="bandwidth_limit",
+                drivers=[
+                    {
+                        "name": "ovs",
+                        "supported_parameters": [
+                            {
+                                "parameter_name": "max_kbps",
+                                "parameter_type": "range",
+                                "parameter_range": {"min": 1},
+                            },
+                            {
+                                "parameter_name": "max_burst_kbps",
+                                "parameter_type": "range",
+                                "parameter_range": {"min": 1},
+                            },
+                            {
+                                "parameter_name": "direction",
+                                "parameter_type": "choices",
+                                "parameter_values": ["egress", "ingress"],
+                            },
+                        ],
+                    }
+                ],
+            ),
+            QosRuleType(
+                type="dscp_marking",
+                drivers=[
+                    {
+                        "name": "ovs",
+                        "supported_parameters": [
+                            {
+                                "parameter_name": "dscp_mark",
+                                "parameter_type": "choices",
+                                "parameter_values": [0, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 46, 48, 56],
+                            }
+                        ],
+                    }
+                ],
+            ),
+            QosRuleType(
+                type="minimum_bandwidth",
+                drivers=[
+                    {
+                        "name": "ovs",
+                        "supported_parameters": [
+                            {
+                                "parameter_name": "min_kbps",
+                                "parameter_type": "range",
+                                "parameter_range": {"min": 1},
+                            },
+                            {
+                                "parameter_name": "direction",
+                                "parameter_type": "choices",
+                                "parameter_values": ["egress", "ingress"],
+                            },
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+        # Initialize default agents
+        agents = [
+            NeutronAgent(
+                agent_type="Open vSwitch agent",
+                binary="neutron-openvswitch-agent",
+                host="neutron-ovs-1",
+                topic="N/A",
+                configurations={
+                    "ovs_hybrid_plug": False,
+                    "bridge_mappings": {},
+                    "tunneling_ip": "192.168.1.10",
+                    "tunnel_types": ["vxlan", "gre"],
+                    "l2_population": True,
+                },
+            ),
+            NeutronAgent(
+                agent_type="DHCP agent",
+                binary="neutron-dhcp-agent",
+                host="neutron-dhcp-1",
+                topic="dhcp_agent",
+                configurations={
+                    "dhcp_driver": "neutron.agent.linux.dhcp.Dnsmasq",
+                    "dhcp_lease_duration": 86400,
+                    "networks": 0,
+                    "ports": 0,
+                    "subnets": 0,
+                },
+            ),
+            NeutronAgent(
+                agent_type="L3 agent",
+                binary="neutron-l3-agent",
+                host="neutron-l3-1",
+                topic="l3_agent",
+                configurations={
+                    "agent_mode": "legacy",
+                    "external_network_bridge": "br-ex",
+                    "gateway_external_network_id": "",
+                    "routers": 0,
+                    "ex_gw_ports": 0,
+                    "floating_ips": 0,
+                },
+            ),
+            NeutronAgent(
+                agent_type="Metadata agent",
+                binary="neutron-metadata-agent",
+                host="neutron-metadata-1",
+                topic="N/A",
+                configurations={
+                    "metadata_proxy_socket": "/opt/stack/data/neutron/metadata_proxy",
+                    "nova_metadata_host": "127.0.0.1",
+                    "nova_metadata_port": 8775,
+                },
+            ),
+        ]
+
+        for ext in extensions:
+            self._neutron_extensions[ext.alias] = ext
+
+        for rule_type in rule_types:
+            self._qos_rule_types[rule_type.type] = rule_type
+
+        for agent in agents:
+            self._neutron_agents[agent.id] = agent
+
+    # Neutron Extensions API Methods
+
+    def list_neutron_extensions(self) -> list[NeutronExtension]:
+        """List all available Neutron extensions."""
+        with self._lock:
+            return list(self._neutron_extensions.values())
+
+    def get_neutron_extension(self, alias: str) -> NeutronExtension | None:
+        """Get a Neutron extension by alias."""
+        with self._lock:
+            return self._neutron_extensions.get(alias)
+
+    # QoS Policies
+
+    def create_qos_policy(
+        self,
+        name: str,
+        description: str = "",
+        shared: bool = False,
+        project_id: str = "",
+        is_default: bool = False,
+    ) -> QosPolicy:
+        """Create a QoS policy."""
+        with self._lock:
+            policy = QosPolicy(
+                name=name,
+                description=description,
+                shared=shared,
+                project_id=project_id,
+                is_default=is_default,
+            )
+            self._qos_policies[policy.id] = policy
+            return policy
+
+    def get_qos_policy(self, policy_id: str, project_id: str | None = None) -> QosPolicy | None:
+        """Get a QoS policy by ID."""
+        with self._lock:
+            policy = self._qos_policies.get(policy_id)
+            if policy is None:
+                return None
+            if project_id is not None and not policy.shared and policy.project_id != project_id:
+                return None
+            return policy
+
+    def list_qos_policies(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+        shared: bool | None = None,
+    ) -> list[QosPolicy]:
+        """List QoS policies with optional filtering."""
+        with self._lock:
+            policies = list(self._qos_policies.values())
+
+            if project_id:
+                policies = [p for p in policies if p.project_id == project_id or p.shared]
+            if name:
+                policies = [p for p in policies if p.name == name]
+            if shared is not None:
+                policies = [p for p in policies if p.shared == shared]
+
+            return policies
+
+    def update_qos_policy(
+        self,
+        policy_id: str,
+        project_id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        shared: bool | None = None,
+    ) -> QosPolicy | None:
+        """Update a QoS policy."""
+        with self._lock:
+            policy = self._qos_policies.get(policy_id)
+            if not policy:
+                return None
+            if project_id is not None and policy.project_id != project_id:
+                return None
+
+            if name is not None:
+                policy.name = name
+            if description is not None:
+                policy.description = description
+            if shared is not None:
+                policy.shared = shared
+            policy.updated_at = datetime.utcnow()
+            return policy
+
+    def delete_qos_policy(self, policy_id: str, project_id: str | None = None) -> bool:
+        """Delete a QoS policy."""
+        with self._lock:
+            policy = self._qos_policies.get(policy_id)
+            if not policy:
+                return False
+            if project_id is not None and policy.project_id != project_id:
+                return False
+            del self._qos_policies[policy_id]
+            return True
+
+    def list_qos_rule_types(self) -> list[QosRuleType]:
+        """List available QoS rule types."""
+        with self._lock:
+            return list(self._qos_rule_types.values())
+
+    # Neutron Agents
+
+    def list_neutron_agents(
+        self,
+        agent_type: str | None = None,
+        host: str | None = None,
+        alive: bool | None = None,
+    ) -> list[NeutronAgent]:
+        """List Neutron agents with optional filtering."""
+        with self._lock:
+            agents = list(self._neutron_agents.values())
+
+            if agent_type:
+                agents = [a for a in agents if a.agent_type == agent_type]
+            if host:
+                agents = [a for a in agents if a.host == host]
+            if alive is not None:
+                agents = [a for a in agents if a.alive == alive]
+
+            return agents
+
+    def get_neutron_agent(self, agent_id: str) -> NeutronAgent | None:
+        """Get a Neutron agent by ID."""
+        with self._lock:
+            return self._neutron_agents.get(agent_id)
+
+    def update_neutron_agent(
+        self,
+        agent_id: str,
+        admin_state_up: bool | None = None,
+        description: str | None = None,
+    ) -> NeutronAgent | None:
+        """Update a Neutron agent."""
+        with self._lock:
+            agent = self._neutron_agents.get(agent_id)
+            if not agent:
+                return None
+
+            if admin_state_up is not None:
+                agent.admin_state_up = admin_state_up
+            agent.heartbeat_timestamp = datetime.utcnow()
+            return agent
+
+    def delete_neutron_agent(self, agent_id: str) -> bool:
+        """Delete a Neutron agent."""
+        with self._lock:
+            if agent_id in self._neutron_agents:
+                del self._neutron_agents[agent_id]
+                return True
+            return False
+
+    # Trunks
+
+    def create_trunk(
+        self,
+        name: str,
+        port_id: str,
+        description: str = "",
+        admin_state_up: bool = True,
+        project_id: str = "",
+        sub_ports: list[dict[str, Any]] | None = None,
+    ) -> Trunk:
+        """Create a trunk."""
+        with self._lock:
+            trunk_sub_ports = []
+            if sub_ports:
+                for sp in sub_ports:
+                    trunk_sub_ports.append(
+                        TrunkSubPort(
+                            port_id=sp.get("port_id", ""),
+                            segmentation_type=sp.get("segmentation_type", "vlan"),
+                            segmentation_id=sp.get("segmentation_id"),
+                        )
+                    )
+
+            trunk = Trunk(
+                name=name,
+                port_id=port_id,
+                description=description,
+                admin_state_up=admin_state_up,
+                project_id=project_id,
+                sub_ports=trunk_sub_ports,
+            )
+            self._trunks[trunk.id] = trunk
+            return trunk
+
+    def get_trunk(self, trunk_id: str, project_id: str | None = None) -> Trunk | None:
+        """Get a trunk by ID."""
+        with self._lock:
+            trunk = self._trunks.get(trunk_id)
+            if trunk is None:
+                return None
+            if project_id is not None and trunk.project_id != project_id:
+                return None
+            return trunk
+
+    def list_trunks(
+        self,
+        project_id: str | None = None,
+        name: str | None = None,
+        port_id: str | None = None,
+    ) -> list[Trunk]:
+        """List trunks with optional filtering."""
+        with self._lock:
+            trunks = list(self._trunks.values())
+
+            if project_id:
+                trunks = [t for t in trunks if t.project_id == project_id]
+            if name:
+                trunks = [t for t in trunks if t.name == name]
+            if port_id:
+                trunks = [t for t in trunks if t.port_id == port_id]
+
+            return trunks
+
+    def update_trunk(
+        self,
+        trunk_id: str,
+        project_id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        admin_state_up: bool | None = None,
+    ) -> Trunk | None:
+        """Update a trunk."""
+        with self._lock:
+            trunk = self._trunks.get(trunk_id)
+            if not trunk:
+                return None
+            if project_id is not None and trunk.project_id != project_id:
+                return None
+
+            if name is not None:
+                trunk.name = name
+            if description is not None:
+                trunk.description = description
+            if admin_state_up is not None:
+                trunk.admin_state_up = admin_state_up
+            trunk.updated_at = datetime.utcnow()
+            return trunk
+
+    def delete_trunk(self, trunk_id: str, project_id: str | None = None) -> bool:
+        """Delete a trunk."""
+        with self._lock:
+            trunk = self._trunks.get(trunk_id)
+            if not trunk:
+                return False
+            if project_id is not None and trunk.project_id != project_id:
+                return False
+            del self._trunks[trunk_id]
+            return True
+
+    def add_subports_to_trunk(
+        self,
+        trunk_id: str,
+        sub_ports: list[dict[str, Any]],
+        project_id: str | None = None,
+    ) -> Trunk | None:
+        """Add sub-ports to a trunk."""
+        with self._lock:
+            trunk = self._trunks.get(trunk_id)
+            if not trunk:
+                return None
+            if project_id is not None and trunk.project_id != project_id:
+                return None
+
+            for sp in sub_ports:
+                trunk_sub_port = TrunkSubPort(
+                    port_id=sp.get("port_id", ""),
+                    segmentation_type=sp.get("segmentation_type", "vlan"),
+                    segmentation_id=sp.get("segmentation_id"),
+                )
+                trunk.sub_ports.append(trunk_sub_port)
+
+            trunk.updated_at = datetime.utcnow()
+            return trunk
+
+    def remove_subports_from_trunk(
+        self,
+        trunk_id: str,
+        sub_ports: list[dict[str, Any]],
+        project_id: str | None = None,
+    ) -> Trunk | None:
+        """Remove sub-ports from a trunk."""
+        with self._lock:
+            trunk = self._trunks.get(trunk_id)
+            if not trunk:
+                return None
+            if project_id is not None and trunk.project_id != project_id:
+                return None
+
+            port_ids_to_remove = {sp.get("port_id") for sp in sub_ports}
+            trunk.sub_ports = [sp for sp in trunk.sub_ports if sp.port_id not in port_ids_to_remove]
+            trunk.updated_at = datetime.utcnow()
+            return trunk
 
 
 # Global database instance
