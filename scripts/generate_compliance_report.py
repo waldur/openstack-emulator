@@ -9,7 +9,7 @@ summary dashboard showing overall OpenStack API compliance status.
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List
 
 
 def load_compliance_reports(reports_dir: str) -> Dict[str, Dict]:
