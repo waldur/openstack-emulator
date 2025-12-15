@@ -229,7 +229,7 @@ async def list_volumes(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (summary)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volumes = db.list_volumes(
         project_id=project_id if not all_tenants else None,
         status=status,
@@ -252,7 +252,7 @@ async def list_volumes_detail(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (detailed)."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volumes = db.list_volumes(
         project_id=project_id if not all_tenants else None,
         status=status,
@@ -299,7 +299,7 @@ async def show_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show volume details."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -337,7 +337,7 @@ async def delete_volume(
     force: bool = Query(False),
 ) -> Response:
     """Delete a volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -358,7 +358,7 @@ async def volume_action(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response | dict[str, Any]:
     """Perform an action on a volume."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -593,9 +593,7 @@ async def update_snapshot_metadata(
     body = await request.json()
     metadata = body.get("metadata", {})
 
-    snapshot = db.update_snapshot(
-        snapshot_id=snapshot_id, project_id=project_id, metadata=metadata
-    )
+    snapshot = db.update_snapshot(snapshot_id=snapshot_id, project_id=project_id, metadata=metadata)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"metadata": snapshot.metadata}
@@ -815,7 +813,7 @@ async def list_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List volume metadata."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -868,7 +866,7 @@ async def show_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show a volume metadata item."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -909,7 +907,7 @@ async def delete_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a volume metadata item."""
-    token = get_token_or_raise(x_auth_token)
+    get_token_or_raise(x_auth_token)  # Validate token
     volume = db.get_volume(volume_id, project_id=project_id)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
