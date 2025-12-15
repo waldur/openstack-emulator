@@ -610,12 +610,15 @@ async def import_image(
     project_id = _get_project_id(x_auth_token)
 
     # Verify image exists and user has access
-    image = db.get_glance_image(image_id, project_id=project_id)
+    image = db.get_glance_image(image_id)
     if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    # Check if user has access to this image
+    if image.visibility == "private" and image.owner != project_id:
         raise HTTPException(status_code=404, detail="Image not found")
 
     # Create an import task
-    task = db.create_image_task(
+    db.create_image_task(
         task_type=TaskType.IMPORT,
         input_data={"image_id": image_id, "import_method": body.import_request.method},
         owner=project_id,
@@ -638,7 +641,7 @@ async def list_image_tasks(
     project_id = _get_project_id(x_auth_token)
 
     # Verify image exists and user has access
-    image = db.get_glance_image(image_id, project_id=project_id)
+    image = db.get_glance_image(image_id)
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 
@@ -871,8 +874,11 @@ async def cache_image(
     project_id = _get_project_id(x_auth_token)
 
     # Verify image exists
-    image = db.get_glance_image(image_id, project_id=project_id)
+    image = db.get_glance_image(image_id)
     if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    # Check if user has access to this image
+    if image.visibility == "private" and image.owner != project_id:
         raise HTTPException(status_code=404, detail="Image not found")
 
     db.cache_image(image_id, size=image.size or 0)

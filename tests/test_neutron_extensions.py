@@ -522,11 +522,11 @@ class TestNeutronFlavors:
         """Test listing Neutron service flavors."""
         response = client.get("/v2.0/flavors", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "flavors" in data
         assert len(data["flavors"]) > 0  # Should have default flavors
-        
+
         # Check for expected flavors
         flavor_names = [flavor["name"] for flavor in data["flavors"]]
         assert "default-router" in flavor_names
@@ -543,7 +543,7 @@ class TestNeutronFlavors:
         # Get the specific flavor
         response = client.get(f"/v2.0/flavors/{flavor_id}", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "flavor" in data
         assert data["flavor"]["id"] == flavor_id
@@ -563,7 +563,7 @@ class TestNeutronFlavors:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 201
-        
+
         data = response.json()
         assert "flavor" in data
         assert data["flavor"]["name"] == "test-router-flavor"
@@ -577,10 +577,10 @@ class TestNeutronFlavors:
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "flavors" in data
-        
+
         # All returned flavors should be router flavors
         for flavor in data["flavors"]:
             assert flavor["service_type"] == "L3_ROUTER_NAT"
@@ -589,11 +589,11 @@ class TestNeutronFlavors:
         """Test listing service profiles."""
         response = client.get("/v2.0/service_profiles", headers={"X-Auth-Token": auth_token})
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "service_profiles" in data
         assert len(data["service_profiles"]) > 0  # Should have default profiles
-        
+
         # Check for expected profiles
         profile_descriptions = [profile["description"] for profile in data["service_profiles"]]
         router_profiles = [desc for desc in profile_descriptions if "router" in desc.lower()]

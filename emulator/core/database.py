@@ -86,7 +86,6 @@ from emulator.core.models import (
     SecurityGroup,
     SecurityGroupRule,
     Server,
-    ServiceProfile,
     ServerConsole,
     ServerDiagnostics,
     ServerGroup,
@@ -94,6 +93,7 @@ from emulator.core.models import (
     ServerStatus,
     ServerVolumeAttachment,
     Service,
+    ServiceProfile,
     Snapshot,
     SnapshotStatus,
     Subnet,
@@ -7037,14 +7037,14 @@ class Database:
         for provider in providers:
             self._lb_providers[provider.name] = provider
 
-        for profile in az_profiles:
-            self._lb_availability_zone_profiles[profile.id] = profile
+        for az_profile in az_profiles:
+            self._lb_availability_zone_profiles[az_profile.id] = az_profile
 
         for az in availability_zones:
             self._lb_availability_zones[az.name] = az
 
-        for profile in flavor_profiles:
-            self._lb_flavor_profiles[profile.id] = profile
+        for flavor_profile in flavor_profiles:
+            self._lb_flavor_profiles[flavor_profile.id] = flavor_profile
 
         for flavor in flavors:
             self._lb_flavors[flavor.id] = flavor
@@ -7065,7 +7065,7 @@ class Database:
         with self._lock:
             return list(self._octavia_quotas.values())
 
-    def update_octavia_quota(self, project_id: str, **kwargs) -> OctaviaQuota:
+    def update_octavia_quota(self, project_id: str, **kwargs: Any) -> OctaviaQuota:
         """Update Octavia quota for a project."""
         with self._lock:
             quota = self.get_octavia_quota(project_id)
@@ -7608,7 +7608,7 @@ class Database:
             return metadef
 
     def update_metadef_namespace(
-        self, namespace: str, owner: str | None = None, **kwargs
+        self, namespace: str, owner: str | None = None, **kwargs: Any
     ) -> MetadefNamespace | None:
         """Update a metadata definition namespace."""
         with self._lock:
@@ -7987,9 +7987,9 @@ class Database:
         with self._lock:
             limits = list(self._registered_limits.values())
             if service_id:
-                limits = [l for l in limits if l.service_id == service_id]
+                limits = [limit for limit in limits if limit.service_id == service_id]
             if resource_name:
-                limits = [l for l in limits if l.resource_name == resource_name]
+                limits = [limit for limit in limits if limit.resource_name == resource_name]
             return limits
 
     def get_registered_limit(self, limit_id: str) -> RegisteredLimit | None:

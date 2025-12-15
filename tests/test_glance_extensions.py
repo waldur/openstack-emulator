@@ -183,7 +183,7 @@ class TestMetadefNamespaces:
     def test_get_metadef_namespace(self, auth_token):
         """Test getting a metadata definition namespace."""
         # Create a namespace first
-        create_response = client.post(
+        client.post(
             "/v2/metadefs/namespaces",
             json={"namespace": "get-test-namespace", "display_name": "Get Test"},
             headers={"X-Auth-Token": auth_token},

@@ -2285,7 +2285,7 @@ class TrunkSubPort:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""
-        result = {
+        result: dict[str, Any] = {
             "port_id": self.port_id,
             "segmentation_type": self.segmentation_type,
         }
