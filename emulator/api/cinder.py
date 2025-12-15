@@ -277,7 +277,7 @@ async def create_volume(
     volume = db.create_volume(
         name=req.name or "",
         size=req.size,
-        project_id=project_id,
+        project_id=token.project_id,  # Use token's project_id instead of URL parameter
         user_id=token.user_id,
         description=req.description or "",
         volume_type=req.volume_type,
@@ -1142,13 +1142,13 @@ async def create_volume_transfer(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a volume transfer."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
     try:
         transfer = db.create_volume_transfer(
             name=body.transfer.name,
             volume_id=body.transfer.volume_id,
-            project_id=project_id,
+            project_id=token.project_id,
         )
         return {"transfer": transfer.to_dict()}
     except ValueError as e:
@@ -1162,9 +1162,9 @@ async def get_volume_transfer(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a volume transfer by ID."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
-    transfer = db.get_volume_transfer(transfer_id, project_id=project_id)
+    transfer = db.get_volume_transfer(transfer_id, project_id=token.project_id)
     if not transfer:
         raise HTTPException(status_code=404, detail="Volume transfer not found")
 
@@ -1199,9 +1199,9 @@ async def delete_volume_transfer(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a volume transfer."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
-    success = db.delete_volume_transfer(transfer_id, project_id=project_id)
+    success = db.delete_volume_transfer(transfer_id, project_id=token.project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Volume transfer not found")
 
@@ -1294,7 +1294,7 @@ async def create_volume_backup(
             container=body.backup.container,
             incremental=body.backup.incremental,
             snapshot_id=body.backup.snapshot_id,
-            project_id=project_id,
+            project_id=token.project_id,
             user_id=token.user_id,
         )
         return {"backup": backup.to_dict()}
@@ -1309,9 +1309,9 @@ async def get_volume_backup(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a volume backup by ID."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
-    backup = db.get_volume_backup(backup_id, project_id=project_id)
+    backup = db.get_volume_backup(backup_id, project_id=token.project_id)
     if not backup:
         raise HTTPException(status_code=404, detail="Volume backup not found")
 
@@ -1325,9 +1325,9 @@ async def delete_volume_backup(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a volume backup."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
-    success = db.delete_volume_backup(backup_id, project_id=project_id)
+    success = db.delete_volume_backup(backup_id, project_id=token.project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Volume backup not found")
 
@@ -1342,13 +1342,13 @@ async def restore_volume_backup(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Restore a volume from backup."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)  # Validate token
 
     volume = db.restore_volume_backup(
         backup_id=backup_id,
         volume_id=body.restore.volume_id,
         name=body.restore.name,
-        project_id=project_id,
+        project_id=token.project_id,
     )
     if not volume:
         raise HTTPException(status_code=404, detail="Volume backup not found")

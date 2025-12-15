@@ -1,7 +1,7 @@
 """Scenario models for failure and load injection in OpenStack emulator."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -56,7 +56,7 @@ class GradualDegradation:
         if not self.enabled or not self.started_at:
             return self.initial_delay_ms
 
-        elapsed_minutes = (datetime.utcnow() - self.started_at).total_seconds() / 60
+        elapsed_minutes = (datetime.now(timezone.utc) - self.started_at).total_seconds() / 60
         current_delay = self.initial_delay_ms + int(elapsed_minutes * self.increase_per_minute_ms)
         return min(current_delay, self.max_delay_ms)
 

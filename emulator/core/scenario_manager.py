@@ -8,7 +8,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from emulator.core.scenarios import (
@@ -109,10 +109,12 @@ class ScenarioManager:
                 if scenario.id in enabled_scenarios:
                     if not scenario.enabled:
                         scenario.enabled = True
-                        scenario.enabled_at = datetime.utcnow()
+                        scenario.enabled_at = datetime.now(timezone.utc)
                         # Start gradual degradation timer if enabled
                         if scenario.load_profile.gradual_degradation.enabled:
-                            scenario.load_profile.gradual_degradation.started_at = datetime.utcnow()
+                            scenario.load_profile.gradual_degradation.started_at = datetime.now(
+                                timezone.utc
+                            )
                 else:
                     if scenario.enabled:
                         scenario.enabled = False
@@ -183,7 +185,7 @@ class ScenarioManager:
                 return None
 
             scenario.enabled = True
-            scenario.enabled_at = datetime.utcnow()
+            scenario.enabled_at = datetime.now(timezone.utc)
 
             # Apply config overrides if provided
             if config_override:
@@ -196,7 +198,7 @@ class ScenarioManager:
 
             # Start gradual degradation timer if enabled
             if scenario.load_profile.gradual_degradation.enabled:
-                scenario.load_profile.gradual_degradation.started_at = datetime.utcnow()
+                scenario.load_profile.gradual_degradation.started_at = datetime.now(timezone.utc)
 
             # Persist to shared state
             shared_state.enable_scenario(scenario_id, config_override)
@@ -327,7 +329,7 @@ class ScenarioManager:
                     # Update stats
                     scenario.stats.times_triggered += 1
                     scenario.stats.total_delay_injected_ms += delay
-                    scenario.stats.last_triggered = datetime.utcnow()
+                    scenario.stats.last_triggered = datetime.now(timezone.utc)
 
                 # Check for timeout
                 if scenario.load_profile.timeout_probability > 0:
@@ -339,7 +341,7 @@ class ScenarioManager:
             if total_delay > 0:
                 self._global_stats.times_triggered += 1
                 self._global_stats.total_delay_injected_ms += total_delay
-                self._global_stats.last_triggered = datetime.utcnow()
+                self._global_stats.last_triggered = datetime.now(timezone.utc)
 
             if should_timeout:
                 self._global_stats.timeouts_injected += 1
@@ -388,11 +390,11 @@ class ScenarioManager:
                 # This request should fail
                 scenario.stats.times_triggered += 1
                 scenario.stats.failures_injected += 1
-                scenario.stats.last_triggered = datetime.utcnow()
+                scenario.stats.last_triggered = datetime.now(timezone.utc)
 
                 self._global_stats.times_triggered += 1
                 self._global_stats.failures_injected += 1
-                self._global_stats.last_triggered = datetime.utcnow()
+                self._global_stats.last_triggered = datetime.now(timezone.utc)
 
                 return FailureResult(
                     should_fail=True,

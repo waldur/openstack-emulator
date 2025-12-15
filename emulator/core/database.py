@@ -3,7 +3,7 @@
 import json
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -557,8 +557,8 @@ class Database:
                 domain_id=domain.id,
                 domain_name=domain.name,
                 roles=roles,
-                issued_at=datetime.utcnow(),
-                expires_at=datetime.utcnow() + timedelta(hours=24),
+                issued_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 catalog=self._generate_service_catalog(base_url, project.id),
             )
             logger.info("Storing token in database: %s for user %s", token.id, user.name)
@@ -580,9 +580,11 @@ class Database:
             logger.debug("Token found in db: %s", token is not None)
             if token:
                 logger.debug(
-                    "Token expires_at: %s, current time: %s", token.expires_at, datetime.utcnow()
+                    "Token expires_at: %s, current time: %s",
+                    token.expires_at,
+                    datetime.now(timezone.utc),
                 )
-                if token.expires_at and token.expires_at > datetime.utcnow():
+                if token.expires_at and token.expires_at > datetime.now(timezone.utc):
                     logger.debug("Token is valid")
                     return token
                 else:
@@ -797,8 +799,8 @@ class Database:
             server.status = ServerStatus.ACTIVE
             server.power_state = PowerState.RUNNING
             server.progress = 100
-            server.launched_at = datetime.utcnow()
-            server.updated = datetime.utcnow()
+            server.launched_at = datetime.now(timezone.utc)
+            server.updated = datetime.now(timezone.utc)
 
     def _generate_addresses(
         self, networks: list[dict[str, Any]]
@@ -889,7 +891,7 @@ class Database:
                     server.name = name
                 if metadata is not None:
                     server.metadata = metadata
-                server.updated = datetime.utcnow()
+                server.updated = datetime.now(timezone.utc)
             return server
 
     def delete_server(self, server_id: str) -> bool:
@@ -898,8 +900,8 @@ class Database:
             if server_id in self._servers:
                 server = self._servers[server_id]
                 server.status = ServerStatus.DELETED
-                server.terminated_at = datetime.utcnow()
-                server.updated = datetime.utcnow()
+                server.terminated_at = datetime.now(timezone.utc)
+                server.updated = datetime.now(timezone.utc)
                 del self._servers[server_id]
                 return True
             return False
@@ -918,63 +920,63 @@ class Database:
                 if server.status == ServerStatus.SHUTOFF:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "stop" or action_lower == "os-stop":
                 if server.status == ServerStatus.ACTIVE:
                     server.status = ServerStatus.SHUTOFF
                     server.power_state = PowerState.SHUTDOWN
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "reboot":
                 if server.status in [ServerStatus.ACTIVE, ServerStatus.SHUTOFF]:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "pause":
                 if server.status == ServerStatus.ACTIVE:
                     server.status = ServerStatus.PAUSED
                     server.power_state = PowerState.PAUSED
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "unpause":
                 if server.status == ServerStatus.PAUSED:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "suspend":
                 if server.status == ServerStatus.ACTIVE:
                     server.status = ServerStatus.SUSPENDED
                     server.power_state = PowerState.SUSPENDED
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "resume":
                 if server.status == ServerStatus.SUSPENDED:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "shelve":
                 if server.status == ServerStatus.ACTIVE:
                     server.status = ServerStatus.SHELVED
                     server.power_state = PowerState.SHUTDOWN
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "unshelve":
                 if server.status in [ServerStatus.SHELVED, ServerStatus.SHELVED_OFFLOADED]:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "confirmresize":
@@ -989,7 +991,7 @@ class Database:
                     # Clear resize tracking fields
                     server.original_flavor_id = None
                     server.pre_resize_status = None
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             elif action_lower == "revertresize":
@@ -1007,7 +1009,7 @@ class Database:
                     # Clear resize tracking fields
                     server.original_flavor_id = None
                     server.pre_resize_status = None
-                    server.updated = datetime.utcnow()
+                    server.updated = datetime.now(timezone.utc)
                     return True
 
             return False
@@ -1041,7 +1043,7 @@ class Database:
             # Transition to VERIFY_RESIZE (skipping RESIZE state for simplicity)
             server.status = ServerStatus.VERIFY_RESIZE
             server.power_state = PowerState.SHUTDOWN
-            server.updated = datetime.utcnow()
+            server.updated = datetime.now(timezone.utc)
             return True
 
     def create_server_snapshot(
@@ -1596,7 +1598,7 @@ class Database:
                     user.password_hash = hashlib.sha256(password.encode()).hexdigest()
                 if default_project_id is not None:
                     user.default_project_id = default_project_id
-                user.updated_at = datetime.utcnow()
+                user.updated_at = datetime.now(timezone.utc)
             return user
 
     def delete_user(self, user_id: str) -> bool:
@@ -2381,7 +2383,7 @@ class Database:
         volume = self._volumes.get(volume_id)
         if volume:
             volume.status = VolumeStatus.AVAILABLE
-            volume.updated_at = datetime.utcnow()
+            volume.updated_at = datetime.now(timezone.utc)
 
     def get_volume(self, volume_id: str, project_id: str | None = None) -> Volume | None:
         """Get a volume by ID.
@@ -2471,7 +2473,7 @@ class Database:
                 volume.description = description
             if metadata is not None:
                 volume.metadata = metadata
-            volume.updated_at = datetime.utcnow()
+            volume.updated_at = datetime.now(timezone.utc)
             return volume
 
     def delete_volume(self, volume_id: str, project_id: str | None = None) -> bool:
@@ -2519,7 +2521,7 @@ class Database:
                 return None
             if new_size > volume.size and volume.status == VolumeStatus.AVAILABLE:
                 volume.size = new_size
-                volume.updated_at = datetime.utcnow()
+                volume.updated_at = datetime.now(timezone.utc)
                 return volume
             return None
 
@@ -2563,7 +2565,7 @@ class Database:
 
             volume.attachments.append(attachment)
             volume.status = VolumeStatus.IN_USE
-            volume.updated_at = datetime.utcnow()
+            volume.updated_at = datetime.now(timezone.utc)
 
             return attachment
 
@@ -2592,7 +2594,7 @@ class Database:
                     del volume.attachments[i]
                     if not volume.attachments:
                         volume.status = VolumeStatus.AVAILABLE
-                    volume.updated_at = datetime.utcnow()
+                    volume.updated_at = datetime.now(timezone.utc)
                     return True
             return False
 
@@ -2616,7 +2618,7 @@ class Database:
             if project_id is not None and volume.project_id != project_id:
                 return None
             volume.bootable = bootable
-            volume.updated_at = datetime.utcnow()
+            volume.updated_at = datetime.now(timezone.utc)
             return volume
 
     # Snapshot operations
@@ -2665,7 +2667,7 @@ class Database:
         if snapshot:
             snapshot.status = SnapshotStatus.AVAILABLE
             snapshot.progress = "100%"
-            snapshot.updated_at = datetime.utcnow()
+            snapshot.updated_at = datetime.now(timezone.utc)
 
     def get_snapshot(self, snapshot_id: str, project_id: str | None = None) -> Snapshot | None:
         """Get a snapshot by ID.
@@ -2758,7 +2760,7 @@ class Database:
                 snapshot.description = description
             if metadata is not None:
                 snapshot.metadata = metadata
-            snapshot.updated_at = datetime.utcnow()
+            snapshot.updated_at = datetime.now(timezone.utc)
             return snapshot
 
     def delete_snapshot(self, snapshot_id: str, project_id: str | None = None) -> bool:
@@ -3116,7 +3118,7 @@ class Database:
             if os_version is not None:
                 image.os_version = os_version
 
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(timezone.utc)
 
             # Update Nova image if active
             if image.status == ImageStatus.ACTIVE:
@@ -3135,7 +3137,7 @@ class Database:
                 return False
 
             image.status = ImageStatus.DELETED
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(timezone.utc)
             del self._glance_images[image_id]
 
             # Remove from Nova images
@@ -3171,7 +3173,7 @@ class Database:
             image.checksum = checksum or f"simulated-{image_id[:8]}"
             image.os_hash_algo = os_hash_algo or "sha512"
             image.os_hash_value = os_hash_value or f"simulated-hash-{image_id}"
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(timezone.utc)
 
             # Update Nova image
             self._images[image.id] = image.to_nova_image()
@@ -3189,7 +3191,7 @@ class Database:
                 return False
 
             image.status = ImageStatus.DEACTIVATED
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(timezone.utc)
 
             # Remove from Nova images
             if image_id in self._images:
@@ -3208,7 +3210,7 @@ class Database:
                 return False
 
             image.status = ImageStatus.ACTIVE
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(timezone.utc)
 
             # Add back to Nova images
             self._images[image.id] = image.to_nova_image()
@@ -3225,7 +3227,7 @@ class Database:
 
             if tag not in image.tags:
                 image.tags.append(tag)
-                image.updated_at = datetime.utcnow()
+                image.updated_at = datetime.now(timezone.utc)
             return True
 
     def delete_image_tag(self, image_id: str, tag: str) -> bool:
@@ -3237,7 +3239,7 @@ class Database:
 
             if tag in image.tags:
                 image.tags.remove(tag)
-                image.updated_at = datetime.utcnow()
+                image.updated_at = datetime.now(timezone.utc)
                 return True
             return False
 
@@ -3290,7 +3292,7 @@ class Database:
             for member in members:
                 if member.member_id == member_id:
                     member.status = status
-                    member.updated_at = datetime.utcnow()
+                    member.updated_at = datetime.now(timezone.utc)
                     return member
             return None
 
@@ -3547,7 +3549,7 @@ class Database:
                 network.shared = shared
             if port_security_enabled is not None:
                 network.port_security_enabled = port_security_enabled
-            network.updated_at = datetime.utcnow()
+            network.updated_at = datetime.now(timezone.utc)
             return network
 
     def delete_network(self, network_id: str, project_id: str | None = None) -> bool:
@@ -3707,7 +3709,7 @@ class Database:
                 subnet.host_routes = host_routes
             if enable_dhcp is not None:
                 subnet.enable_dhcp = enable_dhcp
-            subnet.updated_at = datetime.utcnow()
+            subnet.updated_at = datetime.now(timezone.utc)
             return subnet
 
     def delete_subnet(self, subnet_id: str, project_id: str | None = None) -> bool:
@@ -3883,7 +3885,7 @@ class Database:
                 port.security_groups = security_groups
             if port_security_enabled is not None:
                 port.port_security_enabled = port_security_enabled
-            port.updated_at = datetime.utcnow()
+            port.updated_at = datetime.now(timezone.utc)
             return port
 
     def delete_port(self, port_id: str, project_id: str | None = None) -> bool:
@@ -4013,7 +4015,7 @@ class Database:
                     router.external_gateway_info = None
             if routes is not None:
                 router.routes = routes
-            router.updated_at = datetime.utcnow()
+            router.updated_at = datetime.now(timezone.utc)
             return router
 
     def delete_router(self, router_id: str, project_id: str | None = None) -> bool:
@@ -4297,7 +4299,7 @@ class Database:
                 else:
                     fip.fixed_ip_address = None
                     fip.status = FloatingIPStatus.DOWN
-            fip.updated_at = datetime.utcnow()
+            fip.updated_at = datetime.now(timezone.utc)
             return fip
 
     def delete_floating_ip(self, floatingip_id: str, project_id: str | None = None) -> bool:
@@ -4455,7 +4457,7 @@ class Database:
                 sg.name = name
             if description is not None:
                 sg.description = description
-            sg.updated_at = datetime.utcnow()
+            sg.updated_at = datetime.now(timezone.utc)
             return sg
 
     def delete_security_group(self, security_group_id: str, project_id: str | None = None) -> bool:
@@ -4971,7 +4973,7 @@ class Database:
 
             if target_project is not None:
                 policy.target_project = target_project
-                policy.updated_at = datetime.utcnow()
+                policy.updated_at = datetime.now(timezone.utc)
 
                 # Update network shared flag if applicable
                 if policy.object_type == "network":
@@ -6758,7 +6760,7 @@ class Database:
                 policy.description = description
             if shared is not None:
                 policy.shared = shared
-            policy.updated_at = datetime.utcnow()
+            policy.updated_at = datetime.now(timezone.utc)
             return policy
 
     def delete_qos_policy(self, policy_id: str, project_id: str | None = None) -> bool:
@@ -6817,7 +6819,7 @@ class Database:
 
             if admin_state_up is not None:
                 agent.admin_state_up = admin_state_up
-            agent.heartbeat_timestamp = datetime.utcnow()
+            agent.heartbeat_timestamp = datetime.now(timezone.utc)
             return agent
 
     def delete_neutron_agent(self, agent_id: str) -> bool:
@@ -6914,7 +6916,7 @@ class Database:
                 trunk.description = description
             if admin_state_up is not None:
                 trunk.admin_state_up = admin_state_up
-            trunk.updated_at = datetime.utcnow()
+            trunk.updated_at = datetime.now(timezone.utc)
             return trunk
 
     def delete_trunk(self, trunk_id: str, project_id: str | None = None) -> bool:
@@ -6950,7 +6952,7 @@ class Database:
                 )
                 trunk.sub_ports.append(trunk_sub_port)
 
-            trunk.updated_at = datetime.utcnow()
+            trunk.updated_at = datetime.now(timezone.utc)
             return trunk
 
     def remove_subports_from_trunk(
@@ -6969,7 +6971,7 @@ class Database:
 
             port_ids_to_remove = {sp.get("port_id") for sp in sub_ports}
             trunk.sub_ports = [sp for sp in trunk.sub_ports if sp.port_id not in port_ids_to_remove]
-            trunk.updated_at = datetime.utcnow()
+            trunk.updated_at = datetime.now(timezone.utc)
             return trunk
 
     def _init_octavia_extensions(self) -> None:
@@ -7621,7 +7623,7 @@ class Database:
             for key, value in kwargs.items():
                 if hasattr(metadef, key) and value is not None:
                     setattr(metadef, key, value)
-            metadef.updated_at = datetime.utcnow()
+            metadef.updated_at = datetime.now(timezone.utc)
             return metadef
 
     def delete_metadef_namespace(self, namespace: str, owner: str | None = None) -> bool:
@@ -7819,7 +7821,7 @@ class Database:
                 policy.blob = blob
             if type is not None:
                 policy.type = type
-            policy.updated_at = datetime.utcnow()
+            policy.updated_at = datetime.now(timezone.utc)
             return policy
 
     def delete_policy(self, policy_id: str) -> bool:
@@ -8101,7 +8103,7 @@ class Database:
                 flavor.description = description
             if enabled is not None:
                 flavor.enabled = enabled
-            flavor.updated_at = datetime.utcnow()
+            flavor.updated_at = datetime.now(timezone.utc)
             return flavor
 
     def delete_neutron_flavor(self, flavor_id: str) -> bool:

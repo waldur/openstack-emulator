@@ -9,7 +9,7 @@ import json
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -128,7 +128,7 @@ class SharedStateManager:
         state = self.get_state(force_refresh=True)
         enabled = state.get("enabled_scenarios", {})
         enabled[scenario_id] = {
-            "enabled_at": datetime.utcnow().isoformat(),
+            "enabled_at": datetime.now(timezone.utc).isoformat(),
             "config_override": config_override or {},
         }
         state["enabled_scenarios"] = enabled

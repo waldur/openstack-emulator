@@ -3,7 +3,7 @@
 import random
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from emulator.core.scenarios import (
@@ -78,7 +78,7 @@ class SimpleScenarioManager:
                     "error_message", scenario.failure_config.error_message
                 )
 
-            scenario.enabled_at = datetime.utcnow()
+            scenario.enabled_at = datetime.now(timezone.utc)
             self._enabled_scenarios[scenario_id] = scenario
             return True
 
@@ -139,10 +139,10 @@ class SimpleScenarioManager:
                     # Update statistics
                     scenario.stats.times_triggered += 1
                     scenario.stats.failures_injected += 1
-                    scenario.stats.last_triggered = datetime.utcnow()
+                    scenario.stats.last_triggered = datetime.now(timezone.utc)
                     self._global_stats.times_triggered += 1
                     self._global_stats.failures_injected += 1
-                    self._global_stats.last_triggered = datetime.utcnow()
+                    self._global_stats.last_triggered = datetime.now(timezone.utc)
 
                     return FailureResult(
                         should_fail=True,

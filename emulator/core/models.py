@@ -1,10 +1,27 @@
 """Data models for OpenStack emulator."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+
+
+def format_datetime_utc(dt: datetime) -> str:
+    """Format datetime as ISO8601 UTC string.
+
+    Args:
+        dt: datetime object (timezone-aware or naive)
+
+    Returns:
+        ISO8601 string with Z suffix for UTC timezone
+    """
+    if dt.tzinfo is not None and dt.tzinfo == timezone.utc:
+        # For timezone-aware UTC datetime, use isoformat but replace +00:00 with Z
+        return dt.isoformat().replace("+00:00", "Z")
+    else:
+        # For naive datetime (assumed to be UTC), append Z
+        return dt.isoformat() + "Z"
 
 
 class VolumeStatus(str, Enum):
@@ -226,8 +243,8 @@ class Image:
                     "minDisk": self.min_disk,
                     "minRam": self.min_ram,
                     "OS-EXT-IMG-SIZE:size": self.size,
-                    "created": self.created.isoformat() + "Z",
-                    "updated": self.updated.isoformat() + "Z",
+                    "created": format_datetime_utc(self.created),
+                    "updated": format_datetime_utc(self.updated),
                     "metadata": self.metadata,
                 }
             )
@@ -280,8 +297,8 @@ class GlanceImage:
             "min_disk": self.min_disk,
             "min_ram": self.min_ram,
             "os_hidden": self.os_hidden,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "self": f"/v2/images/{self.id}",
             "file": f"/v2/images/{self.id}/file",
@@ -355,8 +372,8 @@ class ImageMember:
             "image_id": self.image_id,
             "member_id": self.member_id,
             "status": self.status,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "schema": self.schema,
         }
 
@@ -442,13 +459,13 @@ class Server:
                         else ""
                     ),
                     "key_name": self.key_name,
-                    "created": self.created.isoformat() + "Z",
-                    "updated": self.updated.isoformat() + "Z",
+                    "created": format_datetime_utc(self.created),
+                    "updated": format_datetime_utc(self.updated),
                     "OS-SRV-USG:launched_at": (
-                        self.launched_at.isoformat() + "Z" if self.launched_at else None
+                        format_datetime_utc(self.launched_at) if self.launched_at else None
                     ),
                     "OS-SRV-USG:terminated_at": (
-                        self.terminated_at.isoformat() + "Z" if self.terminated_at else None
+                        format_datetime_utc(self.terminated_at) if self.terminated_at else None
                     ),
                     "metadata": self.metadata,
                     "addresses": self.addresses,
@@ -483,7 +500,7 @@ class Keypair:
             "fingerprint": self.fingerprint,
             "user_id": self.user_id,
             "type": self.type,
-            "created_at": self.created_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
         }
 
 
@@ -519,8 +536,8 @@ class Token:
                     "domain": {"id": self.domain_id, "name": self.domain_name},
                 },
                 "roles": self.roles,
-                "issued_at": self.issued_at.isoformat() + "Z",
-                "expires_at": (self.expires_at.isoformat() + "Z" if self.expires_at else None),
+                "issued_at": format_datetime_utc(self.issued_at),
+                "expires_at": (format_datetime_utc(self.expires_at) if self.expires_at else None),
                 "catalog": self.catalog,
             }
         }
@@ -823,7 +840,7 @@ class VolumeAttachment:
             "volume_id": self.volume_id,
             "server_id": self.server_id,
             "device": self.device,
-            "attached_at": self.attached_at.isoformat() + "Z",
+            "attached_at": format_datetime_utc(self.attached_at),
             "host_name": self.host_name,
             "attachment_id": self.attachment_id,
         }
@@ -887,8 +904,8 @@ class Volume:
                     "os-vol-host-attr:host": self.host,
                     "attachments": [a.to_dict() for a in self.attachments],
                     "metadata": self.metadata,
-                    "created_at": self.created_at.isoformat() + "Z",
-                    "updated_at": self.updated_at.isoformat() + "Z",
+                    "created_at": format_datetime_utc(self.created_at),
+                    "updated_at": format_datetime_utc(self.updated_at),
                     "migration_status": self.migration_status,
                     "replication_status": self.replication_status,
                     "consistencygroup_id": self.consistencygroup_id,
@@ -935,8 +952,8 @@ class Snapshot:
                     "os-extended-snapshot-attributes:project_id": self.project_id,
                     "user_id": self.user_id,
                     "metadata": self.metadata,
-                    "created_at": self.created_at.isoformat() + "Z",
-                    "updated_at": self.updated_at.isoformat() + "Z",
+                    "created_at": format_datetime_utc(self.created_at),
+                    "updated_at": format_datetime_utc(self.updated_at),
                     "os-extended-snapshot-attributes:progress": self.progress,
                 }
             )
@@ -1045,8 +1062,8 @@ class Network:
             "availability_zones": self.availability_zones,
             "dns_domain": self.dns_domain,
             "subnets": self.subnets,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1108,8 +1125,8 @@ class Subnet:
             "ipv6_address_mode": self.ipv6_address_mode,
             "subnetpool_id": self.subnetpool_id,
             "service_types": self.service_types,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1183,8 +1200,8 @@ class Port:
             "binding:vif_details": self.binding_vif_details,
             "dns_name": self.dns_name,
             "dns_assignment": self.dns_assignment,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1242,8 +1259,8 @@ class Router:
             "availability_zones": self.availability_zones,
             "ha": self.ha,
             "distributed": self.distributed,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1290,8 +1307,8 @@ class FloatingIP:
             "project_id": self.project_id,
             "dns_domain": self.dns_domain,
             "dns_name": self.dns_name,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1332,8 +1349,8 @@ class SecurityGroupRule:
             "description": self.description,
             "tenant_id": self.project_id,
             "project_id": self.project_id,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "revision_number": 1,
         }
 
@@ -1362,8 +1379,8 @@ class SecurityGroup:
             "project_id": self.project_id,
             "security_group_rules": [r.to_dict() for r in self.security_group_rules],
             "stateful": self.stateful,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -1709,8 +1726,8 @@ class HealthMonitor:
             "project_id": self.project_id,
             "provisioning_status": self.provisioning_status.value,
             "operating_status": self.operating_status.value,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -1753,8 +1770,8 @@ class PoolMember:
             "backup": self.backup,
             "monitor_address": self.monitor_address,
             "monitor_port": self.monitor_port,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -1812,8 +1829,8 @@ class Pool:
             "tls_ciphers": self.tls_ciphers,
             "tls_versions": self.tls_versions,
             "alpn_protocols": self.alpn_protocols,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
         return result
@@ -1851,8 +1868,8 @@ class L7Rule:
             "project_id": self.project_id,
             "provisioning_status": self.provisioning_status.value,
             "operating_status": self.operating_status.value,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -1898,8 +1915,8 @@ class L7Policy:
             "provisioning_status": self.provisioning_status.value,
             "operating_status": self.operating_status.value,
             "rules": [r.to_dict() for r in self.rules],
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -1969,8 +1986,8 @@ class Listener:
             "tls_versions": self.tls_versions,
             "alpn_protocols": self.alpn_protocols,
             "l7policies": [p.to_dict() for p in self.l7policies],
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -2022,8 +2039,8 @@ class LoadBalancer:
             "listeners": [{"id": listener.id} for listener in self.listeners],
             "pools": [{"id": pool.id} for pool in self.pools],
             "additional_vips": self.additional_vips,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
         }
 
@@ -2198,8 +2215,8 @@ class QosPolicy:
             "project_id": self.project_id,
             "tenant_id": self.project_id,  # Compatibility
             "rules": self.rules,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -2259,9 +2276,9 @@ class NeutronAgent:
             "admin_state_up": self.admin_state_up,
             "alive": self.alive,
             "configurations": self.configurations,
-            "created_at": self.created_at.isoformat() + "Z",
-            "started_at": self.started_at.isoformat() + "Z",
-            "heartbeat_timestamp": self.heartbeat_timestamp.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "started_at": format_datetime_utc(self.started_at),
+            "heartbeat_timestamp": format_datetime_utc(self.heartbeat_timestamp),
         }
 
 
@@ -2322,8 +2339,8 @@ class Trunk:
             "project_id": self.project_id,
             "tenant_id": self.project_id,  # Compatibility
             "sub_ports": [sp.to_dict() for sp in self.sub_ports],
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "tags": self.tags,
             "revision_number": 1,
         }
@@ -2518,7 +2535,7 @@ class VolumeTransfer:
             "name": self.name,
             "volume_id": self.volume_id,
             "auth_key": self.auth_key,
-            "created_at": self.created_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
             "links": [
                 {"rel": "self", "href": f"/v3/os-volume-transfer/{self.id}"},
             ],
@@ -2583,9 +2600,9 @@ class VolumeBackup:
             "temp_volume_id": self.temp_volume_id,
             "temp_snapshot_id": self.temp_snapshot_id,
             "metadata": self.metadata,
-            "data_timestamp": self.data_timestamp.isoformat() + "Z",
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "data_timestamp": format_datetime_utc(self.data_timestamp),
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "links": [
                 {"rel": "self", "href": f"/v3/backups/{self.id}"},
             ],
@@ -2637,8 +2654,8 @@ class ConsistencyGroup:
             "user_id": self.user_id,
             "volume_types": self.volume_types,
             "volumes": self.volumes,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
         }
 
 
@@ -2668,8 +2685,8 @@ class GroupSnapshot:
             "group_type_id": self.group_type_id,
             "project_id": self.project_id,
             "user_id": self.user_id,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
         }
 
 
@@ -2715,8 +2732,8 @@ class ImageTask:
             "type": self.type.value,
             "status": self.status.value,
             "owner": self.owner,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "input": self.input,
             "result": self.result,
             "message": self.message,
@@ -2724,7 +2741,7 @@ class ImageTask:
             "schema": "/v2/schemas/task",
         }
         if self.expires_at:
-            result_dict["expires_at"] = self.expires_at.isoformat() + "Z"
+            result_dict["expires_at"] = format_datetime_utc(self.expires_at)
         return result_dict
 
 
@@ -2756,8 +2773,8 @@ class MetadefNamespace:
             "properties": self.properties,
             "objects": self.objects,
             "resource_type_associations": self.resource_type_associations,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
             "self": f"/v2/metadefs/namespaces/{self.namespace}",
             "schema": "/v2/schemas/metadefs/namespace",
         }
@@ -2777,8 +2794,8 @@ class ImageCacheEntry:
         """Convert to API response format."""
         return {
             "image_id": self.image_id,
-            "last_accessed": self.last_accessed.isoformat() + "Z",
-            "last_modified": self.last_modified.isoformat() + "Z",
+            "last_accessed": format_datetime_utc(self.last_accessed),
+            "last_modified": format_datetime_utc(self.last_modified),
             "size": self.size,
             "hits": self.hits,
         }
@@ -2833,11 +2850,11 @@ class ApplicationCredential:
             "system": self.system,
             "roles": self.roles,
             "unrestricted": self.unrestricted,
-            "created_at": self.created_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
             "links": {"self": f"/v3/users/{self.user_id}/application_credentials/{self.id}"},
         }
         if self.expires_at:
-            result["expires_at"] = self.expires_at.isoformat() + "Z"
+            result["expires_at"] = format_datetime_utc(self.expires_at)
         if include_secret:
             result["secret"] = self.secret
         return result
@@ -2972,8 +2989,8 @@ class NeutronFlavor:
             "service_type": self.service_type,
             "enabled": self.enabled,
             "service_profiles": self.service_profiles,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
         }
 
 
@@ -2997,6 +3014,6 @@ class ServiceProfile:
             "driver": self.driver,
             "enabled": self.enabled,
             "metainfo": self.metainfo,
-            "created_at": self.created_at.isoformat() + "Z",
-            "updated_at": self.updated_at.isoformat() + "Z",
+            "created_at": format_datetime_utc(self.created_at),
+            "updated_at": format_datetime_utc(self.updated_at),
         }
