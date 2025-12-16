@@ -862,6 +862,7 @@ async def get_quota(
 
 
 @router.get("/v2.0/quotas/{project_id}/details")
+@router.get("/quotas/{project_id}/details.json")
 async def get_quota_details(
     project_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
@@ -918,6 +919,17 @@ async def list_quotas(
 
     default_quota = NeutronQuota()
     return {"quotas": [default_quota.to_dict()]}
+
+
+# ==================== Debug Route ====================
+
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def debug_catch_all(path: str, request: Request):
+    """Debug route to catch all unmatched requests."""
+    print(f"DEBUG: Unmatched request: {request.method} /{path}")
+    print(f"DEBUG: Query params: {request.query_params}")
+    print(f"DEBUG: Headers: {dict(request.headers)}")
+    return {"detail": "Not Found"}
 
 
 # ==================== RBAC Policies ====================
