@@ -923,8 +923,9 @@ async def list_quotas(
 
 # ==================== Debug Route ====================
 
+
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def debug_catch_all(path: str, request: Request):
+async def debug_catch_all(path: str, request: Request) -> dict[str, str]:
     """Debug route to catch all unmatched requests."""
     print(f"DEBUG: Unmatched request: {request.method} /{path}")
     print(f"DEBUG: Query params: {request.query_params}")
