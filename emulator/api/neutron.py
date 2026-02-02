@@ -862,7 +862,7 @@ async def get_quota(
 
 
 @router.get("/v2.0/quotas/{project_id}/details")
-@router.get("/quotas/{project_id}/details.json")
+@router.get("/v2.0/quotas/{project_id}/details.json")
 async def get_quota_details(
     project_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
