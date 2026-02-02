@@ -217,6 +217,17 @@ async def get_version_v3(request: Request) -> dict[str, Any]:
     }
 
 
+# Extensions endpoint
+@router.get("/v3/{project_id}/extensions")
+async def list_extensions(
+    project_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List Block Storage API extensions."""
+    get_token_or_raise(x_auth_token)
+    return {"extensions": []}
+
+
 # Volume endpoints
 @router.get("/v3/{project_id}/volumes")
 async def list_volumes(
