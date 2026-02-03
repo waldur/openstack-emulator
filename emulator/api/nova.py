@@ -470,6 +470,46 @@ async def server_action(
         raise HTTPException(status_code=400, detail=f"Unknown action: {list(body.keys())}")
 
 
+# Security Groups Support
+@router.get("/v2.1/servers/{server_id}/os-security-groups")
+async def list_server_security_groups(
+    server_id: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List security groups for a server."""
+    token = get_token_or_raise(x_auth_token)
+
+    server = db.get_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    if server.tenant_id != token.project_id:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    # Ensure default security group exists for this tenant
+    db.get_or_create_default_security_group(token.project_id)
+
+    # Get full security group details
+    # Server only stores names: [{"name": "default"}]
+    result_sgs = []
+    for server_sg in server.security_groups:
+        sg_name = server_sg.get("name")
+        if sg_name:
+            # Find the security group by name in the project
+            # Note: list_security_groups returns a list
+            sgs = db.list_security_groups(project_id=token.project_id, name=sg_name)
+            if sgs:
+                # Use the first match (names should be unique per project)
+                # Create a shallow copy to ensure we don't mutate any shared state
+                sg_dict = sgs[0].to_dict().copy()
+                # Rename security_group_rules to rules for this specific endpoint
+                if "security_group_rules" in sg_dict:
+                    sg_dict["rules"] = sg_dict.pop("security_group_rules")
+                result_sgs.append(sg_dict)
+
+    return {"security_groups": result_sgs}
+
+
 # Server metadata
 @router.get("/v2.1/servers/{server_id}/metadata")
 async def get_server_metadata(
@@ -716,9 +756,9 @@ async def create_keypair(
     response = {"keypair": keypair.to_dict()}
     # If no public key was provided, we "generated" one
     if not req.public_key:
-        response["keypair"][
-            "private_key"
-        ] = "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
+        response["keypair"]["private_key"] = (
+            "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
+        )
 
     return response
 
