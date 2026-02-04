@@ -756,9 +756,9 @@ async def create_keypair(
     response = {"keypair": keypair.to_dict()}
     # If no public key was provided, we "generated" one
     if not req.public_key:
-        response["keypair"]["private_key"] = (
-            "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
-        )
+        response["keypair"][
+            "private_key"
+        ] = "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
 
     return response
 
