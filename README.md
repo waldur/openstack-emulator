@@ -37,6 +37,9 @@ openstack-emulator
 
 # Run a specific service
 openstack-emulator --service=nova
+
+# Run with persistence enabled
+openstack-emulator --persist-db=emulator_data.json --auto-save
 ```
 
 ### Using with OpenStack CLI
@@ -100,7 +103,7 @@ pytest --cov=emulator --cov-report=html
 This is a testing emulator with several limitations:
 
 - **No real virtualization**: Servers are simulated, not actual VMs
-- **In-memory storage**: Data is lost on restart
+- **In-memory storage**: Data is lost on restart (unless persistence is enabled)
 - **Limited API coverage**: Only essential endpoints implemented
 - **Simulated resources**: Networks, volumes don't route real traffic
 

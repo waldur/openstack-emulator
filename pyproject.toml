@@ -5,7 +5,7 @@ description = "OpenStack API emulator for testing purposes"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "OpenStack Emulator Team" }]
+authors = [{ name = "OpenNode Team" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

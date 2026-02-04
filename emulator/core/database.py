@@ -122,10 +122,11 @@ DEVICE_OWNER_ROUTER_GATEWAY = "network:router_gateway"
 class Database:
     """In-memory database for storing OpenStack resources."""
 
-    def __init__(self, persist_path: str | None = None) -> None:
+    def __init__(self, persist_path: str | None = None, auto_save: bool = False) -> None:
         """Initialize the database with optional persistence."""
         self._lock = threading.RLock()
         self.persist_path = persist_path
+        self.auto_save = auto_save
 
         # Storage dictionaries - Nova
         self._servers: dict[str, Server] = {}
@@ -249,6 +250,10 @@ class Database:
         self._init_octavia_extensions()
         self._init_glance_extensions()
         self._init_keystone_extensions()
+
+        # Load persisted data if enabled
+        if self.persist_path:
+            self.load()
 
     def _init_default_flavors(self) -> None:
         """Create default flavors matching standard OpenStack flavors."""
@@ -790,6 +795,9 @@ class Database:
             # Simulate immediate build completion for emulator
             self._complete_server_build(server_id)
 
+            if self.auto_save:
+                self.save()
+
             return server
 
     def _complete_server_build(self, server_id: str) -> None:
@@ -892,6 +900,8 @@ class Database:
                 if metadata is not None:
                     server.metadata = metadata
                 server.updated = datetime.now(timezone.utc)
+                if self.auto_save:
+                    self.save()
             return server
 
     def delete_server(self, server_id: str) -> bool:
@@ -903,6 +913,8 @@ class Database:
                 server.terminated_at = datetime.now(timezone.utc)
                 server.updated = datetime.now(timezone.utc)
                 del self._servers[server_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -921,6 +933,8 @@ class Database:
                     server.status = ServerStatus.ACTIVE
                     server.power_state = PowerState.RUNNING
                     server.updated = datetime.now(timezone.utc)
+                    if self.auto_save:
+                        self.save()
                     return True
 
             elif action_lower == "stop" or action_lower == "os-stop":
@@ -1134,6 +1148,8 @@ class Database:
                 description=description,
             )
             self._flavors[fid] = flavor
+            if self.auto_save:
+                self.save()
             return flavor
 
     def delete_flavor(self, flavor_id: str) -> bool:
@@ -1141,6 +1157,8 @@ class Database:
         with self._lock:
             if flavor_id in self._flavors:
                 del self._flavors[flavor_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1190,6 +1208,8 @@ class Database:
                 metadata=metadata or {},
             )
             self._images[image.id] = image
+            if self.auto_save:
+                self.save()
             return image
 
     def delete_image(self, image_id: str) -> bool:
@@ -1197,6 +1217,8 @@ class Database:
         with self._lock:
             if image_id in self._images:
                 del self._images[image_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1228,6 +1250,8 @@ class Database:
             )
             key = f"{user_id}:{name}"
             self._keypairs[key] = keypair
+            if self.auto_save:
+                self.save()
             return keypair
 
     def get_keypair(self, name: str, user_id: str) -> Keypair | None:
@@ -1247,6 +1271,8 @@ class Database:
             key = f"{user_id}:{name}"
             if key in self._keypairs:
                 del self._keypairs[key]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1257,17 +1283,51 @@ class Database:
             return
 
         with self._lock:
-            data = {
-                "servers": {k: self._server_to_dict(v) for k, v in self._servers.items()},
-                "flavors": {k: self._flavor_to_dict(v) for k, v in self._flavors.items()},
-                "images": {k: self._image_to_dict(v) for k, v in self._images.items()},
-                "keypairs": {k: self._keypair_to_dict(v) for k, v in self._keypairs.items()},
-            }
+            try:
+                data = {
+                    # Nova resources
+                    "servers": {k: self._server_to_dict(v) for k, v in self._servers.items()},
+                    "flavors": {k: self._flavor_to_dict(v) for k, v in self._flavors.items()},
+                    "images": {k: self._image_to_dict(v) for k, v in self._images.items()},
+                    "keypairs": {k: self._keypair_to_dict(v) for k, v in self._keypairs.items()},
+                    # Keystone resources
+                    "domains": {k: self._domain_to_dict(v) for k, v in self._domains.items()},
+                    "projects": {k: self._project_to_dict(v) for k, v in self._projects.items()},
+                    "users": {k: self._user_to_dict(v) for k, v in self._users.items()},
+                    "roles": {k: self._role_to_dict(v) for k, v in self._roles.items()},
+                    "role_assignments": [
+                        self._role_assignment_to_dict(ra) for ra in self._role_assignments
+                    ],
+                    # Neutron resources
+                    "networks": {k: self._network_to_dict(v) for k, v in self._networks.items()},
+                    "subnets": {k: self._subnet_to_dict(v) for k, v in self._subnets.items()},
+                    "ports": {k: self._port_to_dict(v) for k, v in self._ports.items()},
+                    "routers": {k: self._router_to_dict(v) for k, v in self._routers.items()},
+                    "floating_ips": {
+                        k: self._floating_ip_to_dict(v) for k, v in self._floating_ips.items()
+                    },
+                    "security_groups": {
+                        k: self._security_group_to_dict(v) for k, v in self._security_groups.items()
+                    },
+                    # Cinder resources
+                    "volumes": {k: self._volume_to_dict(v) for k, v in self._volumes.items()},
+                    "snapshots": {k: self._snapshot_to_dict(v) for k, v in self._snapshots.items()},
+                    "volume_types": {
+                        k: self._volume_type_to_dict(v) for k, v in self._volume_types.items()
+                    },
+                    # Glance resources
+                    "glance_images": {
+                        k: self._glance_image_to_dict(v) for k, v in self._glance_images.items()
+                    },
+                }
 
-            path = Path(self.persist_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2, default=str)
+                path = Path(self.persist_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(data, f, indent=2, default=str)
+                logger.info(f"Database saved to {self.persist_path}")
+            except Exception as e:
+                logger.error(f"Failed to save database: {e}")
 
     def load(self) -> None:
         """Load database state from disk."""
@@ -1276,14 +1336,92 @@ class Database:
 
         path = Path(self.persist_path)
         if not path.exists():
+            logger.info(f"No persistence file found at {self.persist_path}, starting fresh")
             return
 
         with self._lock:
-            with open(path) as f:
-                json.load(f)
+            try:
+                with open(path) as f:
+                    data = json.load(f)
 
-            # Restore state (simplified - would need proper deserialization)
-            # This is a placeholder for full implementation
+                # Clear existing data (except defaults that were initialized)
+                # We'll keep default flavors, images, etc. and only override with persisted data
+
+                # Load Nova resources
+                if "servers" in data:
+                    self._servers = {k: self._dict_to_server(v) for k, v in data["servers"].items()}
+                if "flavors" in data:
+                    self._flavors = {k: self._dict_to_flavor(v) for k, v in data["flavors"].items()}
+                if "images" in data:
+                    self._images = {k: self._dict_to_image(v) for k, v in data["images"].items()}
+                if "keypairs" in data:
+                    self._keypairs = {
+                        k: self._dict_to_keypair(v) for k, v in data["keypairs"].items()
+                    }
+
+                # Load Keystone resources
+                if "domains" in data:
+                    self._domains = {k: self._dict_to_domain(v) for k, v in data["domains"].items()}
+                if "projects" in data:
+                    self._projects = {
+                        k: self._dict_to_project(v) for k, v in data["projects"].items()
+                    }
+                if "users" in data:
+                    self._users = {k: self._dict_to_user(v) for k, v in data["users"].items()}
+                if "roles" in data:
+                    self._roles = {k: self._dict_to_role(v) for k, v in data["roles"].items()}
+                if "role_assignments" in data:
+                    self._role_assignments = [
+                        self._dict_to_role_assignment(ra) for ra in data["role_assignments"]
+                    ]
+
+                # Load Neutron resources
+                if "networks" in data:
+                    self._networks = {
+                        k: self._dict_to_network(v) for k, v in data["networks"].items()
+                    }
+                if "subnets" in data:
+                    self._subnets = {k: self._dict_to_subnet(v) for k, v in data["subnets"].items()}
+                if "ports" in data:
+                    self._ports = {k: self._dict_to_port(v) for k, v in data["ports"].items()}
+                if "routers" in data:
+                    self._routers = {k: self._dict_to_router(v) for k, v in data["routers"].items()}
+                if "floating_ips" in data:
+                    self._floating_ips = {
+                        k: self._dict_to_floating_ip(v) for k, v in data["floating_ips"].items()
+                    }
+                if "security_groups" in data:
+                    self._security_groups = {
+                        k: self._dict_to_security_group(v)
+                        for k, v in data["security_groups"].items()
+                    }
+
+                # Load Cinder resources
+                if "volumes" in data:
+                    self._volumes = {k: self._dict_to_volume(v) for k, v in data["volumes"].items()}
+                if "snapshots" in data:
+                    self._snapshots = {
+                        k: self._dict_to_snapshot(v) for k, v in data["snapshots"].items()
+                    }
+                if "volume_types" in data:
+                    self._volume_types = {
+                        k: self._dict_to_volume_type(v) for k, v in data["volume_types"].items()
+                    }
+
+                # Load Glance resources
+                if "glance_images" in data:
+                    self._glance_images = {
+                        k: self._dict_to_glance_image(v) for k, v in data["glance_images"].items()
+                    }
+                    # Sync to Nova images
+                    for glance_img in self._glance_images.values():
+                        self._images[glance_img.id] = glance_img.to_nova_image()
+
+                logger.info(f"Database loaded from {self.persist_path}")
+            except Exception as e:
+                logger.error(f"Failed to load database: {e}")
+
+    # Serialization methods (to dict)
 
     def _server_to_dict(self, server: Server) -> dict[str, Any]:
         """Convert server to dictionary for persistence."""
@@ -1305,6 +1443,7 @@ class Database:
             "metadata": server.metadata,
             "addresses": server.addresses,
             "security_groups": server.security_groups,
+            "admin_pass": server.admin_pass,
         }
 
     def _flavor_to_dict(self, flavor: Flavor) -> dict[str, Any]:
@@ -1318,6 +1457,7 @@ class Database:
             "ephemeral": flavor.ephemeral,
             "swap": flavor.swap,
             "is_public": flavor.is_public,
+            "description": flavor.description,
         }
 
     def _image_to_dict(self, image: Image) -> dict[str, Any]:
@@ -1329,6 +1469,8 @@ class Database:
             "min_disk": image.min_disk,
             "min_ram": image.min_ram,
             "size": image.size,
+            "created": image.created.isoformat(),
+            "updated": image.updated.isoformat(),
             "metadata": image.metadata,
         }
 
@@ -1340,7 +1482,671 @@ class Database:
             "fingerprint": keypair.fingerprint,
             "user_id": keypair.user_id,
             "type": keypair.type,
+            "created_at": keypair.created_at.isoformat(),
         }
+
+    def _domain_to_dict(self, domain: Domain) -> dict[str, Any]:
+        """Convert domain to dictionary for persistence."""
+        return {
+            "id": domain.id,
+            "name": domain.name,
+            "description": domain.description,
+            "enabled": domain.enabled,
+            "tags": domain.tags,
+        }
+
+    def _project_to_dict(self, project: Project) -> dict[str, Any]:
+        """Convert project to dictionary for persistence."""
+        return {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "domain_id": project.domain_id,
+            "parent_id": project.parent_id,
+            "enabled": project.enabled,
+            "is_domain": project.is_domain,
+            "tags": project.tags,
+            "options": project.options,
+        }
+
+    def _user_to_dict(self, user: User) -> dict[str, Any]:
+        """Convert user to dictionary for persistence."""
+        return {
+            "id": user.id,
+            "name": user.name,
+            "description": user.description,
+            "domain_id": user.domain_id,
+            "default_project_id": user.default_project_id,
+            "enabled": user.enabled,
+            "password_hash": user.password_hash,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "updated_at": user.updated_at.isoformat(),
+        }
+
+    def _role_to_dict(self, role: Role) -> dict[str, Any]:
+        """Convert role to dictionary for persistence."""
+        return {
+            "id": role.id,
+            "name": role.name,
+            "description": role.description,
+            "domain_id": role.domain_id,
+        }
+
+    def _role_assignment_to_dict(self, ra: RoleAssignment) -> dict[str, Any]:
+        """Convert role assignment to dictionary for persistence."""
+        return {
+            "role_id": ra.role_id,
+            "user_id": ra.user_id,
+            "group_id": ra.group_id,
+            "project_id": ra.project_id,
+            "domain_id": ra.domain_id,
+            "inherited": ra.inherited,
+        }
+
+    def _network_to_dict(self, network: Network) -> dict[str, Any]:
+        """Convert network to dictionary for persistence."""
+        return {
+            "id": network.id,
+            "name": network.name,
+            "description": network.description,
+            "tenant_id": network.project_id,
+            "project_id": network.project_id,
+            "admin_state_up": network.admin_state_up,
+            "status": network.status,
+            "shared": network.shared,
+            "router:external": network.external,
+            "mtu": network.mtu,
+            "port_security_enabled": network.port_security_enabled,
+            "provider:network_type": network.provider_network_type,
+            "provider:physical_network": network.provider_physical_network,
+            "provider:segmentation_id": network.provider_segmentation_id,
+            "created_at": network.created_at.isoformat(),
+            "updated_at": network.updated_at.isoformat(),
+        }
+
+    def _subnet_to_dict(self, subnet: Subnet) -> dict[str, Any]:
+        """Convert subnet to dictionary for persistence."""
+        return {
+            "id": subnet.id,
+            "name": subnet.name,
+            "description": subnet.description,
+            "network_id": subnet.network_id,
+            "tenant_id": subnet.project_id,
+            "project_id": subnet.project_id,
+            "cidr": subnet.cidr,
+            "gateway_ip": subnet.gateway_ip,
+            "ip_version": subnet.ip_version,
+            "enable_dhcp": subnet.enable_dhcp,
+            "dns_nameservers": subnet.dns_nameservers,
+            "allocation_pools": [{"start": p.start, "end": p.end} for p in subnet.allocation_pools],
+            "host_routes": subnet.host_routes,
+            "created_at": subnet.created_at.isoformat(),
+            "updated_at": subnet.updated_at.isoformat(),
+        }
+
+    def _port_to_dict(self, port: Port) -> dict[str, Any]:
+        """Convert port to dictionary for persistence."""
+        return {
+            "id": port.id,
+            "name": port.name,
+            "description": port.description,
+            "network_id": port.network_id,
+            "tenant_id": port.project_id,
+            "project_id": port.project_id,
+            "mac_address": port.mac_address,
+            "admin_state_up": port.admin_state_up,
+            "status": port.status,
+            "device_id": port.device_id,
+            "device_owner": port.device_owner,
+            "fixed_ips": [
+                {"subnet_id": f.subnet_id, "ip_address": f.ip_address} for f in port.fixed_ips
+            ],
+            "security_groups": port.security_groups,
+            "port_security_enabled": port.port_security_enabled,
+            "created_at": port.created_at.isoformat(),
+            "updated_at": port.updated_at.isoformat(),
+        }
+
+    def _router_to_dict(self, router: Router) -> dict[str, Any]:
+        """Convert router to dictionary for persistence."""
+        ext_gw = None
+        if router.external_gateway_info:
+            ext_gw = {
+                "network_id": router.external_gateway_info.network_id,
+                "enable_snat": router.external_gateway_info.enable_snat,
+                "external_fixed_ips": [
+                    {"subnet_id": f.subnet_id, "ip_address": f.ip_address}
+                    for f in router.external_gateway_info.external_fixed_ips
+                ],
+            }
+        return {
+            "id": router.id,
+            "name": router.name,
+            "description": router.description,
+            "tenant_id": router.project_id,
+            "project_id": router.project_id,
+            "admin_state_up": router.admin_state_up,
+            "status": router.status,
+            "external_gateway_info": ext_gw,
+            "created_at": router.created_at.isoformat(),
+            "updated_at": router.updated_at.isoformat(),
+        }
+
+    def _floating_ip_to_dict(self, fip: FloatingIP) -> dict[str, Any]:
+        """Convert floating IP to dictionary for persistence."""
+        return {
+            "id": fip.id,
+            "floating_ip_address": fip.floating_ip_address,
+            "floating_network_id": fip.floating_network_id,
+            "router_id": fip.router_id,
+            "port_id": fip.port_id,
+            "fixed_ip_address": fip.fixed_ip_address,
+            "tenant_id": fip.project_id,
+            "project_id": fip.project_id,
+            "status": fip.status.value,
+            "description": fip.description,
+            "created_at": fip.created_at.isoformat(),
+            "updated_at": fip.updated_at.isoformat(),
+        }
+
+    def _security_group_to_dict(self, sg: SecurityGroup) -> dict[str, Any]:
+        """Convert security group to dictionary for persistence."""
+        return {
+            "id": sg.id,
+            "name": sg.name,
+            "description": sg.description,
+            "tenant_id": sg.project_id,
+            "project_id": sg.project_id,
+            "created_at": sg.created_at.isoformat(),
+            "updated_at": sg.updated_at.isoformat(),
+        }
+
+    def _volume_to_dict(self, volume: Volume) -> dict[str, Any]:
+        """Convert volume to dictionary for persistence."""
+        return {
+            "id": volume.id,
+            "name": volume.name,
+            "description": volume.description,
+            "size": volume.size,
+            "status": volume.status.value,
+            "availability_zone": volume.availability_zone,
+            "tenant_id": volume.project_id,
+            "user_id": volume.user_id,
+            "volume_type": volume.volume_type,
+            "bootable": volume.bootable,
+            "encrypted": volume.encrypted,
+            "multiattach": volume.multiattach,
+            "source_volid": volume.source_volid,
+            "snapshot_id": volume.snapshot_id,
+            "image_id": volume.image_id,
+            "metadata": volume.metadata,
+            "created_at": volume.created_at.isoformat(),
+            "updated_at": volume.updated_at.isoformat(),
+        }
+
+    def _snapshot_to_dict(self, snapshot: Snapshot) -> dict[str, Any]:
+        """Convert snapshot to dictionary for persistence."""
+        return {
+            "id": snapshot.id,
+            "name": snapshot.name,
+            "description": snapshot.description,
+            "volume_id": snapshot.volume_id,
+            "status": snapshot.status.value,
+            "size": snapshot.size,
+            "tenant_id": snapshot.project_id,
+            "user_id": snapshot.user_id,
+            "metadata": snapshot.metadata,
+            "created_at": snapshot.created_at.isoformat(),
+            "updated_at": snapshot.updated_at.isoformat(),
+        }
+
+    def _volume_type_to_dict(self, vtype: VolumeType) -> dict[str, Any]:
+        """Convert volume type to dictionary for persistence."""
+        return {
+            "id": vtype.id,
+            "name": vtype.name,
+            "description": vtype.description,
+            "is_public": vtype.is_public,
+            "extra_specs": vtype.extra_specs,
+        }
+
+    def _glance_image_to_dict(self, image: GlanceImage) -> dict[str, Any]:
+        """Convert Glance image to dictionary for persistence."""
+        return {
+            "id": image.id,
+            "name": image.name,
+            "status": image.status.value,
+            "visibility": image.visibility.value,
+            "protected": image.protected,
+            "owner": image.owner,
+            "min_disk": image.min_disk,
+            "min_ram": image.min_ram,
+            "size": image.size,
+            "virtual_size": image.virtual_size,
+            "checksum": image.checksum,
+            "os_hash_algo": image.os_hash_algo,
+            "os_hash_value": image.os_hash_value,
+            "os_hidden": image.os_hidden,
+            "container_format": image.container_format.value if image.container_format else None,
+            "disk_format": image.disk_format.value if image.disk_format else None,
+            "created_at": image.created_at.isoformat(),
+            "updated_at": image.updated_at.isoformat(),
+            "tags": image.tags,
+            "properties": image.properties,
+            "architecture": image.architecture,
+            "os_distro": image.os_distro,
+            "os_version": image.os_version,
+        }
+
+    # Deserialization methods (from dict)
+
+    def _dict_to_server(self, data: dict[str, Any]) -> Server:
+        """Convert dictionary to Server object."""
+        return Server(
+            id=data["id"],
+            name=data["name"],
+            status=ServerStatus(data["status"]),
+            power_state=PowerState(data["power_state"]),
+            tenant_id=data["tenant_id"],
+            user_id=data["user_id"],
+            flavor_id=data["flavor_id"],
+            image_id=data["image_id"],
+            host=data["host"],
+            availability_zone=data["availability_zone"],
+            key_name=data.get("key_name"),
+            created=datetime.fromisoformat(data["created"]),
+            updated=datetime.fromisoformat(data["updated"]),
+            launched_at=(
+                datetime.fromisoformat(data["launched_at"]) if data.get("launched_at") else None
+            ),
+            metadata=data.get("metadata", {}),
+            addresses=data.get("addresses", {}),
+            security_groups=data.get("security_groups", [{"name": "default"}]),
+            admin_pass=data.get("admin_pass"),
+        )
+
+    def _dict_to_flavor(self, data: dict[str, Any]) -> Flavor:
+        """Convert dictionary to Flavor object."""
+        return Flavor(
+            id=data["id"],
+            name=data["name"],
+            vcpus=data["vcpus"],
+            ram=data["ram"],
+            disk=data["disk"],
+            ephemeral=data.get("ephemeral", 0),
+            swap=data.get("swap", 0),
+            is_public=data.get("is_public", True),
+            description=data.get("description", ""),
+        )
+
+    def _dict_to_image(self, data: dict[str, Any]) -> Image:
+        """Convert dictionary to Image object."""
+        return Image(
+            id=data["id"],
+            name=data["name"],
+            status=data["status"],
+            min_disk=data.get("min_disk", 0),
+            min_ram=data.get("min_ram", 0),
+            size=data.get("size", 0),
+            created=(
+                datetime.fromisoformat(data["created"]) if "created" in data else datetime.utcnow()
+            ),
+            updated=(
+                datetime.fromisoformat(data["updated"]) if "updated" in data else datetime.utcnow()
+            ),
+            metadata=data.get("metadata", {}),
+        )
+
+    def _dict_to_keypair(self, data: dict[str, Any]) -> Keypair:
+        """Convert dictionary to Keypair object."""
+        return Keypair(
+            name=data["name"],
+            public_key=data["public_key"],
+            fingerprint=data["fingerprint"],
+            user_id=data["user_id"],
+            type=data.get("type", "ssh"),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_domain(self, data: dict[str, Any]) -> Domain:
+        """Convert dictionary to Domain object."""
+        return Domain(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            enabled=data.get("enabled", True),
+            tags=data.get("tags", []),
+        )
+
+    def _dict_to_project(self, data: dict[str, Any]) -> Project:
+        """Convert dictionary to Project object."""
+        return Project(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            domain_id=data.get("domain_id", "default"),
+            parent_id=data.get("parent_id"),
+            enabled=data.get("enabled", True),
+            is_domain=data.get("is_domain", False),
+            tags=data.get("tags", []),
+            options=data.get("options", {}),
+        )
+
+    def _dict_to_user(self, data: dict[str, Any]) -> User:
+        """Convert dictionary to User object."""
+        return User(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            domain_id=data.get("domain_id", "default"),
+            default_project_id=data.get("default_project_id"),
+            enabled=data.get("enabled", True),
+            password_hash=data.get("password_hash", ""),
+            email=data.get("email", ""),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_role(self, data: dict[str, Any]) -> Role:
+        """Convert dictionary to Role object."""
+        return Role(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            domain_id=data.get("domain_id"),
+        )
+
+    def _dict_to_role_assignment(self, data: dict[str, Any]) -> RoleAssignment:
+        """Convert dictionary to RoleAssignment object."""
+        return RoleAssignment(
+            role_id=data["role_id"],
+            user_id=data.get("user_id"),
+            group_id=data.get("group_id"),
+            project_id=data.get("project_id"),
+            domain_id=data.get("domain_id"),
+            inherited=data.get("inherited", False),
+        )
+
+    def _dict_to_network(self, data: dict[str, Any]) -> Network:
+        """Convert dictionary to Network object."""
+        return Network(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            project_id=data["tenant_id"],
+            admin_state_up=data.get("admin_state_up", True),
+            status=data.get("status", "ACTIVE"),
+            shared=data.get("shared", False),
+            external=data.get("router:external", False),
+            mtu=data.get("mtu", 1500),
+            port_security_enabled=data.get("port_security_enabled", True),
+            provider_network_type=data.get("provider:network_type"),
+            provider_physical_network=data.get("provider:physical_network"),
+            provider_segmentation_id=data.get("provider:segmentation_id"),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_subnet(self, data: dict[str, Any]) -> Subnet:
+        """Convert dictionary to Subnet object."""
+        return Subnet(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            network_id=data["network_id"],
+            project_id=data["tenant_id"],
+            cidr=data["cidr"],
+            gateway_ip=data.get("gateway_ip"),
+            ip_version=data.get("ip_version", 4),
+            enable_dhcp=data.get("enable_dhcp", True),
+            dns_nameservers=data.get("dns_nameservers", []),
+            allocation_pools=[
+                AllocationPool(start=p["start"], end=p["end"])
+                for p in data.get("allocation_pools", [])
+            ],
+            host_routes=data.get("host_routes", []),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_port(self, data: dict[str, Any]) -> Port:
+        """Convert dictionary to Port object."""
+        return Port(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            network_id=data["network_id"],
+            project_id=data["tenant_id"],
+            mac_address=data["mac_address"],
+            admin_state_up=data.get("admin_state_up", True),
+            status=data.get("status", "ACTIVE"),
+            device_id=data.get("device_id", ""),
+            device_owner=data.get("device_owner", ""),
+            fixed_ips=[
+                FixedIP(subnet_id=f["subnet_id"], ip_address=f["ip_address"])
+                for f in data.get("fixed_ips", [])
+            ],
+            security_groups=data.get("security_groups", []),
+            port_security_enabled=data.get("port_security_enabled", True),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_router(self, data: dict[str, Any]) -> Router:
+        """Convert dictionary to Router object."""
+        ext_gw = None
+        if data.get("external_gateway_info"):
+            gw_data = data["external_gateway_info"]
+            ext_gw = ExternalGatewayInfo(
+                network_id=gw_data["network_id"],
+                enable_snat=gw_data.get("enable_snat", True),
+                external_fixed_ips=[
+                    FixedIP(subnet_id=f["subnet_id"], ip_address=f["ip_address"])
+                    for f in gw_data.get("external_fixed_ips", [])
+                ],
+            )
+        return Router(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            project_id=data["tenant_id"],
+            admin_state_up=data.get("admin_state_up", True),
+            status=data.get("status", "ACTIVE"),
+            external_gateway_info=ext_gw,
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_floating_ip(self, data: dict[str, Any]) -> FloatingIP:
+        """Convert dictionary to FloatingIP object."""
+        return FloatingIP(
+            id=data["id"],
+            floating_ip_address=data["floating_ip_address"],
+            floating_network_id=data["floating_network_id"],
+            router_id=data.get("router_id"),
+            port_id=data.get("port_id"),
+            fixed_ip_address=data.get("fixed_ip_address"),
+            project_id=data["tenant_id"],
+            status=FloatingIPStatus(data.get("status", "DOWN")),
+            description=data.get("description", ""),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_security_group(self, data: dict[str, Any]) -> SecurityGroup:
+        """Convert dictionary to SecurityGroup object."""
+        return SecurityGroup(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            project_id=data["tenant_id"],
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_volume(self, data: dict[str, Any]) -> Volume:
+        """Convert dictionary to Volume object."""
+        return Volume(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            size=data["size"],
+            status=VolumeStatus(data["status"]),
+            availability_zone=data.get("availability_zone", "nova"),
+            project_id=data["tenant_id"],
+            user_id=data.get("user_id", ""),
+            volume_type=data.get("volume_type"),
+            bootable=data.get("bootable", False),
+            encrypted=data.get("encrypted", False),
+            multiattach=data.get("multiattach", False),
+            source_volid=data.get("source_volid"),
+            snapshot_id=data.get("snapshot_id"),
+            image_id=data.get("image_id"),
+            metadata=data.get("metadata", {}),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_snapshot(self, data: dict[str, Any]) -> Snapshot:
+        """Convert dictionary to Snapshot object."""
+        return Snapshot(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            volume_id=data["volume_id"],
+            status=SnapshotStatus(data["status"]),
+            size=data["size"],
+            project_id=data["tenant_id"],
+            user_id=data.get("user_id", ""),
+            metadata=data.get("metadata", {}),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+        )
+
+    def _dict_to_volume_type(self, data: dict[str, Any]) -> VolumeType:
+        """Convert dictionary to VolumeType object."""
+        return VolumeType(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            is_public=data.get("is_public", True),
+            extra_specs=data.get("extra_specs", {}),
+        )
+
+    def _dict_to_glance_image(self, data: dict[str, Any]) -> GlanceImage:
+        """Convert dictionary to GlanceImage object."""
+        return GlanceImage(
+            id=data["id"],
+            name=data["name"],
+            status=ImageStatus(data["status"]),
+            visibility=ImageVisibility(data["visibility"]),
+            protected=data.get("protected", False),
+            owner=data.get("owner", ""),
+            min_disk=data.get("min_disk", 0),
+            min_ram=data.get("min_ram", 0),
+            size=data.get("size"),
+            virtual_size=data.get("virtual_size"),
+            checksum=data.get("checksum"),
+            os_hash_algo=data.get("os_hash_algo"),
+            os_hash_value=data.get("os_hash_value"),
+            os_hidden=data.get("os_hidden", False),
+            container_format=(
+                ContainerFormat(data["container_format"]) if data.get("container_format") else None
+            ),
+            disk_format=DiskFormat(data["disk_format"]) if data.get("disk_format") else None,
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if "created_at" in data
+                else datetime.utcnow()
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if "updated_at" in data
+                else datetime.utcnow()
+            ),
+            tags=data.get("tags", []),
+            properties=data.get("properties", {}),
+            architecture=data.get("architecture"),
+            os_distro=data.get("os_distro"),
+            os_version=data.get("os_version"),
+        )
 
     # Domain operations
     def create_domain(
@@ -1360,6 +2166,8 @@ class Database:
                 enabled=enabled,
             )
             self._domains[did] = domain
+            if self.auto_save:
+                self.save()
             return domain
 
     def get_domain(self, domain_id: str) -> Domain | None:
@@ -1406,6 +2214,8 @@ class Database:
                     domain.description = description
                 if enabled is not None:
                     domain.enabled = enabled
+                if self.auto_save:
+                    self.save()
             return domain
 
     def delete_domain(self, domain_id: str) -> bool:
@@ -1413,6 +2223,8 @@ class Database:
         with self._lock:
             if domain_id in self._domains and domain_id != "default":
                 del self._domains[domain_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1440,6 +2252,8 @@ class Database:
                 is_domain=is_domain,
             )
             self._projects[pid] = project
+            if self.auto_save:
+                self.save()
             return project
 
     def get_project(self, project_id: str) -> Project | None:
@@ -1495,6 +2309,8 @@ class Database:
                     project.enabled = enabled
                 if domain_id is not None:
                     project.domain_id = domain_id
+                if self.auto_save:
+                    self.save()
             return project
 
     def delete_project(self, project_id: str) -> bool:
@@ -1506,6 +2322,8 @@ class Database:
                 self._role_assignments = [
                     ra for ra in self._role_assignments if ra.project_id != project_id
                 ]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1538,6 +2356,8 @@ class Database:
                 email=email,
             )
             self._users[uid] = user
+            if self.auto_save:
+                self.save()
             return user
 
     def get_user(self, user_id: str) -> User | None:
@@ -1599,6 +2419,8 @@ class Database:
                 if default_project_id is not None:
                     user.default_project_id = default_project_id
                 user.updated_at = datetime.now(timezone.utc)
+                if self.auto_save:
+                    self.save()
             return user
 
     def delete_user(self, user_id: str) -> bool:
@@ -1613,6 +2435,8 @@ class Database:
                 self._role_assignments = [
                     ra for ra in self._role_assignments if ra.user_id != user_id
                 ]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -1645,6 +2469,8 @@ class Database:
                 domain_id=domain_id,
             )
             self._roles[rid] = role
+            if self.auto_save:
+                self.save()
             return role
 
     def get_role(self, role_id: str) -> Role | None:
@@ -1689,6 +2515,8 @@ class Database:
                     role.name = name
                 if description is not None:
                     role.description = description
+                if self.auto_save:
+                    self.save()
             return role
 
     def delete_role(self, role_id: str) -> bool:
@@ -1700,6 +2528,8 @@ class Database:
                 self._role_assignments = [
                     ra for ra in self._role_assignments if ra.role_id != role_id
                 ]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -2376,6 +3206,9 @@ class Database:
             # Simulate immediate availability for emulator
             self._complete_volume_creation(volume.id)
 
+            if self.auto_save:
+                self.save()
+
             return volume
 
     def _complete_volume_creation(self, volume_id: str) -> None:
@@ -2474,6 +3307,8 @@ class Database:
             if metadata is not None:
                 volume.metadata = metadata
             volume.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return volume
 
     def delete_volume(self, volume_id: str, project_id: str | None = None) -> bool:
@@ -2498,6 +3333,8 @@ class Database:
             if volume.attachments:
                 return False
             del self._volumes[volume_id]
+            if self.auto_save:
+                self.save()
             return True
 
     def extend_volume(
@@ -2522,6 +3359,8 @@ class Database:
             if new_size > volume.size and volume.status == VolumeStatus.AVAILABLE:
                 volume.size = new_size
                 volume.updated_at = datetime.now(timezone.utc)
+                if self.auto_save:
+                    self.save()
                 return volume
             return None
 
@@ -2567,6 +3406,9 @@ class Database:
             volume.status = VolumeStatus.IN_USE
             volume.updated_at = datetime.now(timezone.utc)
 
+            if self.auto_save:
+                self.save()
+
             return attachment
 
     def detach_volume(
@@ -2595,6 +3437,8 @@ class Database:
                     if not volume.attachments:
                         volume.status = VolumeStatus.AVAILABLE
                     volume.updated_at = datetime.now(timezone.utc)
+                    if self.auto_save:
+                        self.save()
                     return True
             return False
 
@@ -2619,6 +3463,8 @@ class Database:
                 return None
             volume.bootable = bootable
             volume.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return volume
 
     # Snapshot operations
@@ -2658,6 +3504,9 @@ class Database:
 
             # Simulate immediate availability
             self._complete_snapshot_creation(snapshot.id)
+
+            if self.auto_save:
+                self.save()
 
             return snapshot
 
@@ -2761,6 +3610,8 @@ class Database:
             if metadata is not None:
                 snapshot.metadata = metadata
             snapshot.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return snapshot
 
     def delete_snapshot(self, snapshot_id: str, project_id: str | None = None) -> bool:
@@ -2780,6 +3631,8 @@ class Database:
             if project_id is not None and snapshot.project_id != project_id:
                 return False
             del self._snapshots[snapshot_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Volume type operations
@@ -2800,6 +3653,8 @@ class Database:
                 extra_specs=extra_specs or {},
             )
             self._volume_types[vtype.id] = vtype
+            if self.auto_save:
+                self.save()
             return vtype
 
     def get_volume_type(self, volume_type_id: str) -> VolumeType | None:
@@ -2850,6 +3705,8 @@ class Database:
         with self._lock:
             if volume_type_id in self._volume_types:
                 del self._volume_types[volume_type_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
@@ -3005,6 +3862,8 @@ class Database:
             )
             self._glance_images[image.id] = image
             self._image_members[image.id] = []
+            if self.auto_save:
+                self.save()
             return image
 
     def get_glance_image(self, image_id: str) -> GlanceImage | None:
@@ -3139,6 +3998,9 @@ class Database:
             image.status = ImageStatus.DELETED
             image.updated_at = datetime.now(timezone.utc)
             del self._glance_images[image_id]
+
+            if self.auto_save:
+                self.save()
 
             # Remove from Nova images
             if image_id in self._images:
@@ -3463,6 +4325,8 @@ class Database:
                 provider_segmentation_id=provider_segmentation_id,
             )
             self._networks[network.id] = network
+            if self.auto_save:
+                self.save()
             return network
 
     def get_network(self, network_id: str, project_id: str | None = None) -> Network | None:
@@ -3550,6 +4414,8 @@ class Database:
             if port_security_enabled is not None:
                 network.port_security_enabled = port_security_enabled
             network.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return network
 
     def delete_network(self, network_id: str, project_id: str | None = None) -> bool:
@@ -3577,6 +4443,8 @@ class Database:
             for subnet_id in subnets_to_delete:
                 del self._subnets[subnet_id]
             del self._networks[network_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Subnet operations
@@ -3627,6 +4495,8 @@ class Database:
             )
             self._subnets[subnet.id] = subnet
             network.subnets.append(subnet.id)
+            if self.auto_save:
+                self.save()
             return subnet
 
     def get_subnet(self, subnet_id: str, project_id: str | None = None) -> Subnet | None:
@@ -3710,6 +4580,8 @@ class Database:
             if enable_dhcp is not None:
                 subnet.enable_dhcp = enable_dhcp
             subnet.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return subnet
 
     def delete_subnet(self, subnet_id: str, project_id: str | None = None) -> bool:
@@ -3738,6 +4610,8 @@ class Database:
             if network and subnet_id in network.subnets:
                 network.subnets.remove(subnet_id)
             del self._subnets[subnet_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Port operations
@@ -3800,6 +4674,8 @@ class Database:
                 port_security_enabled=port_security_enabled,
             )
             self._ports[port.id] = port
+            if self.auto_save:
+                self.save()
             return port
 
     def get_port(self, port_id: str, project_id: str | None = None) -> Port | None:
@@ -3886,6 +4762,8 @@ class Database:
             if port_security_enabled is not None:
                 port.port_security_enabled = port_security_enabled
             port.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return port
 
     def delete_port(self, port_id: str, project_id: str | None = None) -> bool:
@@ -3905,6 +4783,8 @@ class Database:
             if project_id is not None and port.project_id != project_id:
                 return False
             del self._ports[port_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Router operations
@@ -3935,6 +4815,8 @@ class Database:
                 external_gateway_info=ext_gateway,
             )
             self._routers[router.id] = router
+            if self.auto_save:
+                self.save()
             return router
 
     def get_router(self, router_id: str, project_id: str | None = None) -> Router | None:
@@ -4016,6 +4898,8 @@ class Database:
             if routes is not None:
                 router.routes = routes
             router.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return router
 
     def delete_router(self, router_id: str, project_id: str | None = None) -> bool:
@@ -4039,6 +4923,8 @@ class Database:
                 if port.device_id == router_id:
                     return False
             del self._routers[router_id]
+            if self.auto_save:
+                self.save()
             return True
 
     def add_router_interface(
@@ -4089,12 +4975,15 @@ class Database:
                     return None
                 port_id = port.id
 
-            return {
+            result = {
                 "id": router_id,
                 "subnet_id": subnet_id,
                 "port_id": port_id,
                 "tenant_id": router.project_id,
             }
+            if self.auto_save:
+                self.save()
+            return result
 
     def remove_router_interface(
         self,
@@ -4136,12 +5025,15 @@ class Database:
                                 del self._ports[pid]
                                 break
 
-            return {
+            result = {
                 "id": router_id,
                 "subnet_id": subnet_id,
                 "port_id": port_id,
                 "tenant_id": router.project_id,
             }
+            if self.auto_save:
+                self.save()
+            return result
 
     # Floating IP operations
     def create_floating_ip(
@@ -4221,6 +5113,8 @@ class Database:
                     fip.fixed_ip_address = internal_port.fixed_ips[0].ip_address
 
             self._floating_ips[fip.id] = fip
+            if self.auto_save:
+                self.save()
             return fip
 
     def get_floating_ip(
@@ -4300,6 +5194,8 @@ class Database:
                     fip.fixed_ip_address = None
                     fip.status = FloatingIPStatus.DOWN
             fip.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return fip
 
     def delete_floating_ip(self, floatingip_id: str, project_id: str | None = None) -> bool:
@@ -4324,6 +5220,8 @@ class Database:
                 del self._ports[fip.floating_port_id]
 
             del self._floating_ips[floatingip_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Security Group operations
@@ -4353,6 +5251,8 @@ class Database:
                 sg.security_group_rules.append(rule)
                 self._security_group_rules[rule.id] = rule
             self._security_groups[sg.id] = sg
+            if self.auto_save:
+                self.save()
             return sg
 
     def get_or_create_default_security_group(self, project_id: str) -> SecurityGroup:
@@ -4458,6 +5358,8 @@ class Database:
             if description is not None:
                 sg.description = description
             sg.updated_at = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return sg
 
     def delete_security_group(self, security_group_id: str, project_id: str | None = None) -> bool:
@@ -4483,6 +5385,8 @@ class Database:
                 if rule.id in self._security_group_rules:
                     del self._security_group_rules[rule.id]
             del self._security_groups[security_group_id]
+            if self.auto_save:
+                self.save()
             return True
 
     # Security Group Rule operations
@@ -4540,6 +5444,8 @@ class Database:
             )
             sg.security_group_rules.append(rule)
             self._security_group_rules[rule.id] = rule
+            if self.auto_save:
+                self.save()
             return rule
 
     def get_security_group_rule(
@@ -4597,6 +5503,8 @@ class Database:
             if sg:
                 sg.security_group_rules = [r for r in sg.security_group_rules if r.id != rule_id]
             del self._security_group_rules[rule_id]
+            if self.auto_save:
+                self.save()
             return True
 
     def reset_neutron(self) -> None:

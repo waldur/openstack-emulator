@@ -131,6 +131,17 @@ def main() -> None:
         default="info",
         help="Set the logging level (default: info)",
     )
+    parser.add_argument(
+        "--persist-db",
+        type=str,
+        default=None,
+        help="Path to JSON file for database persistence (e.g., 'data/emulator_db.json')",
+    )
+    parser.add_argument(
+        "--auto-save",
+        action="store_true",
+        help="Enable auto-saving of database on changes",
+    )
 
     args = parser.parse_args()
 
@@ -141,6 +152,18 @@ def main() -> None:
     if args.list_presets:
         list_presets()
         sys.exit(0)
+
+    # Configure persistence
+    if args.persist_db:
+        from emulator.core.database import db
+
+        db.persist_path = args.persist_db
+        db.auto_save = args.auto_save
+        try:
+            db.load()
+        except Exception as e:
+            print(f"Failed to load database from {args.persist_db}: {e}")
+            sys.exit(1)
 
     # Load preset if specified
     if not load_preset(args.preset, args.preset_file):
