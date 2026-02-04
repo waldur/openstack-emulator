@@ -39,7 +39,7 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(loaded_server.status, server.status)
 
     def test_save_and_load_flavor(self):
-        flavor = self.db.create_flavor(
+        self.db.create_flavor(
             name="test-flavor", vcpus=2, ram=2048, disk=20, flavor_id="test-flavor-id"
         )
 
@@ -64,9 +64,7 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(loaded_image.min_disk, 10)
 
     def test_save_and_load_keypair(self):
-        kp = self.db.create_keypair(
-            name="test-key", user_id="test-user", public_key="ssh-rsa AAA..."
-        )
+        self.db.create_keypair(name="test-key", user_id="test-user", public_key="ssh-rsa AAA...")
 
         new_db = Database(persist_path=self.db_path)
         new_db.load()

@@ -2056,7 +2056,7 @@ class Database:
             availability_zone=data.get("availability_zone", "nova"),
             project_id=data["tenant_id"],
             user_id=data.get("user_id", ""),
-            volume_type=data.get("volume_type"),
+            volume_type=data.get("volume_type", "lvmdriver-1"),
             bootable=data.get("bootable", False),
             encrypted=data.get("encrypted", False),
             multiattach=data.get("multiattach", False),
