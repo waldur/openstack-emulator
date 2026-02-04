@@ -1706,10 +1706,10 @@ def render_volumes_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{volume.id}" onclick="copyUuid(this)">{volume.id[:13]}...</span></td>
-            <td>{volume.name or '-'}</td>
+            <td>{volume.name or "-"}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{volume.size} GB</td>
-            <td>{volume.volume_type or 'default'}</td>
+            <td>{volume.volume_type or "default"}</td>
             <td>{project_cell}</td>
             {actions}
         </tr>
@@ -1825,7 +1825,7 @@ def render_networks_table(
             <td>{network.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{external}</td>
-            <td>{'Yes' if network.shared else 'No'}</td>
+            <td>{"Yes" if network.shared else "No"}</td>
             <td>{project_cell}</td>
             {actions}
         </tr>
@@ -1875,10 +1875,10 @@ def render_subnets_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{subnet.id}" onclick="copyUuid(this)">{subnet.id[:13]}...</span></td>
-            <td>{subnet.name or '-'}</td>
+            <td>{subnet.name or "-"}</td>
             <td>{subnet.cidr}</td>
-            <td>{subnet.gateway_ip or '-'}</td>
-            <td>{'Yes' if subnet.enable_dhcp else 'No'}</td>
+            <td>{subnet.gateway_ip or "-"}</td>
+            <td>{"Yes" if subnet.enable_dhcp else "No"}</td>
             <td>{project_cell}</td>
             {actions}
         </tr>
@@ -1931,7 +1931,7 @@ def render_ports_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{port.id}" onclick="copyUuid(this)">{port.id[:13]}...</span></td>
-            <td>{port.name or '-'}</td>
+            <td>{port.name or "-"}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{port.mac_address}</td>
             <td>{fixed_ips}</td>
@@ -1989,7 +1989,7 @@ def render_routers_table(
             <td class="uuid"><span class="uuid-value" data-full="{router.id}" onclick="copyUuid(this)">{router.id[:13]}...</span></td>
             <td>{router.name}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
-            <td>{'Yes' if router.admin_state_up else 'No'}</td>
+            <td>{"Yes" if router.admin_state_up else "No"}</td>
             <td>{ext_gateway}</td>
             <td>{project_cell}</td>
             {actions}
@@ -2054,7 +2054,7 @@ def render_floating_ips_table(
             <td class="uuid"><span class="uuid-value" data-full="{fip.id}" onclick="copyUuid(this)">{fip.id[:13]}...</span></td>
             <td>{fip.floating_ip_address}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
-            <td>{fip.fixed_ip_address or '-'}</td>
+            <td>{fip.fixed_ip_address or "-"}</td>
             <td class="uuid">{floating_port_cell}</td>
             <td class="uuid">{internal_port_cell}</td>
             <td>{project_cell}</td>
@@ -2109,7 +2109,7 @@ def render_security_groups_table(
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{sg.id}" onclick="copyUuid(this)">{sg.id[:13]}...</span></td>
             <td>{sg.name}</td>
-            <td>{sg.description or '-'}</td>
+            <td>{sg.description or "-"}</td>
             <td>{rule_count}</td>
             <td>{project_cell}</td>
             {actions}
@@ -2154,8 +2154,8 @@ def render_projects_table(projects: list, authenticated: bool) -> str:
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{project.id}" onclick="copyUuid(this)">{project.id[:13]}...</span></td>
             <td>{project.name}</td>
-            <td>{project.description or '-'}</td>
-            <td>{'Yes' if project.enabled else 'No'}</td>
+            <td>{project.description or "-"}</td>
+            <td>{"Yes" if project.enabled else "No"}</td>
             {actions}
         </tr>
         """
@@ -2197,8 +2197,8 @@ def render_users_table(users: list, authenticated: bool) -> str:
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{user.id}" onclick="copyUuid(this)">{user.id[:13]}...</span></td>
             <td>{user.name}</td>
-            <td>{user.email or '-'}</td>
-            <td>{'Yes' if user.enabled else 'No'}</td>
+            <td>{user.email or "-"}</td>
+            <td>{"Yes" if user.enabled else "No"}</td>
             {actions}
         </tr>
         """
@@ -2288,7 +2288,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
             <td>{keypair.name}</td>
             <td>{keypair.type}</td>
             <td class="uuid">{fingerprint}</td>
-            <td>{keypair.created_at[:19] if keypair.created_at else '-'}</td>
+            <td>{keypair.created_at[:19] if keypair.created_at else "-"}</td>
             {actions}
         </tr>
         """
@@ -2339,7 +2339,7 @@ def render_snapshots_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{snapshot.id}" onclick="copyUuid(this)">{snapshot.id[:13]}...</span></td>
-            <td>{snapshot.name or '-'}</td>
+            <td>{snapshot.name or "-"}</td>
             <td><span class="status-badge {status_class}">{status}</span></td>
             <td>{snapshot.size} GB</td>
             <td class="uuid"><span class="uuid-value" data-full="{snapshot.volume_id}" onclick="copyUuid(this)">{snapshot.volume_id[:13]}...</span></td>
@@ -2453,8 +2453,8 @@ def render_load_balancers_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{lb.id}" onclick="copyUuid(this)">{lb.id[:13]}...</span></td>
-            <td>{lb.name or '-'}</td>
-            <td>{lb.vip_address or '-'}</td>
+            <td>{lb.name or "-"}</td>
+            <td>{lb.vip_address or "-"}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
             <td><span class="status-badge {op_class}">{op_status}</span></td>
             <td>{lb.provider}</td>
@@ -2519,7 +2519,7 @@ def render_listeners_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{listener.id}" onclick="copyUuid(this)">{listener.id[:13]}...</span></td>
-            <td>{listener.name or '-'}</td>
+            <td>{listener.name or "-"}</td>
             <td>{protocol}</td>
             <td>{listener.protocol_port}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
@@ -2586,7 +2586,7 @@ def render_pools_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{pool.id}" onclick="copyUuid(this)">{pool.id[:13]}...</span></td>
-            <td>{pool.name or '-'}</td>
+            <td>{pool.name or "-"}</td>
             <td>{protocol}</td>
             <td>{lb_algorithm}</td>
             <td><span class="status-badge {prov_class}">{prov_status}</span></td>
@@ -2655,7 +2655,7 @@ def render_health_monitors_table(
         rows += f"""
         <tr>
             <td class="uuid"><span class="uuid-value" data-full="{monitor.id}" onclick="copyUuid(this)">{monitor.id[:13]}...</span></td>
-            <td>{monitor.name or '-'}</td>
+            <td>{monitor.name or "-"}</td>
             <td>{mon_type}</td>
             <td>{monitor.delay}s</td>
             <td>{monitor.timeout}s</td>
@@ -2800,19 +2800,19 @@ def build_scenarios_content(
                 <div class="stat-label">Active Scenarios</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{global_stats.get('times_triggered', 0)}</div>
+                <div class="stat-value">{global_stats.get("times_triggered", 0)}</div>
                 <div class="stat-label">Times Triggered</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{global_stats.get('failures_injected', 0)}</div>
+                <div class="stat-value">{global_stats.get("failures_injected", 0)}</div>
                 <div class="stat-label">Failures Injected</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{global_stats.get('total_delay_injected_ms', 0) // 1000}s</div>
+                <div class="stat-value">{global_stats.get("total_delay_injected_ms", 0) // 1000}s</div>
                 <div class="stat-label">Total Delay Added</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{global_stats.get('timeouts_injected', 0)}</div>
+                <div class="stat-value">{global_stats.get("timeouts_injected", 0)}</div>
                 <div class="stat-label">Timeouts Injected</div>
             </div>
         </div>
@@ -3197,7 +3197,7 @@ def render_create_modals(
                 <div class="form-group">
                     <label for="subnet-network">Network *</label>
                     <select id="subnet-network" name="network_id" required>
-                        {network_options.replace('<option value="">Auto-select</option>', '')}
+                        {network_options.replace('<option value="">Auto-select</option>', "")}
                     </select>
                 </div>
                 <div class="form-group">
@@ -3877,10 +3877,10 @@ async def status_page(
         service_cards += f"""
         <div class="bg-[#0d1117] border {border_color} p-5 {glow_class} relative service-card-link" onclick="switchTab('{target_tab}')" title="Click to view {target_tab} resources">
             <div class="absolute top-2 right-2 w-2 h-2 rounded-full bg-current {status_color} {indicator}"></div>
-            <div class="text-[#00d4ff] text-xs uppercase tracking-wider mb-1">{status['name']}</div>
+            <div class="text-[#00d4ff] text-xs uppercase tracking-wider mb-1">{status["name"]}</div>
             <div class="text-lg font-semibold text-[#e2e8f0] mb-3">{service.upper()}</div>
             <div class="text-xs text-[#4a5568] space-y-1">
-                <div>PORT: <span class="text-[#ffb000]">{status['port']}</span></div>
+                <div>PORT: <span class="text-[#ffb000]">{status["port"]}</span></div>
                 <div>STATUS: <span class="{status_color}">{status_text}</span></div>
             </div>
         </div>
@@ -3916,10 +3916,10 @@ async def status_page(
         auth_section = f"""
         <div class="flex items-center gap-4">
             <div class="flex items-center gap-3">
-                <div class="w-9 h-9 bg-[#00ff41] bg-opacity-20 border border-[#00ff41] flex items-center justify-center text-[#00ff41] font-bold text-sm">{current_user['name'][0].upper()}</div>
+                <div class="w-9 h-9 bg-[#00ff41] bg-opacity-20 border border-[#00ff41] flex items-center justify-center text-[#00ff41] font-bold text-sm">{current_user["name"][0].upper()}</div>
                 <div>
-                    <div class="text-[#00ff41] text-sm">{current_user['name']}</div>
-                    <div class="text-[#4a5568] text-xs">{current_user['project_name'] or 'No project'}</div>
+                    <div class="text-[#00ff41] text-sm">{current_user["name"]}</div>
+                    <div class="text-[#4a5568] text-xs">{current_user["project_name"] or "No project"}</div>
                 </div>
             </div>
             <button class="btn btn-danger btn-sm" onclick="handleLogout()">LOGOUT</button>
@@ -4048,7 +4048,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Servers
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(servers)}</span>
                             </h3>
-                            {create_btn('create-server-modal', '+ NEW')}
+                            {create_btn("create-server-modal", "+ NEW")}
                         </div>
                         {render_servers_table(servers, authenticated, project_map)}
                     </div>
@@ -4080,7 +4080,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Images
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(images)}</span>
                             </h3>
-                            {create_btn('create-image-modal', '+ NEW')}
+                            {create_btn("create-image-modal", "+ NEW")}
                         </div>
                         {render_images_table(images, authenticated, project_map)}
                     </div>
@@ -4090,7 +4090,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Volumes
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(volumes)}</span>
                             </h3>
-                            {create_btn('create-volume-modal', '+ NEW')}
+                            {create_btn("create-volume-modal", "+ NEW")}
                         </div>
                         {render_volumes_table(volumes, authenticated, project_map)}
                     </div>
@@ -4100,7 +4100,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Snapshots
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(snapshots)}</span>
                             </h3>
-                            {create_btn('create-snapshot-modal', '+ NEW')}
+                            {create_btn("create-snapshot-modal", "+ NEW")}
                         </div>
                         {render_snapshots_table(snapshots, authenticated, project_map)}
                     </div>
@@ -4110,7 +4110,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Volume Types
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(volume_types)}</span>
                             </h3>
-                            {create_btn('create-volume-type-modal', '+ NEW')}
+                            {create_btn("create-volume-type-modal", "+ NEW")}
                         </div>
                         {render_volume_types_table(volume_types, authenticated)}
                     </div>
@@ -4124,7 +4124,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Networks
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(networks)}</span>
                             </h3>
-                            {create_btn('create-network-modal', '+ NEW')}
+                            {create_btn("create-network-modal", "+ NEW")}
                         </div>
                         {render_networks_table(networks, authenticated, project_map)}
                     </div>
@@ -4134,7 +4134,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Subnets
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(subnets)}</span>
                             </h3>
-                            {create_btn('create-subnet-modal', '+ NEW')}
+                            {create_btn("create-subnet-modal", "+ NEW")}
                         </div>
                         {render_subnets_table(subnets, authenticated, project_map)}
                     </div>
@@ -4153,7 +4153,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Routers
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(routers)}</span>
                             </h3>
-                            {create_btn('create-router-modal', '+ NEW')}
+                            {create_btn("create-router-modal", "+ NEW")}
                         </div>
                         {render_routers_table(routers, authenticated, project_map)}
                     </div>
@@ -4163,7 +4163,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Floating IPs
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(floating_ips)}</span>
                             </h3>
-                            {create_btn('create-floating-ip-modal', '+ ALLOCATE')}
+                            {create_btn("create-floating-ip-modal", "+ ALLOCATE")}
                         </div>
                         {render_floating_ips_table(floating_ips, authenticated, project_map)}
                     </div>
@@ -4173,7 +4173,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Security Groups
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(security_groups)}</span>
                             </h3>
-                            {create_btn('create-security-group-modal', '+ NEW')}
+                            {create_btn("create-security-group-modal", "+ NEW")}
                         </div>
                         {render_security_groups_table(security_groups, authenticated, project_map)}
                     </div>
@@ -4187,7 +4187,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Load Balancers
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(load_balancers)}</span>
                             </h3>
-                            {create_btn('create-loadbalancer-modal', '+ NEW')}
+                            {create_btn("create-loadbalancer-modal", "+ NEW")}
                         </div>
                         {render_load_balancers_table(load_balancers, authenticated, project_map)}
                     </div>
@@ -4197,7 +4197,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Listeners
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(listeners)}</span>
                             </h3>
-                            {create_btn('create-listener-modal', '+ NEW')}
+                            {create_btn("create-listener-modal", "+ NEW")}
                         </div>
                         {render_listeners_table(listeners, authenticated, project_map)}
                     </div>
@@ -4207,7 +4207,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Pools
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(pools)}</span>
                             </h3>
-                            {create_btn('create-pool-modal', '+ NEW')}
+                            {create_btn("create-pool-modal", "+ NEW")}
                         </div>
                         {render_pools_table(pools, authenticated, project_map)}
                     </div>
@@ -4217,7 +4217,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Health Monitors
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(health_monitors)}</span>
                             </h3>
-                            {create_btn('create-healthmonitor-modal', '+ NEW')}
+                            {create_btn("create-healthmonitor-modal", "+ NEW")}
                         </div>
                         {render_health_monitors_table(health_monitors, authenticated, project_map)}
                     </div>
@@ -4231,7 +4231,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Projects
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(projects)}</span>
                             </h3>
-                            {create_btn('create-project-modal', '+ NEW')}
+                            {create_btn("create-project-modal", "+ NEW")}
                         </div>
                         {render_projects_table(projects, authenticated)}
                     </div>
@@ -4241,7 +4241,7 @@ async def status_page(
                                 <span class="text-[#ffb000]">&gt;</span> Users
                                 <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(users)}</span>
                             </h3>
-                            {create_btn('create-user-modal', '+ NEW')}
+                            {create_btn("create-user-modal", "+ NEW")}
                         </div>
                         {render_users_table(users, authenticated)}
                     </div>

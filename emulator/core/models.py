@@ -1213,14 +1213,14 @@ class ExternalGatewayInfo:
 
     network_id: str = ""
     enable_snat: bool = True
-    external_fixed_ips: list[dict[str, str]] = field(default_factory=list)
+    external_fixed_ips: list[FixedIP] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""
         return {
             "network_id": self.network_id,
             "enable_snat": self.enable_snat,
-            "external_fixed_ips": self.external_fixed_ips,
+            "external_fixed_ips": [ip.to_dict() for ip in self.external_fixed_ips],
         }
 
 

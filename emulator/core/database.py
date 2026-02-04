@@ -190,12 +190,12 @@ class Database:
         self._next_lb_vip: int = 1  # For generating sequential VIP addresses
 
         # Storage dictionaries - Nova Extensions
-        self._server_volume_attachments: dict[str, list[ServerVolumeAttachment]] = (
-            {}
-        )  # server_id -> attachments
-        self._server_network_interfaces: dict[str, list[ServerNetworkInterface]] = (
-            {}
-        )  # server_id -> interfaces
+        self._server_volume_attachments: dict[
+            str, list[ServerVolumeAttachment]
+        ] = {}  # server_id -> attachments
+        self._server_network_interfaces: dict[
+            str, list[ServerNetworkInterface]
+        ] = {}  # server_id -> interfaces
         self._server_consoles: dict[str, list[ServerConsole]] = {}  # server_id -> consoles
         self._server_tags: dict[str, set[str]] = {}  # server_id -> tags
         self._nova_extensions: dict[str, NovaExtension] = {}
