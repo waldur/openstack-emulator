@@ -2288,7 +2288,7 @@ def render_keypairs_table(keypairs: list, authenticated: bool) -> str:
             <td>{keypair.name}</td>
             <td>{keypair.type}</td>
             <td class="uuid">{fingerprint}</td>
-            <td>{keypair.created_at[:19] if keypair.created_at else "-"}</td>
+            <td>{keypair.created_at.strftime("%Y-%m-%d %H:%M:%S") if keypair.created_at else "-"}</td>
             {actions}
         </tr>
         """

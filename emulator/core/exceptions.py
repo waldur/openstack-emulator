@@ -1,7 +1,12 @@
 """Common exception handlers for OpenStack emulator services."""
 
+import logging
+import traceback
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 def add_openstack_exception_handlers(app: FastAPI) -> None:
@@ -30,6 +35,8 @@ def add_openstack_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def openstack_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Handle exceptions in OpenStack error format."""
+        logger.error(f"Internal Server Error: {exc}")
+        logger.error(traceback.format_exc())
         return JSONResponse(
             status_code=500,
             content={

@@ -89,3 +89,5 @@ specs
 
 # Downloaded OpenStack specs
 .openstack-specs/
+
+data.json
