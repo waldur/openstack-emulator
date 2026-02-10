@@ -1206,6 +1206,13 @@ async def attach_volume_to_server(
         tag=body.volumeAttachment.tag,
         delete_on_termination=body.volumeAttachment.delete_on_termination,
     )
+    success = db.attach_volume(
+        volume_id=body.volumeAttachment.volumeId,
+        server_id=server_id,
+        device=body.volumeAttachment.device,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to attach volume")
 
     return {"volumeAttachment": attachment.to_dict()}
 
@@ -1246,6 +1253,18 @@ async def detach_volume_from_server(
         raise HTTPException(status_code=404, detail="Server not found")
 
     success = db.detach_volume_from_server(server_id, attachment_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Volume attachment not found")
+
+    attachment = db.get_server_volume_attachment(server_id, attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Volume attachment not found")
+
+    success = db.detach_volume(
+        volume_id=attachment.volume_id,
+        attachment_id=attachment_id,
+        project_id=token.project_id,
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Volume attachment not found")
 
