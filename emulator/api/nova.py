@@ -1209,7 +1209,7 @@ async def attach_volume_to_server(
     success = db.attach_volume(
         volume_id=body.volumeAttachment.volumeId,
         server_id=server_id,
-        device=body.volumeAttachment.device,
+        device=body.volumeAttachment.device or "/dev/vdb",
     )
     if not success:
         raise HTTPException(status_code=400, detail="Failed to attach volume")
