@@ -1250,7 +1250,7 @@ class Router:
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "status": str(self.status),
+            "status": self.status.value if hasattr(self.status, "value") else str(self.status),
             "admin_state_up": self.admin_state_up,
             "tenant_id": self.project_id,
             "project_id": self.project_id,
