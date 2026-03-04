@@ -407,7 +407,9 @@ def generate_service_detail_table(service_name: str, report: Dict) -> str:
                 icon = (
                     "🔴"
                     if category == "Core Operations"
-                    else "🟡" if category == "Advanced Features" else "⚪"
+                    else "🟡"
+                    if category == "Advanced Features"
+                    else "⚪"
                 )
 
                 lines.extend(

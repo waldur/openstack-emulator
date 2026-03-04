@@ -160,7 +160,9 @@ def compare_openapi_specs(
             "compliance_status": (
                 "good"
                 if coverage_percentage >= 80
-                else "partial" if coverage_percentage >= 60 else "limited"
+                else "partial"
+                if coverage_percentage >= 60
+                else "limited"
             ),
         },
         "missing_endpoints": {
