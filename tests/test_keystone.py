@@ -132,6 +132,32 @@ class TestTokens:
         data = response.json()
         assert "catalog" in data
 
+    def test_catalog_contains_all_services(self, client, auth_token):
+        """Test that the service catalog contains all expected services."""
+        response = client.get(
+            "/v3/auth/catalog",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        catalog = response.json()["catalog"]
+        service_types = {entry["type"] for entry in catalog}
+        expected = {"compute", "identity", "image", "volumev3", "network", "load-balancer"}
+        assert expected == service_types
+
+    def test_catalog_octavia_endpoints(self, client, auth_token):
+        """Test that Octavia entry has correct endpoints on port 9876."""
+        response = client.get(
+            "/v3/auth/catalog",
+            headers={"X-Auth-Token": auth_token},
+        )
+        catalog = response.json()["catalog"]
+        octavia = next(e for e in catalog if e["type"] == "load-balancer")
+        assert octavia["name"] == "octavia"
+        interfaces = {ep["interface"] for ep in octavia["endpoints"]}
+        assert interfaces == {"public", "internal", "admin"}
+        for ep in octavia["endpoints"]:
+            assert ":9876" in ep["url"]
+
 
 class TestDomains:
     """Tests for domain management."""
