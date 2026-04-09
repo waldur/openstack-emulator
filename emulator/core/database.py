@@ -617,6 +617,7 @@ class Database:
         - Cinder (Block Storage): 8776
         - Glance (Image): 9292
         - Neutron (Network): 9696
+        - Octavia (Load Balancer): 9876
         """
         from urllib.parse import urlparse
 
@@ -631,6 +632,7 @@ class Database:
         cinder_url = f"{scheme}://{host}:8776"
         glance_url = f"{scheme}://{host}:9292"
         neutron_url = f"{scheme}://{host}:9696"
+        octavia_url = f"{scheme}://{host}:9876"
 
         return [
             {
@@ -735,6 +737,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{neutron_url}",
+                    },
+                ],
+            },
+            {
+                "type": "load-balancer",
+                "name": "octavia",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{octavia_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{octavia_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{octavia_url}",
                     },
                 ],
             },
