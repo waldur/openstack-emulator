@@ -903,6 +903,47 @@ async def list_hypervisors(
     }
 
 
+@router.get("/v2.1/os-hypervisors/detail")
+async def list_hypervisors_detail(
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List hypervisors with details."""
+    get_token_or_raise(x_auth_token)
+
+    stats = db.get_hypervisor_statistics()
+
+    return {
+        "hypervisors": [
+            {
+                "id": "1",
+                "hypervisor_hostname": "compute-host-1",
+                "state": "up",
+                "status": "enabled",
+                "host_ip": "10.0.0.1",
+                "hypervisor_type": "QEMU",
+                "hypervisor_version": 6002000,
+                "cpu_info": '{"vendor": "Intel", "model": "IvyBridge", "arch": "x86_64", "features": ["ssse3", "sse4.1", "sse4.2"], "topology": {"cores": 8, "threads": 2, "sockets": 2}}',
+                "vcpus": stats["vcpus"],
+                "vcpus_used": stats["vcpus_used"],
+                "memory_mb": stats["memory_mb"],
+                "memory_mb_used": stats["memory_mb_used"],
+                "local_gb": stats["local_gb"],
+                "local_gb_used": stats["local_gb_used"],
+                "free_ram_mb": stats["free_ram_mb"],
+                "free_disk_gb": stats["free_disk_gb"],
+                "current_workload": stats["current_workload"],
+                "running_vms": stats["running_vms"],
+                "disk_available_least": stats["disk_available_least"],
+                "service": {
+                    "id": 1,
+                    "host": "compute-host-1",
+                    "disabled_reason": None,
+                },
+            }
+        ]
+    }
+
+
 @router.get("/v2.1/os-hypervisors/statistics")
 async def get_hypervisor_statistics(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
@@ -1033,7 +1074,11 @@ async def get_quota_set_detail(
 
     detail = {
         "id": tenant_id,
-        "instances": {"limit": quota.instances, "in_use": usage.get("instances", 0), "reserved": 0},
+        "instances": {
+            "limit": quota.instances,
+            "in_use": usage.get("instances", 0),
+            "reserved": 0,
+        },
         "cores": {"limit": quota.cores, "in_use": usage.get("cores", 0), "reserved": 0},
         "ram": {"limit": quota.ram, "in_use": usage.get("ram", 0), "reserved": 0},
         "metadata_items": {"limit": quota.metadata_items, "in_use": 0, "reserved": 0},
@@ -1048,13 +1093,21 @@ async def get_quota_set_detail(
             "in_use": 0,
             "reserved": 0,
         },
-        "key_pairs": {"limit": quota.key_pairs, "in_use": usage.get("key_pairs", 0), "reserved": 0},
+        "key_pairs": {
+            "limit": quota.key_pairs,
+            "in_use": usage.get("key_pairs", 0),
+            "reserved": 0,
+        },
         "server_groups": {
             "limit": quota.server_groups,
             "in_use": usage.get("server_groups", 0),
             "reserved": 0,
         },
-        "server_group_members": {"limit": quota.server_group_members, "in_use": 0, "reserved": 0},
+        "server_group_members": {
+            "limit": quota.server_group_members,
+            "in_use": 0,
+            "reserved": 0,
+        },
     }
 
     return {"quota_set": detail}
