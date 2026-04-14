@@ -235,17 +235,12 @@ async def create_server(
     if req.imageRef:
         image = db.get_image(req.imageRef)
         if not image:
-            raise HTTPException(
-                status_code=400, detail=f"Image {req.imageRef} not found"
-            )
+            raise HTTPException(status_code=400, detail=f"Image {req.imageRef} not found")
 
     # Convert networks to dict format
     networks = None
     if req.networks:
-        networks = [
-            {"uuid": n.uuid, "port": n.port, "fixed_ip": n.fixed_ip}
-            for n in req.networks
-        ]
+        networks = [{"uuid": n.uuid, "port": n.port, "fixed_ip": n.fixed_ip} for n in req.networks]
 
     server = db.create_server(
         name=req.name,
@@ -352,66 +347,48 @@ async def server_action(
     # Handle different actions
     if "os-start" in body:
         if not db.server_action(server_id, "start"):
-            raise HTTPException(
-                status_code=409, detail="Cannot start server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot start server in current state")
         return Response(status_code=202)
 
     elif "os-stop" in body:
         if not db.server_action(server_id, "stop"):
-            raise HTTPException(
-                status_code=409, detail="Cannot stop server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot stop server in current state")
         return Response(status_code=202)
 
     elif "reboot" in body:
         body["reboot"].get("type", "SOFT")
         if not db.server_action(server_id, "reboot"):
-            raise HTTPException(
-                status_code=409, detail="Cannot reboot server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot reboot server in current state")
         return Response(status_code=202)
 
     elif "pause" in body:
         if not db.server_action(server_id, "pause"):
-            raise HTTPException(
-                status_code=409, detail="Cannot pause server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot pause server in current state")
         return Response(status_code=202)
 
     elif "unpause" in body:
         if not db.server_action(server_id, "unpause"):
-            raise HTTPException(
-                status_code=409, detail="Cannot unpause server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot unpause server in current state")
         return Response(status_code=202)
 
     elif "suspend" in body:
         if not db.server_action(server_id, "suspend"):
-            raise HTTPException(
-                status_code=409, detail="Cannot suspend server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot suspend server in current state")
         return Response(status_code=202)
 
     elif "resume" in body:
         if not db.server_action(server_id, "resume"):
-            raise HTTPException(
-                status_code=409, detail="Cannot resume server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot resume server in current state")
         return Response(status_code=202)
 
     elif "shelve" in body:
         if not db.server_action(server_id, "shelve"):
-            raise HTTPException(
-                status_code=409, detail="Cannot shelve server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot shelve server in current state")
         return Response(status_code=202)
 
     elif "unshelve" in body:
         if not db.server_action(server_id, "unshelve"):
-            raise HTTPException(
-                status_code=409, detail="Cannot unshelve server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot unshelve server in current state")
         return Response(status_code=202)
 
     elif "os-getConsoleOutput" in body:
@@ -444,9 +421,7 @@ async def server_action(
             raise HTTPException(status_code=400, detail="Security group name required")
         # Remove security group from server
         original_len = len(server.security_groups)
-        server.security_groups = [
-            sg for sg in server.security_groups if sg["name"] != sg_name
-        ]
+        server.security_groups = [sg for sg in server.security_groups if sg["name"] != sg_name]
         if len(server.security_groups) == original_len:
             raise HTTPException(
                 status_code=404, detail=f"Security group {sg_name} not found on server"
@@ -457,33 +432,23 @@ async def server_action(
         resize_data = body["resize"]
         flavor_ref = resize_data.get("flavorRef")
         if not flavor_ref:
-            raise HTTPException(
-                status_code=400, detail="flavorRef is required for resize"
-            )
+            raise HTTPException(status_code=400, detail="flavorRef is required for resize")
         # Validate flavor exists
         flavor = db.get_flavor(flavor_ref)
         if not flavor:
-            raise HTTPException(
-                status_code=400, detail=f"Flavor {flavor_ref} not found"
-            )
+            raise HTTPException(status_code=400, detail=f"Flavor {flavor_ref} not found")
         if not db.server_resize(server_id, flavor_ref):
-            raise HTTPException(
-                status_code=409, detail="Cannot resize server in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot resize server in current state")
         return Response(status_code=202)
 
     elif "confirmResize" in body:
         if not db.server_action(server_id, "confirmResize"):
-            raise HTTPException(
-                status_code=409, detail="Cannot confirm resize in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot confirm resize in current state")
         return Response(status_code=204)
 
     elif "revertResize" in body:
         if not db.server_action(server_id, "revertResize"):
-            raise HTTPException(
-                status_code=409, detail="Cannot revert resize in current state"
-            )
+            raise HTTPException(status_code=409, detail="Cannot revert resize in current state")
         return Response(status_code=202)
 
     elif "createImage" in body:
@@ -502,9 +467,7 @@ async def server_action(
         )
 
     else:
-        raise HTTPException(
-            status_code=400, detail=f"Unknown action: {list(body.keys())}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown action: {list(body.keys())}")
 
 
 # Security Groups Support
@@ -793,9 +756,9 @@ async def create_keypair(
     response = {"keypair": keypair.to_dict()}
     # If no public key was provided, we "generated" one
     if not req.public_key:
-        response["keypair"][
-            "private_key"
-        ] = "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
+        response["keypair"]["private_key"] = (
+            "-----BEGIN RSA PRIVATE KEY-----\n...(emulated)...\n-----END RSA PRIVATE KEY-----"
+        )
 
     return response
 
@@ -1230,9 +1193,7 @@ async def get_extension(
 
     extension = db.get_nova_extension(extension_alias)
     if not extension:
-        raise HTTPException(
-            status_code=404, detail=f"Extension {extension_alias} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Extension {extension_alias} not found")
 
     return {"extension": extension.to_dict()}
 
@@ -1330,9 +1291,7 @@ async def get_server_volume_attachment(
     return {"volumeAttachment": attachment.to_dict()}
 
 
-@router.delete(
-    "/v2.1/servers/{server_id}/os-volume_attachments/{attachment_id}", status_code=202
-)
+@router.delete("/v2.1/servers/{server_id}/os-volume_attachments/{attachment_id}", status_code=202)
 async def detach_volume_from_server(
     server_id: str,
     attachment_id: str,
