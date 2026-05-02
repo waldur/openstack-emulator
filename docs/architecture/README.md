@@ -44,6 +44,7 @@ The OpenStack Emulator is a lightweight implementation of OpenStack APIs designe
 | Glance | 9292 | Image service for VM images |
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load balancer service |
+| Placement | 8778 | Resource provider / capacity tracking service |
 
 ### Management Services
 
@@ -101,6 +102,7 @@ emulator/
 │   ├── glance.py        # Glance API routes
 │   ├── neutron.py       # Neutron API routes
 │   ├── octavia.py       # Octavia API routes
+│   ├── placement.py     # Placement API routes
 │   ├── scenarios.py     # Scenario injection routes
 │   └── status_ui.py     # Status Web UI routes
 └── core/                # Core business logic

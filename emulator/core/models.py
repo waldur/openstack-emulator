@@ -3017,3 +3017,57 @@ class ServiceProfile:
             "created_at": format_datetime_utc(self.created_at),
             "updated_at": format_datetime_utc(self.updated_at),
         }
+
+
+@dataclass
+class ResourceProvider:
+    """Represents a Placement API resource provider (typically a hypervisor)."""
+
+    uuid: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    generation: int = 0
+    parent_provider_uuid: str | None = None
+    root_provider_uuid: str | None = None
+    total_vcpus: int = 32
+    total_memory_mb: int = 65536
+    total_disk_gb: int = 1000
+    reserved_vcpus: int = 0
+    reserved_memory_mb: int = 512
+    reserved_disk_gb: int = 0
+    allocation_ratio_vcpu: float = 16.0
+    allocation_ratio_memory: float = 1.5
+    allocation_ratio_disk: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to Placement API response format."""
+        root = self.root_provider_uuid or self.uuid
+        return {
+            "uuid": self.uuid,
+            "name": self.name,
+            "generation": self.generation,
+            "parent_provider_uuid": self.parent_provider_uuid,
+            "root_provider_uuid": root,
+            "links": [
+                {"rel": "self", "href": f"/resource_providers/{self.uuid}"},
+                {
+                    "rel": "inventories",
+                    "href": f"/resource_providers/{self.uuid}/inventories",
+                },
+                {
+                    "rel": "usages",
+                    "href": f"/resource_providers/{self.uuid}/usages",
+                },
+                {
+                    "rel": "aggregates",
+                    "href": f"/resource_providers/{self.uuid}/aggregates",
+                },
+                {
+                    "rel": "traits",
+                    "href": f"/resource_providers/{self.uuid}/traits",
+                },
+                {
+                    "rel": "allocations",
+                    "href": f"/resource_providers/{self.uuid}/allocations",
+                },
+            ],
+        }

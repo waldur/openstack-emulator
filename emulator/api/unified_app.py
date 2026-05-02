@@ -16,6 +16,7 @@ from emulator.api.keystone import router as keystone_router
 from emulator.api.neutron import router as neutron_router
 from emulator.api.nova import router as nova_router
 from emulator.api.octavia import router as octavia_router
+from emulator.api.placement import router as placement_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.api.status_ui import router as status_router
 from emulator.core.exceptions import add_openstack_exception_handlers
@@ -119,7 +120,7 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
         "nova": create_service_app(
             "nova",
             nova_router,
-            "2.19",
+            "2.87",
             "A lightweight OpenStack Nova (Compute) API emulator",
         ),
         "cinder": create_service_app(
@@ -146,6 +147,12 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
             "2.0",
             "A lightweight OpenStack Octavia (Load Balancer) API emulator",
         ),
+        "placement": create_service_app(
+            "placement",
+            placement_router,
+            "1.0",
+            "A lightweight OpenStack Placement (Resource Provider) API emulator",
+        ),
         "status": create_service_app(
             "status",
             status_router,
@@ -171,6 +178,7 @@ SERVICE_PORTS = {
     "glance": 9292,
     "neutron": 9696,
     "octavia": 9876,
+    "placement": 8778,
     "status": 10000,
     "scenarios": 8999,
 }
@@ -218,6 +226,7 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
     print(f"  - Glance (Image):          http://{host}:{ports['glance']}")
     print(f"  - Neutron (Network):       http://{host}:{ports['neutron']}")
     print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
+    print(f"  - Placement (Resource):    http://{host}:{ports['placement']}")
     print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
     print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
     print(f"\nLog level: {log_level}")
