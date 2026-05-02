@@ -141,7 +141,15 @@ class TestTokens:
         assert response.status_code == 200
         catalog = response.json()["catalog"]
         service_types = {entry["type"] for entry in catalog}
-        expected = {"compute", "identity", "image", "volumev3", "network", "load-balancer"}
+        expected = {
+            "compute",
+            "identity",
+            "image",
+            "volumev3",
+            "network",
+            "load-balancer",
+            "placement",
+        }
         assert expected == service_types
 
     def test_catalog_octavia_endpoints(self, client, auth_token):

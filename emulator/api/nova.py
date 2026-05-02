@@ -123,7 +123,7 @@ async def list_compute_versions() -> dict[str, Any]:
             {
                 "id": "v2.1",
                 "status": "CURRENT",
-                "version": "2.90",
+                "version": "2.87",
                 "min_version": "2.1",
                 "updated": "2013-07-23T11:33:21Z",
                 "links": [{"rel": "self", "href": "/v2.1/"}],
@@ -141,7 +141,8 @@ async def get_version_v21(request: Request) -> dict[str, Any]:
         "version": {
             "id": "v2.1",
             "status": "CURRENT",
-            "version": "2.90",
+            "version": "2.87",
+            "max_version": "2.87",
             "min_version": "2.1",
             "updated": "2013-07-23T11:33:21Z",
             "links": [{"rel": "self", "href": f"{base_url}/v2.1/"}],

@@ -116,8 +116,11 @@ def reset_database() -> Generator[None, None, None]:
     # Clear Nova data (no reset method available)
     db._servers.clear()
     db._keypairs.clear()
+    # Reset placement
+    db._resource_providers.clear()
     # Reinitialize defaults
     db._init_default_flavors()
+    db._init_default_resource_providers()
 
     # Reset scenarios to prevent random failures during tests
     from emulator.core.simple_scenarios import simple_scenario_manager
@@ -172,6 +175,7 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         network_endpoint_override=emulator_servers.get_url("neutron") + "/v2.0",
         block_storage_endpoint_override=emulator_servers.get_url("cinder") + f"/v3/{project_id}",
         load_balancer_endpoint_override=emulator_servers.get_url("octavia"),
+        placement_endpoint_override=emulator_servers.get_url("placement"),
     )
 
     yield conn
