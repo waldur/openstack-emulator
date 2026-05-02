@@ -80,6 +80,7 @@ from emulator.core.models import (
     Region,
     RegisteredLimit,
     RemoteConsole,
+    ResourceProvider,
     Role,
     RoleAssignment,
     Router,
@@ -237,6 +238,9 @@ class Database:
         self._federation_mappings: dict[str, FederationMapping] = {}
         self._registered_limits: dict[str, RegisteredLimit] = {}
 
+        # Storage dictionaries - Placement
+        self._resource_providers: dict[str, ResourceProvider] = {}
+
         # Initialize with default data
         self._init_default_flavors()
         self._init_default_images()
@@ -250,6 +254,7 @@ class Database:
         self._init_octavia_extensions()
         self._init_glance_extensions()
         self._init_keystone_extensions()
+        self._init_default_resource_providers()
 
         # Load persisted data if enabled
         if self.persist_path:
@@ -633,6 +638,7 @@ class Database:
         glance_url = f"{scheme}://{host}:9292"
         neutron_url = f"{scheme}://{host}:9696"
         octavia_url = f"{scheme}://{host}:9876"
+        placement_url = f"{scheme}://{host}:8778"
 
         return [
             {
@@ -758,6 +764,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{octavia_url}",
+                    },
+                ],
+            },
+            {
+                "type": "placement",
+                "name": "placement",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{placement_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{placement_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{placement_url}",
                     },
                 ],
             },
@@ -6985,41 +7012,156 @@ class Database:
             self._l7rules.clear()
             self._next_lb_vip = 1
 
+    def _compute_compute_usage(self) -> dict[str, int]:
+        """Sum VCPU/RAM/DISK consumption across running servers.
+
+        Caller must hold self._lock.
+        """
+        vcpus_used = 0
+        memory_mb_used = 0
+        disk_gb_used = 0
+        running = 0
+        for server in self._servers.values():
+            if server.status != ServerStatus.ACTIVE:
+                continue
+            running += 1
+            flavor = self._flavors.get(server.flavor_id)
+            if flavor:
+                vcpus_used += flavor.vcpus
+                memory_mb_used += flavor.ram
+                disk_gb_used += flavor.disk
+        return {
+            "vcpus_used": vcpus_used,
+            "memory_mb_used": memory_mb_used,
+            "disk_gb_used": disk_gb_used,
+            "running_vms": running,
+        }
+
     def get_hypervisor_statistics(self) -> dict[str, Any]:
         """Calculate dynamic hypervisor statistics based on current resources."""
         with self._lock:
-            # Get all servers and calculate usage
-            servers = list(self._servers.values())
-            running_servers = [s for s in servers if s.status == ServerStatus.ACTIVE]
-
-            vcpus_used = 0
-            memory_mb_used = 0
-
-            # Calculate resource usage from running servers
-            for server in running_servers:
-                flavor = self._flavors.get(server.flavor_id)
-                if flavor:
-                    vcpus_used += flavor.vcpus
-                    memory_mb_used += flavor.ram
-
-            # Static capacity values (can be made configurable later)
-            total_vcpus = 32
-            total_memory_mb = 65536
-            total_local_gb = 1000
+            usage = self._compute_compute_usage()
+            provider = self._get_default_resource_provider_locked()
+            total_vcpus = provider.total_vcpus
+            total_memory_mb = provider.total_memory_mb
+            total_local_gb = provider.total_disk_gb
 
             return {
                 "count": 1,  # Number of hypervisors
                 "vcpus": total_vcpus,
-                "vcpus_used": vcpus_used,
+                "vcpus_used": usage["vcpus_used"],
                 "memory_mb": total_memory_mb,
-                "memory_mb_used": memory_mb_used,
+                "memory_mb_used": usage["memory_mb_used"],
                 "local_gb": total_local_gb,
-                "local_gb_used": 0,  # TODO: Calculate from volumes if needed
-                "free_ram_mb": total_memory_mb - memory_mb_used,
-                "free_disk_gb": total_local_gb,
+                "local_gb_used": usage["disk_gb_used"],
+                "free_ram_mb": total_memory_mb - usage["memory_mb_used"],
+                "free_disk_gb": total_local_gb - usage["disk_gb_used"],
                 "current_workload": 0,  # OpenStack concept - can remain 0
-                "running_vms": len(running_servers),
-                "disk_available_least": total_local_gb,
+                "running_vms": usage["running_vms"],
+                "disk_available_least": total_local_gb - usage["disk_gb_used"],
+            }
+
+    # ==================== Placement (resource providers) ====================
+
+    def _init_default_resource_providers(self) -> None:
+        """Seed one resource provider that mirrors the default hypervisor."""
+        if self._resource_providers:
+            return
+        provider = ResourceProvider(
+            name="compute-host-1",
+            generation=0,
+        )
+        provider.root_provider_uuid = provider.uuid
+        self._resource_providers[provider.uuid] = provider
+
+    def _get_default_resource_provider_locked(self) -> ResourceProvider:
+        """Return the seeded provider, recreating it if missing.
+
+        Caller must hold self._lock.
+        """
+        if not self._resource_providers:
+            provider = ResourceProvider(name="compute-host-1", generation=0)
+            provider.root_provider_uuid = provider.uuid
+            self._resource_providers[provider.uuid] = provider
+        return next(iter(self._resource_providers.values()))
+
+    def list_resource_providers(
+        self,
+        name: str | None = None,
+        uuid: str | None = None,
+    ) -> list[ResourceProvider]:
+        """List resource providers, optionally filtered by name or uuid."""
+        with self._lock:
+            providers = list(self._resource_providers.values())
+            if name is not None:
+                providers = [p for p in providers if p.name == name]
+            if uuid is not None:
+                providers = [p for p in providers if p.uuid == uuid]
+            return providers
+
+    def get_resource_provider(self, uuid: str) -> ResourceProvider | None:
+        """Get a resource provider by uuid."""
+        with self._lock:
+            return self._resource_providers.get(uuid)
+
+    def get_resource_provider_by_name(self, name: str) -> ResourceProvider | None:
+        """Get a resource provider by hypervisor hostname."""
+        with self._lock:
+            for provider in self._resource_providers.values():
+                if provider.name == name:
+                    return provider
+            return None
+
+    def get_resource_provider_inventories(self, uuid: str) -> dict[str, Any] | None:
+        """Return the inventories document for a resource provider."""
+        with self._lock:
+            provider = self._resource_providers.get(uuid)
+            if provider is None:
+                return None
+            return {
+                "resource_provider_generation": provider.generation,
+                "inventories": {
+                    "VCPU": {
+                        "total": provider.total_vcpus,
+                        "reserved": provider.reserved_vcpus,
+                        "min_unit": 1,
+                        "max_unit": provider.total_vcpus,
+                        "step_size": 1,
+                        "allocation_ratio": provider.allocation_ratio_vcpu,
+                    },
+                    "MEMORY_MB": {
+                        "total": provider.total_memory_mb,
+                        "reserved": provider.reserved_memory_mb,
+                        "min_unit": 1,
+                        "max_unit": provider.total_memory_mb,
+                        "step_size": 1,
+                        "allocation_ratio": provider.allocation_ratio_memory,
+                    },
+                    "DISK_GB": {
+                        "total": provider.total_disk_gb,
+                        "reserved": provider.reserved_disk_gb,
+                        "min_unit": 1,
+                        "max_unit": provider.total_disk_gb,
+                        "step_size": 1,
+                        "allocation_ratio": provider.allocation_ratio_disk,
+                    },
+                },
+            }
+
+    def get_resource_provider_usages(self, uuid: str) -> dict[str, Any] | None:
+        """Return the current usages document for a resource provider."""
+        with self._lock:
+            provider = self._resource_providers.get(uuid)
+            if provider is None:
+                return None
+            usage = self._compute_compute_usage()
+            return {
+                "resource_provider_generation": provider.generation,
+                "usages": {
+                    "VCPU": usage["vcpus_used"],
+                    "MEMORY_MB": usage["memory_mb_used"],
+                    "DISK_GB": usage["disk_gb_used"],
+                },
             }
 
     def _init_default_tokens(self) -> None:

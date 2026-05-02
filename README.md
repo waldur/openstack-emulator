@@ -12,6 +12,7 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
 | Glance | 9292 | Image service |
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load Balancer service |
+| Placement | 8778 | Resource Provider service |
 | Status UI | 10000 | Web dashboard |
 | Scenarios | 8999 | Failure injection API |
 

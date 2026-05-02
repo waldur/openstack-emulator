@@ -137,6 +137,7 @@ For detailed tenant isolation documentation, see [docs/architecture/tenant-isola
 | Glance | 9292 |
 | Neutron | 9696 |
 | Octavia | 9876 |
+| Placement | 8778 |
 
 For full port list and development instructions, see [docs/development.md](docs/development.md).
 

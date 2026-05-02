@@ -21,6 +21,7 @@ openstack-emulator --service=cinder     # Port 8776
 openstack-emulator --service=glance     # Port 9292
 openstack-emulator --service=neutron    # Port 9696
 openstack-emulator --service=octavia    # Port 9876
+openstack-emulator --service=placement  # Port 8778
 openstack-emulator --service=status     # Port 10000 (Web UI)
 openstack-emulator --service=scenarios  # Port 8999
 ```
@@ -47,6 +48,7 @@ uvicorn emulator.api.app_status:app --host 0.0.0.0 --port 10000
 | Glance | 9292 | Image service |
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load Balancer service |
+| Placement | 8778 | Resource Provider service |
 | Status UI | 10000 | Web dashboard |
 | Scenarios | 8999 | Failure injection API |
 
@@ -60,6 +62,7 @@ Each service provides interactive API documentation:
 - Glance: http://localhost:9292/docs
 - Neutron: http://localhost:9696/docs
 - Octavia: http://localhost:9876/docs
+- Placement: http://localhost:8778/docs
 - Scenarios: http://localhost:8999/docs
 
 ## Status Web UI
@@ -193,6 +196,7 @@ curl http://localhost:8776/health   # Cinder
 curl http://localhost:9292/health   # Glance
 curl http://localhost:9696/health   # Neutron
 curl http://localhost:9876/health   # Octavia
+curl http://localhost:8778/health   # Placement
 curl http://localhost:10000/health  # Status UI
 curl http://localhost:8999/health   # Scenarios
 ```

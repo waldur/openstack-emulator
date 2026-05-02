@@ -558,6 +558,26 @@ curl -s -X DELETE "http://localhost:9696/v2.0/security-groups/{security_group_id
   -H "X-Auth-Token: $TOKEN"
 ```
 
+## Placement (Resource Providers)
+
+```bash
+# List resource providers (one seeded provider mirrors the default hypervisor)
+curl -s "http://localhost:8778/resource_providers" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Pick the first provider's UUID
+RP_UUID=$(curl -s "http://localhost:8778/resource_providers" \
+  -H "X-Auth-Token: $TOKEN" | jq -r '.resource_providers[0].uuid')
+
+# Inventories: VCPU / MEMORY_MB / DISK_GB capacity, with reserved + allocation_ratio
+curl -s "http://localhost:8778/resource_providers/$RP_UUID/inventories" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Usages: live consumption, computed from running Nova servers
+curl -s "http://localhost:8778/resource_providers/$RP_UUID/usages" \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
 ## Limits and Quotas
 
 ```bash
