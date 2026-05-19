@@ -803,6 +803,7 @@ class Database:
         security_groups: list[dict[str, str]] | None = None,
         availability_zone: str = "nova",
         networks: list[dict[str, Any]] | None = None,
+        config_drive: bool | None = None,
     ) -> Server:
         """Create a new server."""
         with self._lock:
@@ -820,6 +821,9 @@ class Database:
                 metadata=metadata or {},
                 security_groups=security_groups or [{"name": "default"}],
                 availability_zone=availability_zone,
+                # Nova returns this field as the string "True" or "" (empty
+                # for False). Match that wire format here.
+                config_drive="True" if config_drive else "",
                 admin_pass=str(uuid4())[:12],
                 progress=0,
             )

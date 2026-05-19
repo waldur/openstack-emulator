@@ -198,6 +198,95 @@ class TestServerEndpoints:
         assert data["server"]["name"] == "test-server"
         assert "adminPass" in data["server"]
 
+    def test_create_server_with_config_drive_true(self, client, auth_token):
+        """config_drive=true must round-trip as "True" on the server detail."""
+        images_response = client.get(
+            "/v2.1/images",
+            headers={"X-Auth-Token": auth_token},
+        )
+        image_id = images_response.json()["images"][0]["id"]
+
+        create_response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": auth_token},
+            json={
+                "server": {
+                    "name": "cd-true",
+                    "flavorRef": "1",
+                    "imageRef": image_id,
+                    "config_drive": True,
+                }
+            },
+        )
+        assert create_response.status_code == 202
+        server_id = create_response.json()["server"]["id"]
+
+        get_response = client.get(
+            f"/v2.1/servers/{server_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["server"]["config_drive"] == "True"
+
+    def test_create_server_with_config_drive_false(self, client, auth_token):
+        """config_drive=false (or omitted) must round-trip as "" per Nova spec."""
+        images_response = client.get(
+            "/v2.1/images",
+            headers={"X-Auth-Token": auth_token},
+        )
+        image_id = images_response.json()["images"][0]["id"]
+
+        create_response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": auth_token},
+            json={
+                "server": {
+                    "name": "cd-false",
+                    "flavorRef": "1",
+                    "imageRef": image_id,
+                    "config_drive": False,
+                }
+            },
+        )
+        assert create_response.status_code == 202
+        server_id = create_response.json()["server"]["id"]
+
+        get_response = client.get(
+            f"/v2.1/servers/{server_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["server"]["config_drive"] == ""
+
+    def test_create_server_without_config_drive_defaults_to_empty(self, client, auth_token):
+        """When config_drive is not sent at all, the response field is the empty string."""
+        images_response = client.get(
+            "/v2.1/images",
+            headers={"X-Auth-Token": auth_token},
+        )
+        image_id = images_response.json()["images"][0]["id"]
+
+        create_response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": auth_token},
+            json={
+                "server": {
+                    "name": "cd-omitted",
+                    "flavorRef": "1",
+                    "imageRef": image_id,
+                }
+            },
+        )
+        assert create_response.status_code == 202
+        server_id = create_response.json()["server"]["id"]
+
+        get_response = client.get(
+            f"/v2.1/servers/{server_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["server"]["config_drive"] == ""
+
     def test_get_server(self, client, auth_token):
         """Test getting a server."""
         # Create a server first

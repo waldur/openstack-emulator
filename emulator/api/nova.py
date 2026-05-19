@@ -44,6 +44,7 @@ class ServerCreateRequest(BaseModel):
     availability_zone: str | None = None
     block_device_mapping_v2: list[BlockDeviceMapping] | None = None
     user_data: str | None = None
+    config_drive: bool | None = None
     min_count: int = 1
     max_count: int = 1
 
@@ -254,6 +255,7 @@ async def create_server(
         security_groups=req.security_groups,
         availability_zone=req.availability_zone or "nova",
         networks=networks,
+        config_drive=req.config_drive,
     )
 
     # Return response with admin password
