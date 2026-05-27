@@ -468,6 +468,35 @@ async def list_routers(
     return {"routers": [r.to_dict() for r in routers]}
 
 
+def _validate_external_gateway(
+    project_id: str, external_gateway_info: dict[str, Any] | None
+) -> None:
+    """Validate a router's external gateway request.
+
+    A gateway network must exist, be visible to the requesting project, and be
+    usable as an external network for that project (either globally external or
+    shared to it via an ``access_as_external`` RBAC policy). Raises HTTPException
+    on failure; a falsy ``external_gateway_info`` (gateway removal) is a no-op.
+    """
+    if not external_gateway_info:
+        return
+    network_id = external_gateway_info.get("network_id")
+    if not network_id:
+        # Neutron requires network_id whenever external_gateway_info is set,
+        # even when only toggling SNAT on the existing gateway network.
+        raise HTTPException(
+            status_code=400,
+            detail="network_id is required in external_gateway_info",
+        )
+    if db.get_network(network_id, project_id=project_id) is None:
+        raise HTTPException(status_code=404, detail="External network not found")
+    if not db.is_network_external_for(network_id, project_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Network is not usable as an external gateway for this project",
+        )
+
+
 @router.post("/v2.0/routers", status_code=201)
 async def create_router(
     request: dict[str, Any],
@@ -476,6 +505,8 @@ async def create_router(
     """Create a router."""
     project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
+
+    _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
     router = db.create_router(
         name=data.get("name", ""),
@@ -515,6 +546,9 @@ async def update_router(
     """
     project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
+
+    _validate_external_gateway(project_id, data.get("external_gateway_info"))
+
     router = db.update_router(
         router_id=router_id,
         project_id=project_id,
@@ -970,10 +1004,16 @@ async def create_rbac_policy(
     body = await request.json()
     policy_data = body.get("rbac_policy", {})
 
-    # Validate required fields
+    # Validate required fields. Neutron's canonical wire field is
+    # ``target_tenant``; newer clients send ``target_project_id`` (or
+    # ``target_project``), so accept all three.
     object_type = policy_data.get("object_type")
     object_id = policy_data.get("object_id")
-    target_tenant = policy_data.get("target_tenant")
+    target_tenant = (
+        policy_data.get("target_tenant")
+        or policy_data.get("target_project_id")
+        or policy_data.get("target_project")
+    )
     action = policy_data.get("action", "access_as_shared")
 
     if not object_type or not object_id or not target_tenant:
