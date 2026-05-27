@@ -468,6 +468,30 @@ async def list_routers(
     return {"routers": [r.to_dict() for r in routers]}
 
 
+def _validate_external_gateway(
+    project_id: str, external_gateway_info: dict[str, Any] | None
+) -> None:
+    """Validate a router's external gateway request.
+
+    A gateway network must exist, be visible to the requesting project, and be
+    usable as an external network for that project (either globally external or
+    shared to it via an ``access_as_external`` RBAC policy). Raises HTTPException
+    on failure; a falsy ``external_gateway_info`` (gateway removal) is a no-op.
+    """
+    if not external_gateway_info:
+        return
+    network_id = external_gateway_info.get("network_id")
+    if not network_id:
+        return
+    if db.get_network(network_id, project_id=project_id) is None:
+        raise HTTPException(status_code=404, detail="External network not found")
+    if not db.is_network_external_for(network_id, project_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Network is not usable as an external gateway for this project",
+        )
+
+
 @router.post("/v2.0/routers", status_code=201)
 async def create_router(
     request: dict[str, Any],
@@ -476,6 +500,8 @@ async def create_router(
     """Create a router."""
     project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
+
+    _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
     router = db.create_router(
         name=data.get("name", ""),
@@ -515,6 +541,9 @@ async def update_router(
     """
     project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
+
+    _validate_external_gateway(project_id, data.get("external_gateway_info"))
+
     router = db.update_router(
         router_id=router_id,
         project_id=project_id,

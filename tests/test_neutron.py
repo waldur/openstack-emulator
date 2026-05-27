@@ -715,3 +715,230 @@ class TestDefaultResources:
         sgs = response.json()["security_groups"]
         names = [sg["name"] for sg in sgs]
         assert "default" in names
+
+
+class TestRbacExternalNetworks:
+    """Cross-tenant RBAC sharing and external-gateway scenarios.
+
+    Covers a tenant sharing its own network to another tenant as external,
+    target-tenant visibility, isolation from third tenants, and the
+    router external-gateway validation that depends on it.
+    """
+
+    @staticmethod
+    def _token_for(project: str) -> str:
+        """Create a project and return an auth token scoped to it."""
+        db.create_project(name=project, project_id=project)
+        return db.create_token(project_name=project).id
+
+    @staticmethod
+    def _create_network(token: str, name: str, **attrs) -> str:
+        response = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": name, **attrs}},
+            headers={"X-Auth-Token": token},
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["network"]["id"]
+
+    @staticmethod
+    def _share(token: str, network_id: str, target: str, action: str) -> None:
+        response = client.post(
+            "/v2.0/rbac-policies",
+            json={
+                "rbac_policy": {
+                    "object_type": "network",
+                    "object_id": network_id,
+                    "target_tenant": target,
+                    "action": action,
+                }
+            },
+            headers={"X-Auth-Token": token},
+        )
+        assert response.status_code == 201, response.text
+
+    def test_access_as_external_grants_target_visibility(self):
+        """Tenant B sees A's network shared as external; tenant C does not."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+        token_c = self._token_for("tenant-c")
+
+        net_id = self._create_network(token_a, "shared-ext")
+        self._share(token_a, net_id, "tenant-b", "access_as_external")
+
+        b_networks = client.get("/v2.0/networks", headers={"X-Auth-Token": token_b}).json()[
+            "networks"
+        ]
+        assert net_id in [n["id"] for n in b_networks]
+
+        c_networks = client.get("/v2.0/networks", headers={"X-Auth-Token": token_c}).json()[
+            "networks"
+        ]
+        assert net_id not in [n["id"] for n in c_networks]
+
+    def test_access_as_external_appears_in_external_filter(self):
+        """The shared network is returned when target tenant filters external."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+
+        net_id = self._create_network(token_a, "shared-ext")
+        self._share(token_a, net_id, "tenant-b", "access_as_external")
+
+        ext_for_b = client.get(
+            "/v2.0/networks?router:external=true",
+            headers={"X-Auth-Token": token_b},
+        ).json()["networks"]
+        assert net_id in [n["id"] for n in ext_for_b]
+
+    def test_access_as_shared_is_not_external(self):
+        """access_as_shared grants visibility but not external-gateway eligibility."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+
+        net_id = self._create_network(token_a, "shared-only")
+        self._share(token_a, net_id, "tenant-b", "access_as_shared")
+
+        # Visible to B
+        b_networks = client.get("/v2.0/networks", headers={"X-Auth-Token": token_b}).json()[
+            "networks"
+        ]
+        assert net_id in [n["id"] for n in b_networks]
+
+        # But not as external
+        ext_for_b = client.get(
+            "/v2.0/networks?router:external=true",
+            headers={"X-Auth-Token": token_b},
+        ).json()["networks"]
+        assert net_id not in [n["id"] for n in ext_for_b]
+
+    def test_wildcard_external_visible_to_all(self):
+        """Regression: access_as_external to '*' is external for every tenant."""
+        token_a = self._token_for("tenant-a")
+        token_c = self._token_for("tenant-c")
+
+        net_id = self._create_network(token_a, "wild-ext")
+        self._share(token_a, net_id, "*", "access_as_external")
+
+        ext_for_c = client.get(
+            "/v2.0/networks?router:external=true",
+            headers={"X-Auth-Token": token_c},
+        ).json()["networks"]
+        assert net_id in [n["id"] for n in ext_for_c]
+
+    def test_set_gateway_to_shared_external_with_snat_and_fixed_ip(self):
+        """Tenant B sets A's RBAC-external network as gateway with SNAT off + fixed IP."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+
+        net_id = self._create_network(token_a, "shared-ext")
+        self._share(token_a, net_id, "tenant-b", "access_as_external")
+
+        gateway = {
+            "network_id": net_id,
+            "enable_snat": False,
+            "external_fixed_ips": [{"ip_address": "10.10.10.1"}],
+        }
+        response = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": "b-router", "external_gateway_info": gateway}},
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 201, response.text
+        info = response.json()["router"]["external_gateway_info"]
+        assert info["network_id"] == net_id
+        assert info["enable_snat"] is False
+        assert info["external_fixed_ips"] == [{"subnet_id": "", "ip_address": "10.10.10.1"}]
+
+    def test_set_gateway_rejected_for_non_target_tenant(self):
+        """Tenant C cannot use A's network (shared only to B) as a gateway."""
+        token_a = self._token_for("tenant-a")
+        token_c = self._token_for("tenant-c")
+
+        net_id = self._create_network(token_a, "shared-ext")
+        self._share(token_a, net_id, "tenant-b", "access_as_external")
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "c-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+            headers={"X-Auth-Token": token_c},
+        )
+        # Not visible to C at all -> treated as not found.
+        assert response.status_code == 404, response.text
+
+    def test_set_gateway_rejected_for_non_external_network(self):
+        """A network shared only as access_as_shared cannot be a gateway."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+
+        net_id = self._create_network(token_a, "shared-only")
+        self._share(token_a, net_id, "tenant-b", "access_as_shared")
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "b-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 400, response.text
+
+    def test_set_gateway_to_missing_network(self):
+        """Setting a gateway to a non-existent network is rejected."""
+        token_b = self._token_for("tenant-b")
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "b-router",
+                    "external_gateway_info": {"network_id": "does-not-exist"},
+                }
+            },
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 404, response.text
+
+    def test_update_router_gateway_validates(self):
+        """Updating a router gateway is validated the same way as create."""
+        token_b = self._token_for("tenant-b")
+        create = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": "b-router"}},
+            headers={"X-Auth-Token": token_b},
+        )
+        router_id = create.json()["router"]["id"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}",
+            json={"router": {"external_gateway_info": {"network_id": "does-not-exist"}}},
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 404, response.text
+
+    def test_default_external_network_usable_by_any_tenant(self):
+        """Regression: the globally-external default network still works as a gateway."""
+        token_b = self._token_for("tenant-b")
+        networks = client.get(
+            "/v2.0/networks?router:external=true",
+            headers={"X-Auth-Token": token_b},
+        ).json()["networks"]
+        ext = next(n for n in networks if n["name"] == "external")
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "b-router",
+                    "external_gateway_info": {"network_id": ext["id"]},
+                }
+            },
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 201, response.text
