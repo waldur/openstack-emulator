@@ -4383,13 +4383,65 @@ class Database:
                 self.save()
             return network
 
+    def _network_rbac_targets(
+        self,
+        network_id: str,
+        project_id: str | None,
+        actions: tuple[str, ...] | None = None,
+    ) -> bool:
+        """Whether an RBAC policy grants the project access to the network.
+
+        A policy matches when it targets the project explicitly or all
+        tenants (``target_project == "*"``). When ``actions`` is given, only
+        policies with one of those actions are considered.
+        """
+        if project_id is None:
+            return False
+        with self._lock:
+            for policy in self._rbac_policies.values():
+                if policy.object_type != "network" or policy.object_id != network_id:
+                    continue
+                if actions is not None and policy.action not in actions:
+                    continue
+                if policy.target_project in ("*", project_id):
+                    return True
+        return False
+
+    def _network_visible_to(self, network: Network, project_id: str | None) -> bool:
+        """Whether a network is visible to the given project.
+
+        Visible when owned by the project, globally shared/external, or shared
+        to the project (or all tenants) through any RBAC policy.
+        """
+        if project_id is None:
+            return True
+        if network.project_id == project_id or network.shared or network.external:
+            return True
+        return self._network_rbac_targets(network.id, project_id)
+
+    def is_network_external_for(self, network_id: str, project_id: str | None) -> bool:
+        """Whether a network may be used as an external gateway by the project.
+
+        True for globally external networks, or for networks shared to the
+        project (or all tenants) via an ``access_as_external`` RBAC policy.
+        """
+        with self._lock:
+            network = self._networks.get(network_id)
+            if network is None:
+                return False
+            if network.external:
+                return True
+            return self._network_rbac_targets(
+                network_id, project_id, actions=("access_as_external",)
+            )
+
     def get_network(self, network_id: str, project_id: str | None = None) -> Network | None:
         """Get a network by ID.
 
         Args:
             network_id: The network ID to look up.
-            project_id: If provided, verify ownership (shared/external networks
-                        are always accessible).
+            project_id: If provided, verify access (shared/external networks
+                        and RBAC-shared networks are accessible).
 
         Returns:
             The network if found and accessible, else None.
@@ -4398,10 +4450,8 @@ class Database:
             network = self._networks.get(network_id)
             if network is None:
                 return None
-            # Shared and external networks are accessible to all
-            if project_id is not None and not network.shared and not network.external:
-                if network.project_id != project_id:
-                    return None
+            if not self._network_visible_to(network, project_id):
+                return None
             return network
 
     def list_networks(
@@ -4412,17 +4462,30 @@ class Database:
         external: bool | None = None,
         status: str | None = None,
     ) -> list[Network]:
-        """List networks with optional filtering."""
+        """List networks with optional filtering.
+
+        Networks shared to the project through RBAC policies are included, and
+        the ``external`` filter is evaluated per-project so that networks shared
+        as external via an ``access_as_external`` RBAC policy are returned to the
+        target tenant.
+        """
         with self._lock:
             networks = list(self._networks.values())
             if project_id:
-                networks = [n for n in networks if n.project_id == project_id or n.shared]
+                networks = [n for n in networks if self._network_visible_to(n, project_id)]
             if name:
                 networks = [n for n in networks if n.name == name]
             if shared is not None:
                 networks = [n for n in networks if n.shared == shared]
             if external is not None:
-                networks = [n for n in networks if n.external == external]
+                if project_id:
+                    networks = [
+                        n
+                        for n in networks
+                        if self.is_network_external_for(n.id, project_id) == external
+                    ]
+                else:
+                    networks = [n for n in networks if n.external == external]
             if status:
                 networks = [n for n in networks if n.status.value == status]
             return networks
@@ -4842,6 +4905,29 @@ class Database:
             return True
 
     # Router operations
+    @staticmethod
+    def _build_external_gateway_info(
+        external_gateway_info: dict[str, Any] | None,
+    ) -> ExternalGatewayInfo | None:
+        """Build an ExternalGatewayInfo from a request payload.
+
+        Returns None when the payload is empty (gateway removal). Fixed IPs are
+        converted into FixedIP objects, tolerating entries that omit subnet_id.
+        """
+        if not external_gateway_info:
+            return None
+        return ExternalGatewayInfo(
+            network_id=external_gateway_info.get("network_id", ""),
+            enable_snat=external_gateway_info.get("enable_snat", True),
+            external_fixed_ips=[
+                FixedIP(
+                    subnet_id=f.get("subnet_id", ""),
+                    ip_address=f.get("ip_address", ""),
+                )
+                for f in external_gateway_info.get("external_fixed_ips", [])
+            ],
+        )
+
     def create_router(
         self,
         name: str,
@@ -4852,13 +4938,7 @@ class Database:
     ) -> Router:
         """Create a new router."""
         with self._lock:
-            ext_gateway = None
-            if external_gateway_info:
-                ext_gateway = ExternalGatewayInfo(
-                    network_id=external_gateway_info.get("network_id", ""),
-                    enable_snat=external_gateway_info.get("enable_snat", True),
-                    external_fixed_ips=external_gateway_info.get("external_fixed_ips", []),
-                )
+            ext_gateway = self._build_external_gateway_info(external_gateway_info)
 
             router = Router(
                 id=str(uuid4()),
@@ -4941,14 +5021,9 @@ class Database:
             if admin_state_up is not None:
                 router.admin_state_up = admin_state_up
             if external_gateway_info is not None:
-                if external_gateway_info:
-                    router.external_gateway_info = ExternalGatewayInfo(
-                        network_id=external_gateway_info.get("network_id", ""),
-                        enable_snat=external_gateway_info.get("enable_snat", True),
-                        external_fixed_ips=external_gateway_info.get("external_fixed_ips", []),
-                    )
-                else:
-                    router.external_gateway_info = None
+                router.external_gateway_info = self._build_external_gateway_info(
+                    external_gateway_info
+                )
             if routes is not None:
                 router.routes = routes
             router.updated_at = datetime.now(timezone.utc)
@@ -5571,6 +5646,7 @@ class Database:
             self._floating_ips.clear()
             self._security_groups.clear()
             self._security_group_rules.clear()
+            self._rbac_policies.clear()
             self._next_floating_ip = 1
             self._init_default_neutron_data()
 

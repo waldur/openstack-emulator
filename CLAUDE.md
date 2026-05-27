@@ -46,14 +46,19 @@ For detailed documentation:
 
 **IMPORTANT: You MUST run all linters and ensure they pass before committing any code.**
 
-Before every commit, run these commands in order:
+Before every commit, run these commands in order (the CI "Run linters" and
+"Run type checkings" jobs run the same checks):
 
-1. **Run black formatter**: `black emulator tests`
-2. **Run ruff linter**: `ruff check emulator tests`
-3. **Run mypy type checker**: `mypy emulator --ignore-missing-imports`
-4. **Run tests**: `pytest`
+1. **Format with ruff**: `uv run ruff format .` (CI enforces `ruff format --check .`)
+2. **Lint with ruff**: `uv run ruff check .`
+3. **Type-check with mypy**: `uv run mypy emulator --ignore-missing-imports`
+4. **Run tests**: `uv run pytest`
 
 All four checks must pass before committing. Fix any errors before proceeding.
+
+> **Formatter is `ruff format`, not `black`.** The repository is kept
+> ruff-format-clean; running `black` reformats unrelated files and diverges
+> from CI. Use `ruff format` only.
 
 **DO NOT commit code that fails any of these checks. This is mandatory.**
 

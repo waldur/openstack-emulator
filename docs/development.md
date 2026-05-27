@@ -24,24 +24,27 @@ pip install -e ".[dev]"
 
 All code must pass these checks before committing:
 
-### 1. Black Formatter
+### 1. Ruff Formatter
+
+The repository is formatted with `ruff format` (not `black`). CI enforces
+`ruff format --check .`.
 
 ```bash
 # Check formatting
-black --check .
+uv run ruff format --check .
 
 # Format all files
-black emulator/ tests/
+uv run ruff format .
 ```
 
 ### 2. Ruff Linter
 
 ```bash
 # Check for errors
-ruff check emulator tests
+uv run ruff check .
 
 # Auto-fix where possible
-ruff check --fix emulator tests
+uv run ruff check --fix .
 ```
 
 Common issues to avoid:
@@ -51,14 +54,14 @@ Common issues to avoid:
 ### 3. Mypy Type Checker
 
 ```bash
-mypy emulator --ignore-missing-imports
+uv run mypy emulator --ignore-missing-imports
 ```
 
 ### 4. Tests
 
 ```bash
-pytest
-pytest --cov=emulator --cov-report=html
+uv run pytest
+uv run pytest --cov=emulator --cov-report=html
 ```
 
 ## Adding a New Service
