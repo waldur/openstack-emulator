@@ -482,7 +482,12 @@ def _validate_external_gateway(
         return
     network_id = external_gateway_info.get("network_id")
     if not network_id:
-        return
+        # Neutron requires network_id whenever external_gateway_info is set,
+        # even when only toggling SNAT on the existing gateway network.
+        raise HTTPException(
+            status_code=400,
+            detail="network_id is required in external_gateway_info",
+        )
     if db.get_network(network_id, project_id=project_id) is None:
         raise HTTPException(status_code=404, detail="External network not found")
     if not db.is_network_external_for(network_id, project_id):
@@ -999,10 +1004,16 @@ async def create_rbac_policy(
     body = await request.json()
     policy_data = body.get("rbac_policy", {})
 
-    # Validate required fields
+    # Validate required fields. Neutron's canonical wire field is
+    # ``target_tenant``; newer clients send ``target_project_id`` (or
+    # ``target_project``), so accept all three.
     object_type = policy_data.get("object_type")
     object_id = policy_data.get("object_id")
-    target_tenant = policy_data.get("target_tenant")
+    target_tenant = (
+        policy_data.get("target_tenant")
+        or policy_data.get("target_project_id")
+        or policy_data.get("target_project")
+    )
     action = policy_data.get("action", "access_as_shared")
 
     if not object_type or not object_id or not target_tenant:

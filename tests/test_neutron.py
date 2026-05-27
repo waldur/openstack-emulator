@@ -922,6 +922,47 @@ class TestRbacExternalNetworks:
         )
         assert response.status_code == 404, response.text
 
+    def test_rbac_accepts_target_project_id_alias(self):
+        """RBAC create accepts the newer target_project_id field alias."""
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+        net_id = self._create_network(token_a, "shared-ext")
+
+        response = client.post(
+            "/v2.0/rbac-policies",
+            json={
+                "rbac_policy": {
+                    "object_type": "network",
+                    "object_id": net_id,
+                    "target_project_id": "tenant-b",
+                    "action": "access_as_external",
+                }
+            },
+            headers={"X-Auth-Token": token_a},
+        )
+        assert response.status_code == 201, response.text
+
+        ext_for_b = client.get(
+            "/v2.0/networks?router:external=true",
+            headers={"X-Auth-Token": token_b},
+        ).json()["networks"]
+        assert net_id in [n["id"] for n in ext_for_b]
+
+    def test_set_gateway_requires_network_id(self):
+        """external_gateway_info without network_id is rejected (Neutron requires it)."""
+        token_b = self._token_for("tenant-b")
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "b-router",
+                    "external_gateway_info": {"enable_snat": False},
+                }
+            },
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 400, response.text
+
     def test_default_external_network_usable_by_any_tenant(self):
         """Regression: the globally-external default network still works as a gateway."""
         token_b = self._token_for("tenant-b")
