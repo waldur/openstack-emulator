@@ -1,0 +1,26 @@
+apiVersion: v1
+entries:
+  openstack-emulator:
+  - apiVersion: v2
+    appVersion: latest
+    created: "2026-06-04T21:00:04.202527547Z"
+    description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
+      intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
+    digest: 0255f094752659a69f4fc87d1e13a663333b6199613c03cd8766ae217427cde2
+    home: https://code.opennodecloud.com/waldur/openstack-emulator
+    keywords:
+    - openstack
+    - emulator
+    - testing
+    - waldur
+    maintainers:
+    - name: Waldur Team
+      url: https://waldur.com/
+    name: openstack-emulator
+    sources:
+    - https://code.opennodecloud.com/waldur/openstack-emulator
+    type: application
+    urls:
+    - https://waldur.github.io/openstack-emulator/charts/openstack-emulator-0.0.1.tgz
+    version: 0.0.1
+generated: "2026-06-04T21:00:04.201489176Z"
