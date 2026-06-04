@@ -1,0 +1,40 @@
+{{- if .Values.gatewayApi.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "openstack-emulator.fullname" . }}
+  labels:
+    {{- include "openstack-emulator.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- if .Values.gatewayApi.createGateway }}
+    - name: {{ include "openstack-emulator.fullname" . }}
+      sectionName: {{ .Values.gatewayApi.gateway.listenerName | quote }}
+    {{- else }}
+    {{- with .Values.gatewayApi.parentRefs }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+  {{- with .Values.gatewayApi.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if .Values.gatewayApi.rules }}
+    {{- range .Values.gatewayApi.rules }}
+    - matches:
+        {{- toYaml .matches | nindent 8 }}
+      backendRefs:
+        - name: {{ include "openstack-emulator.fullname" $ }}
+          port: {{ .port }}
+    {{- end }}
+    {{- else }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "openstack-emulator.fullname" . }}
+          port: 5000
+    {{- end }}
+{{- end }}

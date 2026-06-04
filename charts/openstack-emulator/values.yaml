@@ -1,0 +1,127 @@
+# Default values for openstack-emulator.
+
+image:
+  repository: opennode/openstack-emulator
+  # Tag left empty so it falls back to .Chart.AppVersion ("latest" today).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Always 1 — the emulator keeps state in memory and is not horizontally scalable.
+replicaCount: 1
+
+# Optional preset to seed the emulator with sample resources on startup.
+# Built-in names: development, production, enterprise, microservices, multi-tier, stress-test, empty.
+preset:
+  name: ""
+
+# Mount a custom preset YAML via a ConfigMap. Overrides preset.name when enabled.
+customPreset:
+  enabled: false
+  yaml: ""
+
+# Verbosity passed to --log-level. One of: debug, info, warning, error.
+logLevel: info
+
+# Optional persistence. Off by default because the demo/sandbox use case is ephemeral.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  autoSave: true
+  # Inside the container.
+  path: /data/emulator-db.json
+
+service:
+  type: ClusterIP
+  annotations: {}
+  # All 9 emulator ports are always exposed on the Service. The emulator
+  # binds all of them from a single process; individual disable is not supported.
+
+# Ingress is off by default. The emulator ships hardcoded admin credentials
+# (admin / s4l4dus) and should not be exposed publicly without a fronting proxy.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Each host targets a single emulator port. Example:
+  # hosts:
+  #   - host: openstack-emulator.example.com
+  #     paths:
+  #       - path: /
+  #         pathType: Prefix
+  #         port: 5000
+  hosts: []
+  tls: []
+
+# Optional Gateway API (gateway.networking.k8s.io/v1) HTTPRoute, off by default.
+# Same security caveat as ingress.
+gatewayApi:
+  enabled: false
+  # When createGateway: true, the chart renders a Gateway resource the HTTPRoute
+  # attaches to. Useful in clusters without a pre-existing shared Gateway (kind,
+  # throwaway test envs). In production, leave it false and point parentRefs at
+  # an existing cluster Gateway.
+  createGateway: false
+  gateway:
+    # Required when createGateway: true. e.g. "envoy", "istio", "cilium".
+    gatewayClassName: ""
+    listenerName: http
+    listenerPort: 80
+    listenerProtocol: HTTP
+  # parentRefs the HTTPRoute attaches to. Auto-derived to the chart-created
+  # Gateway when createGateway: true. Required otherwise. Example:
+  # parentRefs:
+  #   - name: my-gateway
+  #     namespace: gateway-system
+  parentRefs: []
+  # Hostnames the HTTPRoute matches.
+  hostnames: []
+  # Rules, each routing matched paths to one emulator port. Example:
+  # rules:
+  #   - matches:
+  #       - path:
+  #           type: PathPrefix
+  #           value: /
+  #     port: 5000
+
+resources:
+  # Sized for the demo case: idle FastAPI process with JSON in-memory state is
+  # typically ~80-120 MiB resident; spikes briefly during preset load.
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 384Mi
+
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Escape hatch for additional CLI flags appended verbatim to the container args.
+extraArgs: []

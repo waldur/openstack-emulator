@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openstack-emulator.fullname" . }}
+  labels:
+    {{- include "openstack-emulator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "openstack-emulator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "openstack-emulator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: emulator
+          image: "{{ .Values.image.repository }}:{{ include "openstack-emulator.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - openstack-emulator
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--log-level"
+            - {{ .Values.logLevel | quote }}
+            {{- if .Values.customPreset.enabled }}
+            - "--preset-file"
+            - "/etc/openstack-emulator/preset.yaml"
+            {{- else if .Values.preset.name }}
+            - "--preset"
+            - {{ .Values.preset.name | quote }}
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - "--persist-db"
+            - {{ .Values.persistence.path | quote }}
+            {{- if .Values.persistence.autoSave }}
+            - "--auto-save"
+            {{- end }}
+            {{- end }}
+            {{- range .Values.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: keystone
+              containerPort: 5000
+              protocol: TCP
+            - name: nova
+              containerPort: 8774
+              protocol: TCP
+            - name: cinder
+              containerPort: 8776
+              protocol: TCP
+            - name: placement
+              containerPort: 8778
+              protocol: TCP
+            - name: glance
+              containerPort: 9292
+              protocol: TCP
+            - name: neutron
+              containerPort: 9696
+              protocol: TCP
+            - name: octavia
+              containerPort: 9876
+              protocol: TCP
+            - name: status
+              containerPort: 10000
+              protocol: TCP
+            - name: scenarios
+              containerPort: 8999
+              protocol: TCP
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: keystone
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: keystone
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or .Values.customPreset.enabled .Values.persistence.enabled }}
+          volumeMounts:
+            {{- if .Values.customPreset.enabled }}
+            - name: preset
+              mountPath: /etc/openstack-emulator
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ include "openstack-emulator.persistence.dir" . }}
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.customPreset.enabled .Values.persistence.enabled }}
+      volumes:
+        {{- if .Values.customPreset.enabled }}
+        - name: preset
+          configMap:
+            name: {{ include "openstack-emulator.fullname" . }}-preset
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "openstack-emulator.fullname" . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
