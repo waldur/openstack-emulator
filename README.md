@@ -30,6 +30,19 @@ uv pip install -e .
 pip install -e ".[dev]"
 ```
 
+### Run on Kubernetes (via Helm)
+
+A published Helm chart deploys the emulator as a single-replica `Deployment` + `ClusterIP` Service that exposes all nine ports. Consumers in the same cluster reach Keystone at `http://<release>-openstack-emulator.<ns>.svc.cluster.local:5000/v3` with the admin/`s4l4dus`/`Default` credentials.
+
+```bash
+helm repo add openstack-emulator https://waldur.github.io/openstack-emulator/
+helm install ose openstack-emulator/openstack-emulator \
+  --namespace ose --create-namespace --version 0.0.1
+helm test ose -n ose      # curls /health on the five main service ports
+```
+
+See [`docs/kubernetes.md`](docs/kubernetes.md) for the full operator guide (presets, persistence, Ingress, Gateway API, troubleshooting). The chart source lives at [`charts/openstack-emulator/`](charts/openstack-emulator) — also installable from disk via `helm install ose ./charts/openstack-emulator`.
+
 ### Running
 
 ```bash
@@ -72,6 +85,7 @@ Once running, access Swagger UI at:
 ## Documentation
 
 - [Usage Guide](docs/usage.md) - Detailed usage instructions
+- [Kubernetes Deployment Guide](docs/kubernetes.md) - Helm chart install + cross-namespace use + Ingress/Gateway API
 - [API Examples](docs/api-examples.md) - curl and SDK examples
 - [Scenario Injection](docs/scenarios.md) - Failure testing guide
 - [Architecture](docs/architecture/) - System design documentation
@@ -85,19 +99,45 @@ Once running, access Swagger UI at:
 openstack-emulator/
 ├── emulator/
 │   ├── api/           # REST API routes
-│   └── core/          # Business logic and models
-├── tests/             # Test suite
-├── docs/              # Documentation
-├── CLAUDE.md          # Development guide
+│   ├── core/          # Business logic and models
+│   └── presets/       # Built-in preset YAMLs (development, production, …)
+├── charts/
+│   └── openstack-emulator/  # Helm chart published to GitHub Pages
+├── scripts/
+│   ├── release.py     # Tag-driven release helper (status / check / release X.Y.Z)
+│   └── check-api-compliance.sh  # OpenStack API compliance comparison
+├── tests/             # Python test suite
+├── docs/              # User-facing documentation
+├── .gitlab-ci.yml     # CI: linters, tests, helm lint, chart publish, docker publish
+├── CLAUDE.md          # Development guide for AI assistants
 └── README.md
 ```
 
 ## Running Tests
 
 ```bash
-pytest
-pytest --cov=emulator --cov-report=html
+uv run pytest
+uv run pytest --cov=emulator --cov-report=html
 ```
+
+## Releasing
+
+Releases are tag-driven. Pushing a `X.Y.Z` tag triggers GitLab CI to:
+
+- Run the full Python test matrix (3.10–3.13), linters, type checks, and `helm lint` + `helm unittest`
+- Package the chart and push `charts/openstack-emulator-X.Y.Z.tgz` + an updated `index.yaml` to the `gh-pages` branch of the GitHub mirror at [github.com/waldur/openstack-emulator](https://github.com/waldur/openstack-emulator)
+- GitHub Pages serves the branch at <https://waldur.github.io/openstack-emulator/>, where `helm repo add` consumers pick up the new version
+
+The [`scripts/release.py`](scripts/release.py) helper bundles the version bump + checks + tag + push:
+
+```bash
+uv run scripts/release.py status                   # show current versions + recent tags
+uv run scripts/release.py check                    # run the same gates CI runs (fast subset)
+uv run scripts/release.py version-update 0.2.0     # bump pyproject.toml + Chart.yaml only
+uv run scripts/release.py release 0.2.0            # bump → check → commit → tag → (confirm) push
+```
+
+The release script keeps `pyproject.toml`'s `[project].version` and `charts/openstack-emulator/Chart.yaml`'s `version:` in lockstep. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned.
 
 ## Limitations
 
