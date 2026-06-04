@@ -2,6 +2,12 @@ include:
   - project: "waldur/waldur-pipelines"
     file: "/templates/stages.yml"
   - project: "waldur/waldur-pipelines"
+    file: "/templates/test/check-merge-compatibility.yml"
+  # NOTE: /templates/test/lint-md-files.yml not included — the existing
+  # docs/{api-compliance,architecture/*,scenarios,usage}.md files have
+  # hundreds of pre-existing MD009/MD022/MD032/MD034/MD040 violations.
+  # Add the include once those are cleaned up as a separate pass.
+  - project: "waldur/waldur-pipelines"
     file: "/templates/release/publish-multiarch.yml"
 
 variables:
@@ -53,6 +59,43 @@ Run tests v3.12:
 Run tests v3.13:
   extends: .test-base
   image: registry.hpc.ut.ee/mirror/library/python:3.13-bullseye
+
+Lint Helm chart:
+  image:
+    name: "registry.hpc.ut.ee/mirror/alpine/helm:3.12.3"
+    entrypoint: [""]
+  stage: test
+  interruptible: true
+  rules:
+    - if: '$SKIP_TESTS == "true" || $SKIP_TESTS == "yes"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: $CI_COMMIT_TAG
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - charts/openstack-emulator/**/*
+        - .gitlab-ci.yml
+  before_script:
+    - helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v0.8.2
+  script:
+    - helm lint charts/openstack-emulator/
+    - helm unittest charts/openstack-emulator/
+    # Render the default install and every optional-feature variant — failures here
+    # catch templating regressions (missing values, invalid go-template, wrong indent).
+    - mkdir -p rendered-templates/default && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/default --debug
+    - mkdir -p rendered-templates/preset && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/preset --set preset.name=development
+    # customPreset.yaml is a placeholder body — chart templating doesn't validate preset schema.
+    - mkdir -p rendered-templates/customPreset && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/customPreset --set customPreset.enabled=true --set-string customPreset.yaml=placeholder
+    - mkdir -p rendered-templates/persistence && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/persistence --set persistence.enabled=true
+    - mkdir -p rendered-templates/ingress && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/ingress --set ingress.enabled=true --set 'ingress.hosts[0].host=ose.example.com' --set 'ingress.hosts[0].paths[0].path=/' --set 'ingress.hosts[0].paths[0].pathType=Prefix' --set 'ingress.hosts[0].paths[0].port=10000'
+    - mkdir -p rendered-templates/gatewayApi && helm template ose charts/openstack-emulator/ --output-dir rendered-templates/gatewayApi --set gatewayApi.enabled=true --set gatewayApi.createGateway=true --set gatewayApi.gateway.gatewayClassName=envoy --set 'gatewayApi.hostnames[0]=ose.example.com' --set 'gatewayApi.rules[0].matches[0].path.type=PathPrefix' --set 'gatewayApi.rules[0].matches[0].path.value=/' --set 'gatewayApi.rules[0].port=10000'
+  artifacts:
+    expire_in: 1 week
+    when: always
+    paths:
+      - rendered-templates
 
 Publish latest docker image:
   stage: release

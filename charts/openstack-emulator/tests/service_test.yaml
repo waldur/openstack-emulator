@@ -1,0 +1,58 @@
+suite: service ports and type
+templates:
+  - templates/service.yaml
+
+tests:
+  - it: defaults to ClusterIP
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: respects service.type override
+    set:
+      service.type: NodePort
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+
+  - it: exposes all nine ports by name with matching targetPort symbol
+    asserts:
+      - contains:
+          path: spec.ports
+          content: { name: keystone, port: 5000, targetPort: keystone, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: nova, port: 8774, targetPort: nova, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: cinder, port: 8776, targetPort: cinder, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: placement, port: 8778, targetPort: placement, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: glance, port: 9292, targetPort: glance, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: neutron, port: 9696, targetPort: neutron, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: octavia, port: 9876, targetPort: octavia, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: status, port: 10000, targetPort: status, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: scenarios, port: 8999, targetPort: scenarios, protocol: TCP }
+
+  - it: merges service.annotations
+    set:
+      service.annotations:
+        cloud.example.com/lb: "external"
+    asserts:
+      - equal:
+          path: metadata.annotations
+          value:
+            cloud.example.com/lb: "external"

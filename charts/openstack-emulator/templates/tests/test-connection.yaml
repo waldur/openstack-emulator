@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "openstack-emulator.fullname" . }}-test-connection
+  labels:
+    {{- include "openstack-emulator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.10.1
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          echo "Probing /health on keystone, nova, glance, neutron, cinder..."
+          for port in 5000 8774 9292 9696 8776; do
+            url="http://{{ include "openstack-emulator.fullname" . }}:${port}/health"
+            echo "GET ${url}"
+            curl -fsS --max-time 5 "${url}" | grep -q '"status":"healthy"' \
+              || { echo "FAIL: ${url}"; exit 1; }
+          done
+          echo "All health endpoints healthy."

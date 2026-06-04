@@ -1,0 +1,39 @@
+The OpenStack emulator is running in namespace {{ .Release.Namespace | quote }}.
+
+In-cluster URLs (use these from other namespaces too):
+  Keystone:  http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:5000/v3
+  Nova:      http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:8774
+  Glance:    http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:9292
+  Neutron:   http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:9696
+  Cinder:    http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:8776
+  Status UI: http://{{ include "openstack-emulator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:10000
+
+Hardcoded admin credentials (NOT configurable — see emulator/core/database.py):
+  username:    admin
+  password:    s4l4dus
+  tenant:      admin
+  domain:      Default
+
+Quick smoke test from your laptop:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "openstack-emulator.fullname" . }} 5000:5000
+  curl http://localhost:5000/health
+
+Confirm with `helm test`:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+For deployment details (presets, persistence, ingress, Gateway API), see:
+  docs/kubernetes.md
+
+{{- if .Values.ingress.enabled }}
+
+Ingress rules:
+{{- range .Values.ingress.hosts }}
+  - http://{{ .host }}
+{{- end }}
+{{- end }}
+
+{{- if not (or .Values.preset.name .Values.customPreset.enabled) }}
+
+No preset is loaded — the emulator starts empty. Set `preset.name=development`
+(or another built-in) or enable `customPreset` to seed sample resources.
+{{- end }}

@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openstack-emulator.fullname" . }}
+  labels:
+    {{- include "openstack-emulator.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "openstack-emulator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: keystone
+      port: 5000
+      targetPort: keystone
+      protocol: TCP
+    - name: nova
+      port: 8774
+      targetPort: nova
+      protocol: TCP
+    - name: cinder
+      port: 8776
+      targetPort: cinder
+      protocol: TCP
+    - name: placement
+      port: 8778
+      targetPort: placement
+      protocol: TCP
+    - name: glance
+      port: 9292
+      targetPort: glance
+      protocol: TCP
+    - name: neutron
+      port: 9696
+      targetPort: neutron
+      protocol: TCP
+    - name: octavia
+      port: 9876
+      targetPort: octavia
+      protocol: TCP
+    - name: status
+      port: 10000
+      targetPort: status
+      protocol: TCP
+    - name: scenarios
+      port: 8999
+      targetPort: scenarios
+      protocol: TCP
