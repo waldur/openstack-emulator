@@ -1,0 +1,69 @@
+suite: ingress
+templates:
+  - templates/ingress.yaml
+
+tests:
+  - it: is not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders one rule per host with the selected port
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - host: keystone.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+              port: 5000
+        - host: status.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+              port: 10000
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: Ingress
+      - equal:
+          path: spec.rules[0].host
+          value: keystone.example.com
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 5000
+      - equal:
+          path: spec.rules[1].host
+          value: status.example.com
+      - equal:
+          path: spec.rules[1].http.paths[0].backend.service.port.number
+          value: 10000
+
+  - it: sets ingressClassName and annotations and tls when supplied
+    set:
+      ingress.enabled: true
+      ingress.className: nginx
+      ingress.annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      ingress.tls:
+        - secretName: ose-tls
+          hosts:
+            - ose.example.com
+      ingress.hosts:
+        - host: ose.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+              port: 5000
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: "nginx"
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: letsencrypt
+      - equal:
+          path: spec.tls[0].secretName
+          value: ose-tls

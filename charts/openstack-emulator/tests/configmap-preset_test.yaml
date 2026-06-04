@@ -1,0 +1,31 @@
+suite: customPreset ConfigMap
+templates:
+  - templates/configmap-preset.yaml
+
+tests:
+  - it: is not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: is not rendered when customPreset.enabled is false even if yaml is set
+    set:
+      customPreset.enabled: false
+      customPreset.yaml: "name: x\ndescription: y\n"
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: is rendered with the supplied yaml when enabled
+    set:
+      customPreset.enabled: true
+      customPreset.yaml: "name: custom\ndescription: y\n"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ConfigMap
+      - matchRegex:
+          path: data["preset.yaml"]
+          pattern: "name: custom"

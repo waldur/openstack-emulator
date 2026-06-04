@@ -1,0 +1,179 @@
+suite: deployment args, mounts, and image
+templates:
+  - templates/deployment.yaml
+
+tests:
+  - it: uses the openstack-emulator entrypoint explicitly (Dockerfile only sets CMD)
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value:
+            - openstack-emulator
+
+  - it: emits baseline args (--host, --log-level) without optional flags
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - "--host"
+            - "0.0.0.0"
+            - "--log-level"
+            - "info"
+
+  - it: appends --preset when preset.name is set
+    set:
+      preset.name: development
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--preset"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "development"
+
+  - it: customPreset overrides preset.name and uses --preset-file
+    set:
+      preset.name: development
+      customPreset.enabled: true
+      customPreset.yaml: "name: x\ndescription: y\n"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--preset-file"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "/etc/openstack-emulator/preset.yaml"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--preset"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "development"
+
+  - it: mounts the preset ConfigMap when customPreset is enabled
+    set:
+      customPreset.enabled: true
+      customPreset.yaml: "name: x\ndescription: y\n"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: preset
+            mountPath: /etc/openstack-emulator
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: preset
+            configMap:
+              name: RELEASE-NAME-openstack-emulator-preset
+
+  - it: appends --persist-db and --auto-save when persistence.enabled
+    set:
+      persistence.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--persist-db"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "/data/emulator-db.json"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--auto-save"
+
+  - it: omits --auto-save when persistence.autoSave is false
+    set:
+      persistence.enabled: true
+      persistence.autoSave: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--auto-save"
+
+  - it: mounts the PVC at the directory of persistence.path
+    set:
+      persistence.enabled: true
+      persistence.path: /var/lib/emulator/db.json
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: data
+            mountPath: /var/lib/emulator
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            persistentVolumeClaim:
+              claimName: RELEASE-NAME-openstack-emulator
+
+  - it: appends extraArgs verbatim
+    set:
+      extraArgs:
+        - "--port-offset"
+        - "1000"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--port-offset"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "1000"
+
+  - it: defaults image tag to .Chart.AppVersion when image.tag is empty
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "opennode/openstack-emulator:latest"
+
+  - it: respects image.tag override
+    set:
+      image.tag: "0.2.0"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "opennode/openstack-emulator:0.2.0"
+
+  - it: probes target the keystone port and /health
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet
+          value:
+            path: /health
+            port: keystone
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet
+          value:
+            path: /health
+            port: keystone
+
+  - it: declares all nine emulator ports with stable names
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: keystone, containerPort: 5000, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: nova, containerPort: 8774, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: cinder, containerPort: 8776, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: placement, containerPort: 8778, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: glance, containerPort: 9292, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: neutron, containerPort: 9696, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: octavia, containerPort: 9876, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: status, containerPort: 10000, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: scenarios, containerPort: 8999, protocol: TCP }
