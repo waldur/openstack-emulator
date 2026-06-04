@@ -1,6 +1,6 @@
-# Deploying the OpenStack Emulator on Kubernetes (next to Waldur)
+# Deploying the OpenStack Emulator on Kubernetes
 
-This guide walks an operator through deploying the OpenStack Emulator into a Kubernetes cluster alongside an existing [Waldur](https://waldur.com/) installation and registering it as an **OpenStack Tenant** offering. At the end you have a pod serving fake Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement endpoints inside the cluster, reachable from Waldur via in-cluster DNS, and an offering through which Waldur users can order "OpenStack" tenants that talk to the emulator instead of a real cloud.
+This guide walks an operator through deploying the OpenStack Emulator into a Kubernetes cluster as a sandbox OpenStack backend that other workloads (CI runners, integration tests, demo platforms, OpenStack clients under development) can target via in-cluster DNS.
 
 **Scope:** demo / sandbox / CI environments. The emulator ships with hardcoded admin credentials and is not safe to expose on the public internet — see [Limitations](#limitations) below.
 
@@ -11,13 +11,12 @@ This guide walks an operator through deploying the OpenStack Emulator into a Kub
 | `kubectl` | 1.30+ | Talking to the cluster |
 | `helm` | 3.14+ | Installing the chart |
 | A running cluster | k8s 1.27+ | Anywhere from kind to a managed cloud cluster |
-| A running Waldur deployment | any | See [waldur-helm](https://code.opennodecloud.com/waldur/waldur-helm) |
 
-The emulator pod and the Waldur namespace must be able to reach each other on the cluster network. The default Kubernetes setup (no `NetworkPolicy` lockdown) is enough; if your cluster denies cross-namespace traffic by default, you will need to add a policy or co-locate the namespaces.
+If your cluster denies cross-namespace traffic by default, allow it explicitly with a `NetworkPolicy` or co-locate the consumer workload with the emulator namespace.
 
 ## Step 1 — Install the chart
 
-The chart lives at [`charts/openstack-emulator/`](../charts/openstack-emulator) in this repo. Clone the repo and install directly from disk:
+The chart lives at [`charts/openstack-emulator/`](../charts/openstack-emulator) in this repo. Clone and install from disk:
 
 ```bash
 git clone https://code.opennodecloud.com/waldur/openstack-emulator.git
@@ -99,9 +98,9 @@ openstack network list
 
 (Stop the port-forward with `kill %1` when you're done.)
 
-## Step 3 — Verify cross-namespace reachability from Waldur's namespace
+## Step 3 — Use the in-cluster endpoint from another workload
 
-The emulator is exposed as a `ClusterIP` Service. Waldur reaches it via in-cluster DNS:
+Other workloads reach the emulator via in-cluster DNS:
 
 ```text
 http://openstack-emulator.<emulator-namespace>.svc.cluster.local:5000/v3
@@ -109,46 +108,48 @@ http://openstack-emulator.<emulator-namespace>.svc.cluster.local:5000/v3
 
 Substitute the namespace you installed into (e.g. `ose`). If your release name differs from the chart name, the Service name becomes `<release>-openstack-emulator` — `kubectl get svc -n <ns>` always shows the real name.
 
-Sanity check from a throwaway pod *in a different namespace* (simulates Waldur's pod):
+A consumer Pod sets the standard `OS_*` env block to that URL and uses the hardcoded admin credentials:
+
+```yaml
+env:
+  - name: OS_AUTH_URL
+    value: http://openstack-emulator.ose.svc.cluster.local:5000/v3
+  - name: OS_USERNAME
+    value: admin
+  - name: OS_PASSWORD
+    value: s4l4dus
+  - name: OS_PROJECT_NAME
+    value: admin
+  - name: OS_USER_DOMAIN_NAME
+    value: Default
+  - name: OS_PROJECT_DOMAIN_NAME
+    value: Default
+  - name: OS_IDENTITY_API_VERSION
+    value: "3"
+```
+
+Sanity check from a throwaway pod *in a different namespace* (simulates the consumer):
 
 ```bash
-kubectl run -n <waldur-namespace> curlcheck --restart=Never \
+kubectl create ns consumer
+kubectl run -n consumer curlcheck --restart=Never \
   --image=curlimages/curl:8.10.1 --command -- \
   sh -c 'curl -fsS http://openstack-emulator.ose.svc.cluster.local:5000/health'
 
-kubectl -n <waldur-namespace> logs curlcheck
+kubectl -n consumer logs curlcheck
 # {"status":"healthy","service":"keystone"}
 
-kubectl -n <waldur-namespace> delete pod curlcheck
+kubectl -n consumer delete pod curlcheck
+kubectl delete ns consumer
 ```
 
-If this returns anything other than `"healthy"`, fix the URL before continuing — Waldur's "Discover credentials" will fail the same way.
+If this returns anything other than `"healthy"`, fix the URL before pointing real consumers at it.
 
-## Step 4 — Register the emulator in Waldur
+### Service catalog follows the request hostname
 
-Open the Waldur web UI as a staff user.
+The emulator's Keystone derives the service-catalog endpoint URLs from the request's `Host` header — so a token request to `http://openstack-emulator.ose.svc.cluster.local:5000/v3/auth/tokens` returns catalog entries like `http://openstack-emulator.ose.svc.cluster.local:8774/v2.1` (Nova), `http://openstack-emulator.ose.svc.cluster.local:9696` (Neutron), and so on. OpenStack clients (`openstacksdk`, `python-novaclient`, etc.) that follow the catalog therefore work without any extra configuration once they reach Keystone via the in-cluster Service DNS.
 
-1. **Marketplace → Offerings → Create offering.**
-   - **Category:** any (e.g. *HPC*, *Cloud*).
-   - **Offering type:** **OpenStack Tenant**.
-   - Fill in name/description as you like.
-2. **Open the new offering → Edit → Credentials → Discover credentials.** Fill in:
-
-   | Field | Value |
-   |---|---|
-   | Auth URL | `http://openstack-emulator.<emulator-namespace>.svc.cluster.local:5000/v3` |
-   | Username | `admin` |
-   | Password | `s4l4dus` |
-   | Tenant name | `admin` |
-   | Domain name | `Default` |
-
-   Waldur queries Keystone to enumerate flavors, images, and networks. The button should turn green and the offering should populate with the seeded resources.
-3. **Publish** the offering and **unpause** it from the offerings list.
-4. **Sanity-check end-to-end.** As a Waldur member or project manager, create a project and order a resource against the new offering. The order should transition through `Pending → Executing → Done`. The emulator will record the tenant on its side and you can inspect it via the Status UI on port 10000 (port-forward as in Step 2).
-
-> The exact UI labels above match a current Waldur build. Field names may drift over time — when in doubt, the fixture in `waldur-integration-testing/tests/test_openstack_provisioning.py` is the authoritative reference for what Waldur expects.
-
-## Step 5 (optional) — Expose the Status UI
+## Step 4 (optional) — Expose externally
 
 The Status UI lives on port 10000 and is convenient for poking at emulator state during a demo. The chart supports either Ingress or Gateway API; pick whichever your cluster already runs. **Only expose on a trusted network** — the emulator's hardcoded admin credentials are still in play.
 
@@ -206,9 +207,9 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 Without those CRDs, `helm upgrade` will fail to apply the `Gateway`/`HTTPRoute` objects.
 
-## Step 6 (optional) — Failure injection
+## Step 5 (optional) — Failure injection
 
-The emulator ships a Scenarios API on port 8999 that injects HTTP failures into selected endpoints — useful for testing Waldur's error paths. Reach it the same way as any other emulator port:
+The emulator ships a Scenarios API on port 8999 that injects HTTP failures into selected endpoints — useful for testing consumer error paths. Reach it the same way as any other emulator port:
 
 ```text
 http://openstack-emulator.<ns>.svc.cluster.local:8999
@@ -231,17 +232,17 @@ If you only `helm uninstall` and keep the namespace, the PVC stays — delete it
 - **Hardcoded credentials.** `admin` / `s4l4dus`, project `admin`, domain `Default` — not configurable, see [`emulator/core/database.py`](../emulator/core/database.py). Do not expose the Service publicly without an authenticating proxy.
 - **No upgrade safety for persisted state.** Switching the emulator image to a newer version while `persistence.enabled=true` may break the on-disk JSON schema. For non-throwaway use, drain the PVC before image upgrades.
 - **ConfigMap updates don't restart the pod.** If you change `customPreset.yaml` after install, `helm upgrade` updates the ConfigMap but the running pod keeps the old preset. Force a restart with `kubectl -n ose rollout restart deploy/openstack-emulator` to pick up the new content.
-- **Not a substitute for real OpenStack.** The emulator implements *enough* of each API for Waldur's provisioning flows; many operations (e.g. live migration, real block storage attach) are stubs that return success without doing anything.
+- **Not a substitute for real OpenStack.** The emulator implements *enough* of each API for typical client flows; many operations (e.g. live migration, real block storage attach) are stubs that return success without doing anything.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `helm test` Pod fails with `connection refused` | Pod still starting up | Re-run `helm test` after `kubectl -n ose wait --for=condition=available deploy/openstack-emulator --timeout=120s` |
-| Waldur "Discover credentials" hangs | Wrong namespace in the URL | `kubectl get svc -A` to find the actual Service, then rebuild the URL as `<svc>.<ns>.svc.cluster.local:5000/v3` |
+| Consumer can't resolve the emulator URL | Wrong namespace in the URL | `kubectl get svc -A` to find the actual Service, then rebuild the URL as `<svc>.<ns>.svc.cluster.local:5000/v3` |
 | Pod `CrashLoopBackOff` with `Failed to load preset` | `customPreset.yaml` missing required `name:` / `description:` top-level fields | Mirror one of the files in [`emulator/presets/`](../emulator/presets); update the value; `helm upgrade`; `kubectl rollout restart` |
 | `helm install` times out at "wait for deployment" | Image pull failed (typo in tag or registry not reachable) | `kubectl -n ose describe pod` — fix the image reference and `helm upgrade` |
-| Waldur can reach the URL but no resources discovered | Emulator started with the `empty` preset (or no preset) | Re-deploy with `--set preset.name=development` (or another non-empty preset) |
+| OpenStack client can reach Keystone but other services fail | Client cached an older catalog from before in-cluster install | Re-authenticate (request a new token); the catalog will pick up the current `Host` header |
 | `helm upgrade` errors on Gateway/HTTPRoute "no matches for kind" | Gateway API CRDs not installed | `kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml`, then re-run the upgrade |
 | `Gateway` shows `PROGRAMMED: Unknown` indefinitely | No Gateway API controller in the cluster for the picked `gatewayClassName` | Install a controller (Envoy Gateway, Istio, Cilium…) or change `gatewayClassName` to one already present |
 

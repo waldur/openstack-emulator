@@ -21,8 +21,8 @@ Quick smoke test from your laptop:
 Confirm with `helm test`:
   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
 
-To register the emulator as an OpenStack Tenant offering in Waldur, follow the
-"Register the emulator in Waldur" section of openstack-emulator/docs/kubernetes.md.
+For deployment details (presets, persistence, ingress, Gateway API), see:
+  docs/kubernetes.md
 
 {{- if .Values.ingress.enabled }}
 

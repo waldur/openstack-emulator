@@ -2,7 +2,7 @@
 
 Deploys the [OpenStack Emulator](https://code.opennodecloud.com/waldur/openstack-emulator) — a lightweight FastAPI-based stand-in for Keystone, Nova, Cinder, Glance, Neutron, Octavia, and Placement — into a Kubernetes cluster.
 
-Primary use case: running next to a [Waldur](https://waldur.com/) deployment as a sandbox OpenStack backend for demos, exploratory testing, or failure-injection scenarios. See [`docs/kubernetes.md`](../../docs/kubernetes.md) in the same repo for the full deployment + Waldur integration walkthrough.
+Primary use case: a sandbox OpenStack backend for demos, exploratory testing, integration tests of OpenStack clients, or failure-injection scenarios — without standing up real OpenStack. See [`docs/kubernetes.md`](../../docs/kubernetes.md) in the same repo for the full deployment guide.
 
 ## TL;DR
 
@@ -43,11 +43,11 @@ Hardcoded credentials: `admin` / `s4l4dus`, project `admin`, domain `Default`.
 
 - Single replica only — multi-replica deployments cause incoherent state.
 - Admin credentials are baked into the image (`emulator/core/database.py`); the chart does not pretend otherwise.
-- Do not enable `ingress` without an authenticating proxy in front. Static admin/password on the public internet is a credential leak by design.
+- Do not enable `ingress` or `gatewayApi` without an authenticating proxy in front. Static admin/password on the public internet is a credential leak by design.
 - Persistence is a single JSON file; switching emulator versions may break the on-disk schema.
 
 ## See also
 
-- [`../../docs/kubernetes.md`](../../docs/kubernetes.md) — Full deployment + Waldur integration guide.
+- [`../../docs/kubernetes.md`](../../docs/kubernetes.md) — Full deployment guide (kind-tested).
 - [`../../docs/scenarios.md`](../../docs/scenarios.md) — Failure injection API on port 8999.
-- [`../../README.md`](../../README.md) — Emulator overview, OS_* env vars, CLI flags.
+- [`../../README.md`](../../README.md) — Emulator overview, CLI flags, OS_* env block.
