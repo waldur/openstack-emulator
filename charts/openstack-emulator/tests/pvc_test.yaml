@@ -1,0 +1,45 @@
+suite: persistence PVC
+templates:
+  - templates/pvc.yaml
+
+tests:
+  - it: is not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders with default size and access mode when enabled
+    set:
+      persistence.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: PersistentVolumeClaim
+      - equal:
+          path: spec.resources.requests.storage
+          value: "1Gi"
+      - contains:
+          path: spec.accessModes
+          content: ReadWriteOnce
+      - notExists:
+          path: spec.storageClassName
+
+  - it: respects size, accessModes, and storageClass overrides
+    set:
+      persistence.enabled: true
+      persistence.size: "5Gi"
+      persistence.accessModes:
+        - ReadWriteMany
+      persistence.storageClass: "fast-ssd"
+    asserts:
+      - equal:
+          path: spec.resources.requests.storage
+          value: "5Gi"
+      - contains:
+          path: spec.accessModes
+          content: ReadWriteMany
+      - equal:
+          path: spec.storageClassName
+          value: "fast-ssd"

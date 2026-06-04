@@ -1,0 +1,126 @@
+suite: Gateway API (Gateway + HTTPRoute)
+templates:
+  - templates/gateway.yaml
+  - templates/httproute.yaml
+
+tests:
+  - it: neither resource renders by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: only HTTPRoute renders when enabled with external parentRefs
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.parentRefs:
+        - name: shared-gateway
+          namespace: gateway-system
+      gatewayApi.hostnames:
+        - ose.example.com
+    template: templates/httproute.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: HTTPRoute
+      - equal:
+          path: spec.parentRefs[0]
+          value:
+            name: shared-gateway
+            namespace: gateway-system
+      - contains:
+          path: spec.hostnames
+          content: ose.example.com
+
+  - it: Gateway is not rendered when only HTTPRoute is requested
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.parentRefs:
+        - name: shared-gateway
+          namespace: gateway-system
+    template: templates/gateway.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: createGateway requires gatewayClassName
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.createGateway: true
+    template: templates/gateway.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "gatewayApi.gateway.gatewayClassName is required when createGateway is true"
+
+  - it: renders both Gateway and HTTPRoute when createGateway is true
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.createGateway: true
+      gatewayApi.gateway.gatewayClassName: envoy
+      gatewayApi.hostnames:
+        - ose.example.com
+    template: templates/gateway.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: Gateway
+      - equal:
+          path: spec.gatewayClassName
+          value: "envoy"
+      - equal:
+          path: spec.listeners[0].port
+          value: 80
+      - equal:
+          path: spec.listeners[0].protocol
+          value: "HTTP"
+      - equal:
+          path: spec.listeners[0].allowedRoutes.namespaces.from
+          value: Same
+
+  - it: HTTPRoute auto-points at the chart-created Gateway with sectionName
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.createGateway: true
+      gatewayApi.gateway.gatewayClassName: envoy
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.parentRefs[0].name
+          value: RELEASE-NAME-openstack-emulator
+      - equal:
+          path: spec.parentRefs[0].sectionName
+          value: "http"
+
+  - it: defaults to a single rule pointing at keystone:5000 when no rules are given
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.parentRefs:
+        - name: shared-gateway
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].backendRefs[0].port
+          value: 5000
+      - equal:
+          path: spec.rules[0].matches[0].path.value
+          value: "/"
+
+  - it: respects custom rules with per-rule port
+    set:
+      gatewayApi.enabled: true
+      gatewayApi.parentRefs:
+        - name: shared-gateway
+      gatewayApi.rules:
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /
+          port: 10000
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].backendRefs[0].port
+          value: 10000

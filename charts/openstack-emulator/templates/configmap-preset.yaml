@@ -1,0 +1,11 @@
+{{- if .Values.customPreset.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openstack-emulator.fullname" . }}-preset
+  labels:
+    {{- include "openstack-emulator.labels" . | nindent 4 }}
+data:
+  preset.yaml: |-
+    {{- .Values.customPreset.yaml | nindent 4 }}
+{{- end }}
