@@ -297,8 +297,33 @@ def delete_network(self, network_id: str) -> bool:
 - Timestamps: ISO 8601 format (`2024-01-15T10:30:00Z`)
 - UUIDs for all resource IDs
 
+## Helm chart and release pipeline
+
+The emulator ships a Helm chart at `charts/openstack-emulator/`, published to GitHub Pages at <https://waldur.github.io/openstack-emulator/>. When you change the runtime in a way that affects deployment — adding a port, changing a default flag, introducing a new env var — update the chart in lockstep:
+
+1. **Adding a new service port:** declare it as a named container port in `charts/openstack-emulator/templates/deployment.yaml`, expose it on `service.yaml`, and add a `helm-unittest` assertion in `charts/openstack-emulator/tests/deployment_test.yaml` and `service_test.yaml`.
+2. **New CLI flag or config knob:** surface it in `charts/openstack-emulator/values.yaml` with a sane default, wire it into the deployment's `args:`, and add a test case under `charts/openstack-emulator/tests/`.
+3. **Run the chart linters locally:**
+
+   ```bash
+   helm lint charts/openstack-emulator
+   helm unittest charts/openstack-emulator
+   helm template ose charts/openstack-emulator/ --debug | less
+   ```
+
+4. **Releasing:** push a `X.Y.Z` tag. CI runs the test matrix + chart linters, then publishes a packaged `.tgz` to the `gh-pages` branch on the GitHub mirror. Use the helper:
+
+   ```bash
+   uv run scripts/release.py status            # current versions + recent tags
+   uv run scripts/release.py check             # local pre-release gates (ruff/mypy/helm)
+   uv run scripts/release.py release X.Y.Z     # bump, check, commit, tag, optionally push
+   ```
+
+   The script bumps both `pyproject.toml`'s `[project].version` and `charts/openstack-emulator/Chart.yaml`'s `version:`. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned.
+
 ## Related Documentation
 
 - [Architecture](./architecture/) - System design
 - [Tenant Isolation](./architecture/tenant-isolation.md) - Multi-tenancy patterns
 - [Data Models](./architecture/data-models.md) - Model definitions
+- [Kubernetes Deployment](./kubernetes.md) - Operator-facing chart install guide

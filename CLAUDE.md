@@ -17,16 +17,20 @@ docs/
 │   ├── data-models.md      # Data model definitions
 │   └── tenant-isolation.md # Multi-tenancy documentation
 ├── development.md          # Development guide (code style, adding services)
+├── kubernetes.md           # Helm chart install + operator guide
 ├── usage.md                # Usage guide
 ├── api-examples.md         # API examples (curl, SDK)
 └── scenarios.md            # Failure injection guide
 ```
+
+The Helm chart lives at `charts/openstack-emulator/` (Chart.yaml + values.yaml + templates/ + helm-unittest suites under tests/). Published to GitHub Pages on tag via the `Publish chart to GitHub Pages` CI job — consumers `helm repo add openstack-emulator https://waldur.github.io/openstack-emulator/`.
 
 When making changes, update the appropriate documentation:
 - **Architecture changes**: Update `docs/architecture/`
 - **New API endpoints**: Add examples to `docs/api-examples.md`
 - **Usage changes**: Update `docs/usage.md`
 - **Development patterns**: Update `docs/development.md`
+- **Deployment / chart changes**: Update `docs/kubernetes.md` and the helm-unittest suites under `charts/openstack-emulator/tests/`
 - **New features**: Update `README.md` if significant
 
 Keep `README.md` minimal with links to detailed docs.
@@ -185,3 +189,14 @@ The tools automatically:
 - Provide actionable recommendations for missing endpoints
 
 See [docs/api-compliance.md](docs/api-compliance.md) for complete documentation and setup instructions.
+
+## Releases
+
+Releases are tag-driven. Pushing a `X.Y.Z` tag triggers GitLab CI to:
+
+1. Run the full Python test matrix (3.10–3.13), linters, type checks, `helm lint`, and `helm unittest`.
+2. Run the `Publish chart to GitHub Pages` job, which rewrites `charts/openstack-emulator/Chart.yaml`'s `version:` to the tag, `helm package`s the chart, and pushes a `Release <tag>` commit to the `gh-pages` branch of the GitHub mirror. GitHub Pages serves the branch at <https://waldur.github.io/openstack-emulator/>.
+
+The helper at `scripts/release.py` bundles the version bump + checks + tag + push. Subcommands: `status`, `check`, `version-update X.Y.Z`, `release X.Y.Z`, `build`. It bumps both `pyproject.toml` and `Chart.yaml` in lockstep. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned — only `version:` is bumped today.
+
+Tag scheme: `X.Y.Z` (no leading `v`). The CI publish job keys on `$CI_COMMIT_TAG` and derives the chart filename from it directly.

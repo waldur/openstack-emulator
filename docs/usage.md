@@ -230,7 +230,37 @@ The emulator initializes with default resources:
 - User: admin (password: s4l4dus)
 - Roles: admin, member, reader
 
+## Seeding sample resources with presets
+
+The emulator ships seven built-in presets that add projects, networks, servers, volumes, and so on at startup. Bundled with the installed package at `emulator/presets/*.yaml`:
+
+| Preset | Use case |
+|---|---|
+| `empty` | Only the default domain/project/user/flavors — no extra resources |
+| `development` | Small dev env with a project, network, sample servers, a keypair |
+| `production` | Multiple projects, networks, servers, a load balancer |
+| `enterprise` | Multi-department layout with a DMZ and shared services |
+| `microservices` | Service-mesh + API gateway + observability stack |
+| `multi-tier` | Strict network segmentation across availability zones |
+| `stress-test` | 100+ servers / 50+ volumes for scale tests |
+
+Load one on startup:
+
+```bash
+openstack-emulator --preset development
+openstack-emulator --list-presets        # list the built-ins
+```
+
+Load a custom preset from disk (mirror the schema of any built-in file):
+
+```bash
+openstack-emulator --preset-file ./my-preset.yaml
+```
+
+In Kubernetes the same flags are surfaced as the `preset.name` and `customPreset.{enabled,yaml}` chart values — see [Kubernetes Deployment](./kubernetes.md).
+
 ## Related Documentation
 
 - [API Examples](./api-examples.md) - Detailed curl examples
 - [Scenario Injection](./scenarios.md) - Failure testing guide
+- [Kubernetes Deployment](./kubernetes.md) - Helm chart install and operator guide
