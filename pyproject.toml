@@ -45,6 +45,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["emulator*"]
 
+[tool.setuptools.package-data]
+"emulator.presets" = ["*.yaml"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
