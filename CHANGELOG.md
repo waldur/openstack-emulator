@@ -4,6 +4,15 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] - 2026-06-29
+
+### Changed
+- Version code, Docker image, and Helm chart together from a single release
+- Stop auto-pushing releases to a hard-coded remote; push to the explicit upstream and print the push command instead
+
+### Fixed
+- Fix changelog insertion on an empty changelog and make the helm test version-independent
+
 ## [0.2.0] - 2026-06-29
 
 ### Added
