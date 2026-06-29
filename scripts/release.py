@@ -27,6 +27,8 @@ import click
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 CHART_YAML = REPO_ROOT / "charts" / "openstack-emulator" / "Chart.yaml"
+CHANGELOG = REPO_ROOT / "CHANGELOG.md"
+CHANGELOG_SCRIPT = REPO_ROOT / "scripts" / "changelog.sh"
 
 
 def run_command(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
@@ -187,6 +189,26 @@ def build_artifacts() -> None:
     print(f"Local artifacts written to {out_dir}/")
 
 
+def generate_changelog(version: str) -> None:
+    """Generate a CHANGELOG.md entry for the release via scripts/changelog.sh.
+
+    The helper shells out to the `claude` CLI and is interactive (accept/edit/
+    regenerate/quit), so this only makes sense for local releases — it is not
+    wired into CI. If the helper is missing or fails, offer to continue the
+    release without a changelog update rather than aborting outright.
+    """
+    if not CHANGELOG_SCRIPT.exists():
+        print(f"Warning: {CHANGELOG_SCRIPT} not found, skipping changelog generation")
+        return
+
+    print(f"Generating changelog entry for {version}...")
+    result = subprocess.run(["bash", str(CHANGELOG_SCRIPT), version], check=False)
+    if result.returncode != 0:
+        print("Warning: Changelog generation failed or was aborted")
+        if not click.confirm("Continue release without changelog update?"):
+            sys.exit(1)
+
+
 def create_git_tag(version: str) -> None:
     """Commit the version bump and create the git tag.
 
@@ -196,7 +218,10 @@ def create_git_tag(version: str) -> None:
     """
     tag_name = version
 
-    run_command(["git", "add", str(PYPROJECT), str(CHART_YAML)])
+    to_add = [str(PYPROJECT), str(CHART_YAML)]
+    if CHANGELOG.exists():
+        to_add.append(str(CHANGELOG))
+    run_command(["git", "add", *to_add])
     run_command(["git", "commit", "-m", f"Release version {version}"])
     run_command(["git", "tag", "-a", tag_name, "-m", f"Release {version}"])
 
@@ -238,8 +263,9 @@ def status() -> None:
 @cli.command()
 @click.argument("version")
 @click.option("--skip-checks", is_flag=True, help="Skip local pre-release checks.")
+@click.option("--skip-changelog", is_flag=True, help="Skip CHANGELOG.md generation.")
 @click.option("--skip-tag", is_flag=True, help="Bump versions but do not commit/tag.")
-def release(version: str, skip_checks: bool, skip_tag: bool) -> None:
+def release(version: str, skip_checks: bool, skip_changelog: bool, skip_tag: bool) -> None:
     """Cut a new release: bump versions, optionally run checks, optionally tag and push."""
     current = get_pyproject_version()
 
@@ -259,6 +285,9 @@ def release(version: str, skip_checks: bool, skip_tag: bool) -> None:
 
     if not skip_checks:
         run_pre_release_checks()
+
+    if not skip_changelog:
+        generate_changelog(version)
 
     if not skip_tag:
         create_git_tag(version)
