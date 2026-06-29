@@ -397,15 +397,25 @@ async def list_ports(
     device_id: str | None = Query(None),
     device_owner: str | None = Query(None),
     status: str | None = Query(None),
+    fixed_ips: list[str] | None = Query(None),
+    tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
 ) -> dict[str, Any]:
-    """List ports."""
-    project_id = _lookup_project_id(x_auth_token)
+    """List ports.
+
+    Supports the Neutron ``fixed_ips=key=value`` filter (e.g.
+    ``fixed_ips=subnet_id=<id>``). An explicit ``tenant_id``/``project_id``
+    filters to that project; otherwise the token's project is used (admin tokens
+    see all projects).
+    """
+    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
     ports = db.list_ports(
-        project_id=project_id,
+        project_id=effective_project,
         network_id=network_id,
         device_id=device_id,
         device_owner=device_owner,
         status=status,
+        fixed_ips=fixed_ips,
     )
     return {"ports": [p.to_dict() for p in ports]}
 
@@ -1089,14 +1099,17 @@ async def create_rbac_policy(
             status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}"
         )
 
-    # Get project_id from token or use default
-    project_id = "admin"
-    if x_auth_token:
-        try:
-            token = validate_token_simple(x_auth_token, "Neutron")
-            project_id = token.project_id
-        except HTTPException:
-            project_id = "admin"  # Fallback for development
+    # The RBAC policy is owned by the project that owns the shared object.
+    # Honor an explicit body project_id/tenant_id, else derive it from the
+    # object (e.g. the network's project — Waldur shares a tenant's network from
+    # its admin session), else fall back to the token's project.
+    project_id = policy_data.get("project_id") or policy_data.get("tenant_id")
+    if not project_id and object_type == "network":
+        network = db.get_network(object_id)
+        if network is not None:
+            project_id = network.project_id
+    if not project_id:
+        project_id = _get_project_id(x_auth_token)
 
     policy = db.create_rbac_policy(
         object_type=object_type,

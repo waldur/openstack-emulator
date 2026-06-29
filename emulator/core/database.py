@@ -4827,8 +4827,14 @@ class Database:
         device_id: str | None = None,
         device_owner: str | None = None,
         status: str | None = None,
+        fixed_ips: list[str] | None = None,
     ) -> list[Port]:
-        """List ports with optional filtering."""
+        """List ports with optional filtering.
+
+        ``fixed_ips`` is the Neutron-style list of ``key=value`` filters (e.g.
+        ``["subnet_id=<id>", "ip_address=<ip>"]``); a port matches when, for each
+        filter, it has a fixed IP whose attribute equals the value.
+        """
         with self._lock:
             ports = list(self._ports.values())
             if project_id:
@@ -4841,6 +4847,21 @@ class Database:
                 ports = [p for p in ports if p.device_owner == device_owner]
             if status:
                 ports = [p for p in ports if p.status.value == status]
+            if fixed_ips:
+                criteria = [
+                    (k.strip(), v.strip())
+                    for f in fixed_ips
+                    if "=" in f
+                    for k, _, v in [f.partition("=")]
+                ]
+                ports = [
+                    p
+                    for p in ports
+                    if all(
+                        any(getattr(ip, key, None) == value for ip in p.fixed_ips)
+                        for key, value in criteria
+                    )
+                ]
             return ports
 
     def update_port(
