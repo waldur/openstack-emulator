@@ -277,6 +277,42 @@ class TestPorts:
         get_response = client.get(f"/v2.0/ports/{port_id}")
         assert get_response.status_code == 404
 
+    def test_list_ports_fixed_ips_subnet_filter(self):
+        """Ports can be filtered by the Neutron fixed_ips=subnet_id= query.
+
+        This is what get_free_ip relies on to find used IPs on a subnet.
+        """
+        net = client.post("/v2.0/networks", json={"network": {"name": "fip-filter-net"}}).json()[
+            "network"
+        ]
+        sub = client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "network_id": net["id"],
+                    "ip_version": 4,
+                    "cidr": "10.5.0.0/24",
+                }
+            },
+        ).json()["subnet"]
+        port = client.post(
+            "/v2.0/ports",
+            json={
+                "port": {
+                    "name": "fip-filter-port",
+                    "network_id": net["id"],
+                    "fixed_ips": [{"subnet_id": sub["id"], "ip_address": "10.5.0.10"}],
+                }
+            },
+        ).json()["port"]
+
+        matching = client.get("/v2.0/ports", params={"fixed_ips": f"subnet_id={sub['id']}"})
+        assert matching.status_code == 200
+        assert port["id"] in [p["id"] for p in matching.json()["ports"]]
+
+        other = client.get("/v2.0/ports", params={"fixed_ips": "subnet_id=does-not-exist"})
+        assert port["id"] not in [p["id"] for p in other.json()["ports"]]
+
 
 class TestRouters:
     """Test router CRUD operations."""

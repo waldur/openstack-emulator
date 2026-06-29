@@ -241,6 +241,37 @@ volumes = db.list_volumes(all_tenants=True)
 volumes = db.list_volumes(project_id="user-project-id")
 ```
 
+#### Neutron API-layer project scoping
+
+The Neutron API resolves the **effective project per request** from the
+caller's token, mirroring real OpenStack (and how Waldur drives the emulator —
+tenant operations use a token scoped to the tenant's project, while
+infrastructure operations use the cloud **admin** session):
+
+- **Project is taken from the token's scope.** Keystone honors
+  `scope.project.id` (not only the project name), so a session scoped to a
+  project by id is correctly attributed to that project. Resources a tenant
+  creates are owned by the tenant — not the admin project.
+- **On-behalf-of creation.** `create` endpoints honor a body
+  `project_id`/`tenant_id` (`_resolve_project_id`), so an admin can create a
+  resource owned by another project (e.g. Waldur provisions a tenant's default
+  router and instance ports from the admin session).
+- **Cloud-admin = cross-project.** A token scoped to the `admin` project may
+  read/modify **any** project's resource **by id** (`_lookup_project_id`
+  returns no restriction), and its **list** results span all projects. This is
+  required for admin operations on tenant-owned resources (external gateway,
+  port security, port status, enumerating a tenant's networks/subnets/security
+  groups). Tenant-scoped tokens remain restricted to their own project.
+- **Explicit list filters.** List endpoints honor an explicit
+  `tenant_id`/`project_id` (and Neutron filters such as `fixed_ips=subnet_id=…`)
+  so an admin session can scope a query to one tenant.
+- **RBAC ownership.** An RBAC policy is owned by the shared object's project
+  (e.g. the network's tenant), not the admin project that created it.
+
+"Admin" here means **scoped to the `admin` project**, not merely holding the
+admin role — the emulator's service user always has the admin role, so
+role-based detection would erase tenant isolation.
+
 ## Quotas
 
 Each project has independent quotas:
@@ -297,7 +328,7 @@ def test_volume_isolation():
 ## Current Limitations
 
 1. **No Policy Enforcement**: The emulator does not implement OpenStack's policy.json rules
-2. **Simplified Admin Check**: Admin access is not fully implemented; `all_tenants` is trust-based
+2. **Admin scope, not role**: Cross-project access is granted to tokens scoped to the `admin` project (see [Neutron API-layer project scoping](#neutron-api-layer-project-scoping)), not by evaluating the admin role; outside Neutron, `all_tenants` remains trust-based
 3. **No Ownership Transfer**: Resources cannot be transferred between projects
 4. **No Hierarchical Projects**: Project hierarchy (parent_id) is stored but not enforced
 
