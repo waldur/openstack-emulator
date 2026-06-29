@@ -526,6 +526,7 @@ class Database:
         project_name: str = "admin",
         base_url: str = "http://localhost:8774",
         domain_id: str = "default",
+        project_id: str | None = None,
     ) -> Token:
         """Create a new authentication token."""
         with self._lock:
@@ -539,12 +540,20 @@ class Database:
                     domain_id=domain_id,
                 )
 
-            # Find project by name and domain
-            project = self.get_project_by_name(project_name, domain_id)
+            # Resolve the project. Clients (e.g. Waldur) scope tenant sessions by
+            # project id, so when an id is given resolve by it (and never fall
+            # back to a name lookup, which would wrongly attribute the token to
+            # the admin project); otherwise resolve by name.
+            project = None
+            if project_id:
+                project = self.get_project(project_id)
+            else:
+                project = self.get_project_by_name(project_name, domain_id)
             if not project:
-                # Use default project
+                # Synthesize a project, preserving the requested id if any so the
+                # token stays consistent with the scope the client asked for.
                 project = Project(
-                    id=self._default_project_id,
+                    id=project_id or self._default_project_id,
                     name=project_name,
                     domain_id=domain_id,
                 )
@@ -4820,8 +4829,14 @@ class Database:
         device_id: str | None = None,
         device_owner: str | None = None,
         status: str | None = None,
+        fixed_ips: list[str] | None = None,
     ) -> list[Port]:
-        """List ports with optional filtering."""
+        """List ports with optional filtering.
+
+        ``fixed_ips`` is the Neutron-style list of ``key=value`` filters (e.g.
+        ``["subnet_id=<id>", "ip_address=<ip>"]``); a port matches when, for each
+        filter, it has a fixed IP whose attribute equals the value.
+        """
         with self._lock:
             ports = list(self._ports.values())
             if project_id:
@@ -4834,6 +4849,21 @@ class Database:
                 ports = [p for p in ports if p.device_owner == device_owner]
             if status:
                 ports = [p for p in ports if p.status.value == status]
+            if fixed_ips:
+                criteria = [
+                    (k.strip(), v.strip())
+                    for f in fixed_ips
+                    if "=" in f
+                    for k, _, v in [f.partition("=")]
+                ]
+                ports = [
+                    p
+                    for p in ports
+                    if all(
+                        any(getattr(ip, key, None) == value for ip in p.fixed_ips)
+                        for key, value in criteria
+                    )
+                ]
             return ports
 
     def update_port(
