@@ -598,3 +598,127 @@ class TestNeutronFlavors:
         profile_descriptions = [profile["description"] for profile in data["service_profiles"]]
         router_profiles = [desc for desc in profile_descriptions if "router" in desc.lower()]
         assert len(router_profiles) >= 2  # Should have default and HA router profiles
+
+
+class TestTenantProjectScoping:
+    """Project-id scoping and cloud-admin cross-project access.
+
+    The admin project (Waldur's admin session) may act across projects;
+    tenant-scoped tokens stay isolated. Covers on-behalf-of creation, by-id
+    cross-project access, list scoping, and RBAC ownership.
+    """
+
+    def _tenant(self, name):
+        """Create a project and a token scoped to it; return (project_id, token)."""
+        proj = db.create_project(name=name)
+        token = db.create_token(project_name=name, project_id=proj.id)
+        return proj.id, token.id
+
+    def _admin(self):
+        return db.create_token(project_name="admin").id
+
+    def test_create_on_behalf_of_tenant(self):
+        """Admin may create a resource owned by another project via the body."""
+        pid, _ = self._tenant("scope-create")
+        admin = self._admin()
+        resp = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "oa-net", "project_id": pid}},
+            headers={"X-Auth-Token": admin},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["network"]["project_id"] == pid
+
+    def test_admin_cross_project_by_id(self):
+        """Admin reaches any project's resource by id; other tenants cannot."""
+        _, tok_a = self._tenant("scope-a")
+        _, tok_b = self._tenant("scope-b")
+        admin = self._admin()
+        net = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "a-net"}},
+            headers={"X-Auth-Token": tok_a},
+        ).json()["network"]
+        nid = net["id"]
+
+        # Owner and admin can read it; the other tenant cannot.
+        assert (
+            client.get(f"/v2.0/networks/{nid}", headers={"X-Auth-Token": tok_a}).status_code == 200
+        )
+        assert (
+            client.get(f"/v2.0/networks/{nid}", headers={"X-Auth-Token": admin}).status_code == 200
+        )
+        assert (
+            client.get(f"/v2.0/networks/{nid}", headers={"X-Auth-Token": tok_b}).status_code == 404
+        )
+        # Admin can delete cross-project.
+        assert (
+            client.delete(f"/v2.0/networks/{nid}", headers={"X-Auth-Token": admin}).status_code
+            == 204
+        )
+
+    def test_list_scoping(self):
+        """Tenant lists are scoped; admin spans all and honors tenant_id."""
+        pid_a, tok_a = self._tenant("scope-la")
+        _, tok_b = self._tenant("scope-lb")
+        admin = self._admin()
+        na = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "la-net"}},
+            headers={"X-Auth-Token": tok_a},
+        ).json()["network"]["id"]
+        nb = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "lb-net"}},
+            headers={"X-Auth-Token": tok_b},
+        ).json()["network"]["id"]
+
+        a_ids = [
+            n["id"]
+            for n in client.get("/v2.0/networks", headers={"X-Auth-Token": tok_a}).json()[
+                "networks"
+            ]
+        ]
+        assert na in a_ids and nb not in a_ids
+
+        admin_ids = [
+            n["id"]
+            for n in client.get("/v2.0/networks", headers={"X-Auth-Token": admin}).json()[
+                "networks"
+            ]
+        ]
+        assert na in admin_ids and nb in admin_ids
+
+        filtered = [
+            n["id"]
+            for n in client.get(
+                "/v2.0/networks",
+                params={"tenant_id": pid_a},
+                headers={"X-Auth-Token": admin},
+            ).json()["networks"]
+        ]
+        assert na in filtered and nb not in filtered
+
+    def test_rbac_owner_is_object_project(self):
+        """An admin-created RBAC policy is owned by the shared object's project."""
+        pid_a, tok_a = self._tenant("scope-rbac")
+        admin = self._admin()
+        net = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "rbac-net"}},
+            headers={"X-Auth-Token": tok_a},
+        ).json()["network"]
+        resp = client.post(
+            "/v2.0/rbac-policies",
+            json={
+                "rbac_policy": {
+                    "object_type": "network",
+                    "object_id": net["id"],
+                    "target_tenant": "*",
+                    "action": "access_as_shared",
+                }
+            },
+            headers={"X-Auth-Token": admin},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["rbac_policy"]["project_id"] == pid_a
