@@ -227,32 +227,28 @@ def generate_changelog(version: str) -> None:
             sys.exit(1)
 
 
-def detect_gitlab_remote() -> str:
-    """Best-effort name of the remote that points at GitLab (code.opennodecloud.com).
+def get_push_remote() -> str:
+    """Remote to push the release to.
 
-    The release pipeline runs on GitLab (it triggers on $CI_COMMIT_TAG and
-    push-mirrors to GitHub), so the tag must land there — not on a personal
-    GitHub fork. The remote may be named `origin` or `gitlab` depending on the
-    clone, so detect it by URL. Falls back to `origin`.
+    Uses the current branch's configured upstream (e.g. the remote of
+    `origin/main`) so the push targets whatever the user set up, regardless of
+    how the remote is named. Falls back to `origin`.
     """
-    result = run_command(["git", "remote", "-v"], check=False)
-    for line in result.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and "code.opennodecloud.com" in parts[1]:
-            return parts[0]
+    result = run_command(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        check=False,
+    )
+    if result.returncode == 0 and "/" in result.stdout:
+        return result.stdout.strip().split("/", 1)[0]
     return "origin"
 
 
 def create_git_tag(version: str) -> None:
-    """Commit the version bump and create the git tag locally.
+    """Commit the version bump, create the git tag, and push after confirmation.
 
     Tag scheme is X.Y.Z (no leading 'v') because the CI rules in
     .gitlab-ci.yml match on $CI_COMMIT_TAG and the publish job derives the
     chart filename from $CI_COMMIT_TAG directly.
-
-    The commit and tag are prepared locally only; the user pushes them (so the
-    push targets the right remote and can be reviewed first), as in
-    waldur-site-agent's release flow.
     """
     tag_name = version
 
@@ -263,16 +259,22 @@ def create_git_tag(version: str) -> None:
     run_command(["git", "commit", "-m", f"Release version {version}"])
     run_command(["git", "tag", "-a", tag_name, "-m", f"Release {version}"])
 
-    remote = detect_gitlab_remote()
+    remote = get_push_remote()
     branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-    print(f"\nRelease commit and tag {tag_name} prepared locally.")
-    print("Review them, then push to GitLab to trigger the release pipeline:")
-    print(f"\n    git push {remote} {branch} {tag_name}\n")
+    print(f"\nCreated release commit and tag {tag_name}.")
     print("Pushing the tag triggers GitLab CI to:")
     print("  - Run linters + tests + Helm chart lint")
     print(f"  - Publish opennode/openstack-emulator:{version} and :latest to Docker Hub")
     print("  - Push the packaged chart + index.yaml to gh-pages on GitHub")
-    print(f"\nTo undo before pushing: git tag -d {tag_name} && git reset --hard HEAD~1")
+
+    if click.confirm(f"\nPush {branch} and tag {tag_name} to '{remote}'?"):
+        run_command(["git", "push", remote, branch])
+        run_command(["git", "push", remote, tag_name])
+        print(f"Pushed to {remote}. Watch the pipeline for the release jobs.")
+    else:
+        print("Not pushed. When ready:")
+        print(f"    git push {remote} {branch} {tag_name}")
+        print(f"To undo: git tag -d {tag_name} && git reset --hard HEAD~1")
 
 
 @click.group()

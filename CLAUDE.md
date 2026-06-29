@@ -197,7 +197,7 @@ Releases are tag-driven. Pushing a `X.Y.Z` tag triggers GitLab CI to:
 1. Run the full Python test matrix (3.10–3.13), linters, type checks, `helm lint`, and `helm unittest`.
 2. Run the `Publish chart to GitHub Pages` job, which rewrites `charts/openstack-emulator/Chart.yaml`'s `version:` to the tag, `helm package`s the chart, and pushes a `Release <tag>` commit to the `gh-pages` branch of the GitHub mirror. GitHub Pages serves the branch at <https://waldur.github.io/openstack-emulator/>.
 
-The helper at `scripts/release.py` bundles the version bump + checks + changelog + tag + push. Subcommands: `status`, `check`, `version-update X.Y.Z`, `release X.Y.Z`, `build`. It bumps both `pyproject.toml` and `Chart.yaml` in lockstep. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned — only `version:` is bumped today.
+The helper at `scripts/release.py` bundles the version bump + checks + changelog + tag + push. Subcommands: `status`, `check`, `version-update X.Y.Z`, `release X.Y.Z`, `build`. It bumps `pyproject.toml` and both `Chart.yaml` `version:` and `appVersion:` in lockstep (the chart resolves the image tag from `appVersion`, and CI now publishes a `:X.Y.Z` Docker image on tag). After committing and tagging, it pushes — after a confirmation prompt — to the current branch's upstream remote (falling back to `origin`).
 
 `release` also generates a `CHANGELOG.md` entry via `scripts/changelog.sh` (commit categorization in `scripts/generate_changelog_data.py`, prompt in `scripts/prompts/changelog-prompt.md`). It drafts the entry with the `claude` CLI and prompts to accept/edit/regenerate, so it is **interactive and local-only** — not wired into CI. Use `--skip-changelog` to bypass it.
 
