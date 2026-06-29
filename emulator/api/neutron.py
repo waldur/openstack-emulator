@@ -132,6 +132,17 @@ def _get_project_id(token: str | None) -> str:
         return "admin"  # Fallback for development
 
 
+def _resolve_project_id(data: dict[str, Any], token: str | None) -> str:
+    """Resolve the owning project for a created resource.
+
+    OpenStack lets an admin create a resource on behalf of another project by
+    passing ``project_id``/``tenant_id`` in the request body (this is how Waldur
+    provisions a tenant's router from the admin session). Honor that when
+    present, otherwise fall back to the token's project.
+    """
+    return data.get("project_id") or data.get("tenant_id") or _get_project_id(token)
+
+
 # API Version endpoint
 @router.get("/")
 async def get_versions() -> dict[str, Any]:
@@ -174,8 +185,8 @@ async def create_network(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a network."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("network", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     network = db.create_network(
         name=data.get("name", ""),
@@ -267,8 +278,8 @@ async def create_subnet(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a subnet."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("subnet", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     subnet = db.create_subnet(
         network_id=data.get("network_id", ""),
@@ -314,8 +325,8 @@ async def update_subnet(
 
     Only allows updating subnets owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
     data = request.get("subnet", {})
+    project_id = _resolve_project_id(data, x_auth_token)
     subnet = db.update_subnet(
         subnet_id=subnet_id,
         project_id=project_id,
@@ -374,8 +385,8 @@ async def create_port(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a port."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("port", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     port = db.create_port(
         network_id=data.get("network_id", ""),
@@ -421,8 +432,8 @@ async def update_port(
 
     Only allows updating ports owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
     data = request.get("port", {})
+    project_id = _resolve_project_id(data, x_auth_token)
     port = db.update_port(
         port_id=port_id,
         project_id=project_id,
@@ -503,8 +514,8 @@ async def create_router(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a router."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("router", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
 

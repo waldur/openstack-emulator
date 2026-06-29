@@ -306,13 +306,21 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     else:
         logger.debug("No recognized auth method found, using defaults")
 
-    # Extract project info
+    # Extract project info. Scope may be by id (Waldur scopes tenant sessions by
+    # project id) or by name; honor whichever is provided.
     project_name = "admin"
+    project_id = None
     if body.auth.scope and body.auth.scope.project:
-        project_name = body.auth.scope.project.get("name", "admin")
+        project_scope = body.auth.scope.project
+        project_id = project_scope.get("id")
+        project_name = project_scope.get("name", "admin")
 
     logger.debug(
-        "Creating token for user: %s, project: %s, domain: %s", user_name, project_name, domain_id
+        "Creating token for user: %s, project: %s (id=%s), domain: %s",
+        user_name,
+        project_name,
+        project_id,
+        domain_id,
     )
 
     # Create token
@@ -321,6 +329,7 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         project_name=project_name,
         base_url=base_url,
         domain_id=domain_id,
+        project_id=project_id,
     )
 
     # Set token in header
