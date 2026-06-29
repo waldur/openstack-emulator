@@ -227,8 +227,24 @@ def generate_changelog(version: str) -> None:
             sys.exit(1)
 
 
+def get_push_remote() -> str:
+    """Remote to push the release to.
+
+    Uses the current branch's configured upstream (e.g. the remote of
+    `origin/main`) so the push targets whatever the user set up, regardless of
+    how the remote is named. Falls back to `origin`.
+    """
+    result = run_command(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        check=False,
+    )
+    if result.returncode == 0 and "/" in result.stdout:
+        return result.stdout.strip().split("/", 1)[0]
+    return "origin"
+
+
 def create_git_tag(version: str) -> None:
-    """Commit the version bump and create the git tag.
+    """Commit the version bump, create the git tag, and push after confirmation.
 
     Tag scheme is X.Y.Z (no leading 'v') because the CI rules in
     .gitlab-ci.yml match on $CI_COMMIT_TAG and the publish job derives the
@@ -243,22 +259,22 @@ def create_git_tag(version: str) -> None:
     run_command(["git", "commit", "-m", f"Release version {version}"])
     run_command(["git", "tag", "-a", tag_name, "-m", f"Release {version}"])
 
-    print(f"Created git tag: {tag_name}")
-    print("Pushing the tag will trigger GitLab CI to:")
+    remote = get_push_remote()
+    branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    print(f"\nCreated release commit and tag {tag_name}.")
+    print("Pushing the tag triggers GitLab CI to:")
     print("  - Run linters + tests + Helm chart lint")
-    print("  - Publish opennode/openstack-emulator:latest to Docker Hub")
-    print("  - Push openstack-emulator-X.Y.Z.tgz + updated index.yaml to gh-pages on GitHub")
+    print(f"  - Publish opennode/openstack-emulator:{version} and :latest to Docker Hub")
+    print("  - Push the packaged chart + index.yaml to gh-pages on GitHub")
 
-    # Push to GitLab explicitly. GitLab is the primary that triggers the
-    # release pipeline on $CI_COMMIT_TAG and push-mirrors to GitHub. Bare
-    # `git push` would target this clone's default remote, which may be a
-    # personal GitHub fork — sending the tag to the mirror side instead of
-    # GitLab and silently skipping the release pipeline.
-    if click.confirm("Push tag (and the bump commit) to GitLab?"):
-        branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-        run_command(["git", "push", "gitlab", branch])
-        run_command(["git", "push", "gitlab", tag_name])
-        print("Pushed to GitLab. Watch the GitLab pipeline for the release jobs.")
+    if click.confirm(f"\nPush {branch} and tag {tag_name} to '{remote}'?"):
+        run_command(["git", "push", remote, branch])
+        run_command(["git", "push", remote, tag_name])
+        print(f"Pushed to {remote}. Watch the pipeline for the release jobs.")
+    else:
+        print("Not pushed. When ready:")
+        print(f"    git push {remote} {branch} {tag_name}")
+        print(f"To undo: git tag -d {tag_name} && git reset --hard HEAD~1")
 
 
 @click.group()
