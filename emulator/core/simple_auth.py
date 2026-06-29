@@ -18,6 +18,7 @@ class TokenInfo:
     user_id: str
     user_name: str
     raw_token: Any  # The original Token object
+    is_admin: bool = False
 
 
 def validate_token_simple(auth_token: str | None, service_name: str = "unknown") -> TokenInfo:
@@ -50,6 +51,15 @@ def validate_token_simple(auth_token: str | None, service_name: str = "unknown")
 
     logger.debug("%s: Token validation succeeded", service_name)
 
+    # A token scoped to the cloud "admin" project is privileged and may
+    # read/modify resources in any project when addressing them by id (this is
+    # how Waldur operates on a tenant's resources from its admin session, e.g.
+    # setting a router's external gateway or toggling port security). Tenant
+    # sessions are scoped to their own project and stay isolated. This does NOT
+    # widen list results — those stay scoped to the token's project unless an
+    # explicit filter is supplied.
+    is_admin = (token.project_name or "").lower() == "admin"
+
     # Return a structured object with commonly needed fields
     return TokenInfo(
         project_id=token.project_id,
@@ -57,4 +67,5 @@ def validate_token_simple(auth_token: str | None, service_name: str = "unknown")
         user_id=token.user_id,
         user_name=token.user_name,
         raw_token=token,
+        is_admin=is_admin,
     )

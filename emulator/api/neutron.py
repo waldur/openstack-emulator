@@ -143,6 +143,23 @@ def _resolve_project_id(data: dict[str, Any], token: str | None) -> str:
     return data.get("project_id") or data.get("tenant_id") or _get_project_id(token)
 
 
+def _lookup_project_id(token: str | None) -> str | None:
+    """Project filter for by-id get/update/delete.
+
+    Returns ``None`` (no project restriction → cross-project access) for a token
+    scoped to the cloud admin project, so Waldur's admin session can operate on
+    a tenant's resources by id. Other tokens are restricted to their own
+    project.
+    """
+    if not token:
+        return "admin"
+    try:
+        info = validate_token_simple(token, "Neutron")
+    except HTTPException:
+        return "admin"
+    return None if info.is_admin else info.project_id
+
+
 # API Version endpoint
 @router.get("/")
 async def get_versions() -> dict[str, Any]:
@@ -166,11 +183,18 @@ async def list_networks(
     shared: bool | None = Query(None),
     router_external: bool | None = Query(None, alias="router:external"),
     status: str | None = Query(None),
+    tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
 ) -> dict[str, Any]:
-    """List networks."""
-    project_id = _get_project_id(x_auth_token)
+    """List networks.
+
+    An explicit ``tenant_id``/``project_id`` query filters to that project (used
+    by an admin session to enumerate a tenant's networks); otherwise the token's
+    project is used.
+    """
+    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
     networks = db.list_networks(
-        project_id=project_id,
+        project_id=effective_project,
         name=name,
         shared=shared,
         external=router_external,
@@ -210,7 +234,7 @@ async def get_network(
 
     Shared and external networks are accessible to all tenants.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     network = db.get_network(network_id, project_id=project_id)
     if not network:
         raise HTTPException(status_code=404, detail="Network not found")
@@ -227,7 +251,7 @@ async def update_network(
 
     Only allows updating networks owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     data = request.get("network", {})
     network = db.update_network(
         network_id=network_id,
@@ -252,7 +276,7 @@ async def delete_network(
 
     Only allows deleting networks owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_network(network_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete network (may have ports)")
@@ -265,10 +289,17 @@ async def list_subnets(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     network_id: str | None = Query(None),
     name: str | None = Query(None),
+    tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
 ) -> dict[str, Any]:
-    """List subnets."""
-    project_id = _get_project_id(x_auth_token)
-    subnets = db.list_subnets(project_id=project_id, network_id=network_id, name=name)
+    """List subnets.
+
+    An explicit ``tenant_id``/``project_id`` query filters to that project (used
+    by an admin session to enumerate a tenant's subnets); otherwise the token's
+    project is used (admin tokens see all projects).
+    """
+    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
+    subnets = db.list_subnets(project_id=effective_project, network_id=network_id, name=name)
     return {"subnets": [s.to_dict() for s in subnets]}
 
 
@@ -308,7 +339,7 @@ async def get_subnet(
 
     Subnets on shared/external networks are accessible to all tenants.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     subnet = db.get_subnet(subnet_id, project_id=project_id)
     if not subnet:
         raise HTTPException(status_code=404, detail="Subnet not found")
@@ -351,7 +382,7 @@ async def delete_subnet(
 
     Only allows deleting subnets owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_subnet(subnet_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete subnet (may have ports)")
@@ -368,7 +399,7 @@ async def list_ports(
     status: str | None = Query(None),
 ) -> dict[str, Any]:
     """List ports."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     ports = db.list_ports(
         project_id=project_id,
         network_id=network_id,
@@ -415,7 +446,7 @@ async def get_port(
 
     Only returns ports owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     port = db.get_port(port_id, project_id=project_id)
     if not port:
         raise HTTPException(status_code=404, detail="Port not found")
@@ -459,7 +490,7 @@ async def delete_port(
 
     Only allows deleting ports owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_port(port_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Port not found")
@@ -474,13 +505,13 @@ async def list_routers(
     status: str | None = Query(None),
 ) -> dict[str, Any]:
     """List routers."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     routers = db.list_routers(project_id=project_id, name=name, status=status)
     return {"routers": [r.to_dict() for r in routers]}
 
 
 def _validate_external_gateway(
-    project_id: str, external_gateway_info: dict[str, Any] | None
+    project_id: str | None, external_gateway_info: dict[str, Any] | None
 ) -> None:
     """Validate a router's external gateway request.
 
@@ -538,7 +569,7 @@ async def get_router(
 
     Only returns routers owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     router = db.get_router(router_id, project_id=project_id)
     if not router:
         raise HTTPException(status_code=404, detail="Router not found")
@@ -555,7 +586,7 @@ async def update_router(
 
     Only allows updating routers owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     data = request.get("router", {})
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
@@ -583,7 +614,7 @@ async def delete_router(
 
     Only allows deleting routers owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_router(router_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete router (may have interfaces)")
@@ -600,7 +631,7 @@ async def add_router_interface(
 
     Only allows modifying routers owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     result = db.add_router_interface(
         router_id=router_id,
         project_id=project_id,
@@ -622,7 +653,7 @@ async def remove_router_interface(
 
     Only allows modifying routers owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     result = db.remove_router_interface(
         router_id=router_id,
         project_id=project_id,
@@ -643,7 +674,7 @@ async def list_floating_ips(
     status: str | None = Query(None),
 ) -> dict[str, Any]:
     """List floating IPs."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     fips = db.list_floating_ips(
         project_id=project_id,
         floating_network_id=floating_network_id,
@@ -684,7 +715,7 @@ async def get_floating_ip(
 
     Only returns floating IPs owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     fip = db.get_floating_ip(floatingip_id, project_id=project_id)
     if not fip:
         raise HTTPException(status_code=404, detail="Floating IP not found")
@@ -701,7 +732,7 @@ async def update_floating_ip(
 
     Only allows updating floating IPs owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     data = request.get("floatingip", {})
     fip = db.update_floating_ip(
         floatingip_id=floatingip_id,
@@ -723,7 +754,7 @@ async def delete_floating_ip(
 
     Only allows deleting floating IPs owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_floating_ip(floatingip_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Floating IP not found")
@@ -735,15 +766,22 @@ async def delete_floating_ip(
 async def list_security_groups(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     name: str | None = Query(None),
+    tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
 ) -> dict[str, Any]:
     """List security groups.
 
     Ensures the default security group exists for the tenant before listing.
+    An explicit ``tenant_id``/``project_id`` query filters to that project (used
+    by an admin session to enumerate a tenant's groups); otherwise the token's
+    project is used.
     """
-    project_id = _get_project_id(x_auth_token)
-    # Ensure default security group exists for this tenant
-    db.get_or_create_default_security_group(project_id)
-    sgs = db.list_security_groups(project_id=project_id, name=name)
+    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
+    # Ensure the default security group exists for the target tenant. Skip when
+    # listing across all projects (admin with no explicit project filter).
+    if effective_project:
+        db.get_or_create_default_security_group(effective_project)
+    sgs = db.list_security_groups(project_id=effective_project, name=name)
     return {"security_groups": [sg.to_dict() for sg in sgs]}
 
 
@@ -773,7 +811,7 @@ async def get_security_group(
 
     Only returns security groups owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     sg = db.get_security_group(security_group_id, project_id=project_id)
     if not sg:
         raise HTTPException(status_code=404, detail="Security group not found")
@@ -790,7 +828,7 @@ async def update_security_group(
 
     Only allows updating security groups owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     data = request.get("security_group", {})
     sg = db.update_security_group(
         security_group_id=security_group_id,
@@ -813,7 +851,7 @@ async def delete_security_group(
     Only allows deleting security groups owned by the requesting tenant.
     Cannot delete the default security group.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_security_group(security_group_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete security group")
@@ -827,7 +865,7 @@ async def list_security_group_rules(
     security_group_id: str | None = Query(None),
 ) -> dict[str, Any]:
     """List security group rules."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     rules = db.list_security_group_rules(
         project_id=project_id,
         security_group_id=security_group_id,
@@ -870,7 +908,7 @@ async def get_security_group_rule(
 
     Only returns rules owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     rule = db.get_security_group_rule(rule_id, project_id=project_id)
     if not rule:
         raise HTTPException(status_code=404, detail="Security group rule not found")
@@ -886,7 +924,7 @@ async def delete_security_group_rule(
 
     Only allows deleting rules owned by the requesting tenant.
     """
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     success = db.delete_security_group_rule(rule_id, project_id=project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Security group rule not found")
@@ -1129,7 +1167,7 @@ async def list_neutron_extensions(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List all available Neutron extensions."""
-    _get_project_id(x_auth_token)  # Validate token
+    _lookup_project_id(x_auth_token)  # Validate token
 
     extensions = db.list_neutron_extensions()
     return {"extensions": [ext.to_dict() for ext in extensions]}
@@ -1177,7 +1215,7 @@ async def list_qos_policies(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List QoS policies."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     policies = db.list_qos_policies(
         project_id=project_id,
@@ -1212,7 +1250,7 @@ async def get_qos_policy(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a QoS policy by ID."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     policy = db.get_qos_policy(policy_id, project_id=project_id)
     if not policy:
@@ -1228,7 +1266,7 @@ async def update_qos_policy(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a QoS policy."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     policy = db.update_qos_policy(
         policy_id=policy_id,
@@ -1249,7 +1287,7 @@ async def delete_qos_policy(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a QoS policy."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     success = db.delete_qos_policy(policy_id, project_id=project_id)
     if not success:
@@ -1263,7 +1301,7 @@ async def list_qos_rule_types(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List available QoS rule types."""
-    _get_project_id(x_auth_token)  # Validate token
+    _lookup_project_id(x_auth_token)  # Validate token
 
     rule_types = db.list_qos_rule_types()
     return {"rule_types": [rt.to_dict() for rt in rule_types]}
@@ -1293,7 +1331,7 @@ async def list_agents(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List Neutron agents."""
-    _get_project_id(x_auth_token)  # Validate token
+    _lookup_project_id(x_auth_token)  # Validate token
 
     agents = db.list_neutron_agents(
         agent_type=agent_type,
@@ -1387,7 +1425,7 @@ async def list_trunks(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List trunks."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunks = db.list_trunks(
         project_id=project_id,
@@ -1423,7 +1461,7 @@ async def get_trunk(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get a trunk by ID."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunk = db.get_trunk(trunk_id, project_id=project_id)
     if not trunk:
@@ -1439,7 +1477,7 @@ async def update_trunk(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a trunk."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunk = db.update_trunk(
         trunk_id=trunk_id,
@@ -1460,7 +1498,7 @@ async def delete_trunk(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a trunk."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     success = db.delete_trunk(trunk_id, project_id=project_id)
     if not success:
@@ -1476,7 +1514,7 @@ async def add_subports_to_trunk(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Add sub-ports to a trunk."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunk = db.add_subports_to_trunk(
         trunk_id=trunk_id,
@@ -1496,7 +1534,7 @@ async def remove_subports_from_trunk(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Remove sub-ports from a trunk."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunk = db.remove_subports_from_trunk(
         trunk_id=trunk_id,
@@ -1515,7 +1553,7 @@ async def get_trunk_subports(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get sub-ports of a trunk."""
-    project_id = _get_project_id(x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
 
     trunk = db.get_trunk(trunk_id, project_id=project_id)
     if not trunk:
@@ -1551,7 +1589,7 @@ async def list_neutron_flavors(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List Neutron service flavors."""
-    _get_project_id(x_auth_token)  # Validate token
+    _lookup_project_id(x_auth_token)  # Validate token
 
     flavors = db.list_neutron_flavors(service_type=service_type, enabled=enabled)
     return {"flavors": [flavor.to_dict() for flavor in flavors]}
@@ -1631,7 +1669,7 @@ async def list_service_profiles(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List Neutron service profiles."""
-    _get_project_id(x_auth_token)  # Validate token
+    _lookup_project_id(x_auth_token)  # Validate token
 
     profiles = db.list_service_profiles()
     return {"service_profiles": [profile.to_dict() for profile in profiles]}
