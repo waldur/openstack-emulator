@@ -129,9 +129,12 @@ Publish chart to GitHub Pages:
   before_script:
     - apk add --no-cache git
   script:
-    # Bump chart version to match the tag, then package.
+    # Bump chart version AND appVersion to match the tag, then package. appVersion
+    # is the image tag the chart deploys (templates/_helpers.tpl defaults the image
+    # tag to .Chart.AppVersion), and the versioned image is published below.
     - 'sed -i "s/^version:.*/version: ${CI_COMMIT_TAG}/" charts/openstack-emulator/Chart.yaml'
-    - 'grep "^version:" charts/openstack-emulator/Chart.yaml'
+    - 'sed -i "s/^appVersion:.*/appVersion: \"${CI_COMMIT_TAG}\"/" charts/openstack-emulator/Chart.yaml'
+    - 'grep -E "^version:|^appVersion:" charts/openstack-emulator/Chart.yaml'
     - mkdir -p /tmp/dist
     - helm package charts/openstack-emulator/ -d /tmp/dist/
     # Configure git and add the GitHub mirror as a remote.
@@ -158,7 +161,7 @@ Publish chart to GitHub Pages:
     - git commit -m "Release ${CI_COMMIT_TAG}"
     - git push github-origin gh-pages
 
-Publish latest docker image:
+Publish docker image:
   stage: release
   interruptible: true
   image:
@@ -167,22 +170,32 @@ Publish latest docker image:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       when: never
+    # Release tag -> publish the versioned image (and move :latest to it).
+    - if: '$CI_COMMIT_TAG'
+    # Default-branch push -> refresh :latest.
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   variables:
     BUILDAH_FORMAT: docker
     BUILDAH_ISOLATION: chroot
     DOCKER_HUB_REGISTRY: "docker.io"
-    IMAGE_TAG: "opennode/openstack-emulator:latest"
+    IMAGE_REPO: "opennode/openstack-emulator"
   before_script:
-    - echo "[+] Build and publish latest docker image for ${CI_DEFAULT_BRANCH} branch"
     - echo "${WALDUR_DOCKER_HUB_PASSWORD}" | buildah login -u "${WALDUR_DOCKER_HUB_USER}" --password-stdin "${DOCKER_HUB_REGISTRY}"
   script:
-    - echo "[+] Building image ${IMAGE_TAG}"
+    # On a release tag VERSION is the tag and we publish both :<tag> and :latest;
+    # on default-branch pushes we publish :latest only.
+    - VERSION="${CI_COMMIT_TAG:-latest}"
+    - echo "[+] Building ${IMAGE_REPO} (version=${VERSION})"
     - |
       buildah bud \
         --build-arg COMMIT_INFO="${CI_COMMIT_SHA}" \
-        --build-arg VERSION="latest" \
-        -t "${IMAGE_TAG}" \
+        --build-arg VERSION="${VERSION}" \
+        -t "${IMAGE_REPO}:latest" \
         -f "${CI_PROJECT_DIR}/Dockerfile" \
         "${CI_PROJECT_DIR}"
-    - buildah push "${IMAGE_TAG}" "docker://${IMAGE_TAG}"
+    - |
+      if [ -n "${CI_COMMIT_TAG}" ]; then
+        buildah tag "${IMAGE_REPO}:latest" "${IMAGE_REPO}:${CI_COMMIT_TAG}"
+        buildah push "${IMAGE_REPO}:${CI_COMMIT_TAG}" "docker://${IMAGE_REPO}:${CI_COMMIT_TAG}"
+      fi
+    - buildah push "${IMAGE_REPO}:latest" "docker://${IMAGE_REPO}:latest"

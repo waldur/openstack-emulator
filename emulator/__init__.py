@@ -1,12 +1,17 @@
 """OpenStack Emulator - A testing tool for OpenStack API clients."""
 
 import argparse
+import importlib.metadata
 import os
 import sys
 
 from emulator.api.unified_app import SERVICE_PORTS, run_all_services, run_single_service
 
-__version__ = "0.1.0"
+try:
+    __version__ = importlib.metadata.version("openstack-emulator")
+except importlib.metadata.PackageNotFoundError:
+    # Fallback for development/testing when the package isn't installed
+    __version__ = "0.0.0-dev"
 __all__ = ["main"]
 
 
