@@ -227,12 +227,32 @@ def generate_changelog(version: str) -> None:
             sys.exit(1)
 
 
+def detect_gitlab_remote() -> str:
+    """Best-effort name of the remote that points at GitLab (code.opennodecloud.com).
+
+    The release pipeline runs on GitLab (it triggers on $CI_COMMIT_TAG and
+    push-mirrors to GitHub), so the tag must land there — not on a personal
+    GitHub fork. The remote may be named `origin` or `gitlab` depending on the
+    clone, so detect it by URL. Falls back to `origin`.
+    """
+    result = run_command(["git", "remote", "-v"], check=False)
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and "code.opennodecloud.com" in parts[1]:
+            return parts[0]
+    return "origin"
+
+
 def create_git_tag(version: str) -> None:
-    """Commit the version bump and create the git tag.
+    """Commit the version bump and create the git tag locally.
 
     Tag scheme is X.Y.Z (no leading 'v') because the CI rules in
     .gitlab-ci.yml match on $CI_COMMIT_TAG and the publish job derives the
     chart filename from $CI_COMMIT_TAG directly.
+
+    The commit and tag are prepared locally only; the user pushes them (so the
+    push targets the right remote and can be reviewed first), as in
+    waldur-site-agent's release flow.
     """
     tag_name = version
 
@@ -243,22 +263,16 @@ def create_git_tag(version: str) -> None:
     run_command(["git", "commit", "-m", f"Release version {version}"])
     run_command(["git", "tag", "-a", tag_name, "-m", f"Release {version}"])
 
-    print(f"Created git tag: {tag_name}")
-    print("Pushing the tag will trigger GitLab CI to:")
+    remote = detect_gitlab_remote()
+    branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    print(f"\nRelease commit and tag {tag_name} prepared locally.")
+    print("Review them, then push to GitLab to trigger the release pipeline:")
+    print(f"\n    git push {remote} {branch} {tag_name}\n")
+    print("Pushing the tag triggers GitLab CI to:")
     print("  - Run linters + tests + Helm chart lint")
-    print("  - Publish opennode/openstack-emulator:latest to Docker Hub")
-    print("  - Push openstack-emulator-X.Y.Z.tgz + updated index.yaml to gh-pages on GitHub")
-
-    # Push to GitLab explicitly. GitLab is the primary that triggers the
-    # release pipeline on $CI_COMMIT_TAG and push-mirrors to GitHub. Bare
-    # `git push` would target this clone's default remote, which may be a
-    # personal GitHub fork — sending the tag to the mirror side instead of
-    # GitLab and silently skipping the release pipeline.
-    if click.confirm("Push tag (and the bump commit) to GitLab?"):
-        branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-        run_command(["git", "push", "gitlab", branch])
-        run_command(["git", "push", "gitlab", tag_name])
-        print("Pushed to GitLab. Watch the GitLab pipeline for the release jobs.")
+    print(f"  - Publish opennode/openstack-emulator:{version} and :latest to Docker Hub")
+    print("  - Push the packaged chart + index.yaml to gh-pages on GitHub")
+    print(f"\nTo undo before pushing: git tag -d {tag_name} && git reset --hard HEAD~1")
 
 
 @click.group()
