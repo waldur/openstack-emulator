@@ -541,14 +541,16 @@ class Database:
                 )
 
             # Resolve the project. Clients (e.g. Waldur) scope tenant sessions by
-            # project id, so prefer an id lookup and only fall back to name.
+            # project id, so when an id is given resolve by it (and never fall
+            # back to a name lookup, which would wrongly attribute the token to
+            # the admin project); otherwise resolve by name.
             project = None
             if project_id:
                 project = self.get_project(project_id)
-            if not project:
+            else:
                 project = self.get_project_by_name(project_name, domain_id)
             if not project:
-                # Use default project, preserving the requested id if any so the
+                # Synthesize a project, preserving the requested id if any so the
                 # token stays consistent with the scope the client asked for.
                 project = Project(
                     id=project_id or self._default_project_id,

@@ -699,6 +699,41 @@ class TestTenantProjectScoping:
         ]
         assert na in filtered and nb not in filtered
 
+    def test_admin_can_update_other_project_port(self):
+        """Admin (admin project) may update a tenant's port by id; peers cannot.
+
+        Covers Waldur's admin-session port operations (e.g. port security).
+        """
+        _, tok_a = self._tenant("scope-upd-a")
+        _, tok_b = self._tenant("scope-upd-b")
+        admin = self._admin()
+        net = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "upd-net"}},
+            headers={"X-Auth-Token": tok_a},
+        ).json()["network"]
+        port = client.post(
+            "/v2.0/ports",
+            json={"port": {"name": "upd-port", "network_id": net["id"]}},
+            headers={"X-Auth-Token": tok_a},
+        ).json()["port"]
+        pid = port["id"]
+
+        ok = client.put(
+            f"/v2.0/ports/{pid}",
+            json={"port": {"port_security_enabled": False}},
+            headers={"X-Auth-Token": admin},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["port"]["port_security_enabled"] is False
+
+        denied = client.put(
+            f"/v2.0/ports/{pid}",
+            json={"port": {"name": "hijacked"}},
+            headers={"X-Auth-Token": tok_b},
+        )
+        assert denied.status_code == 404
+
     def test_rbac_owner_is_object_project(self):
         """An admin-created RBAC policy is owned by the shared object's project."""
         pid_a, tok_a = self._tenant("scope-rbac")

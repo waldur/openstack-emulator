@@ -354,10 +354,11 @@ async def update_subnet(
 ) -> dict[str, Any]:
     """Update a subnet.
 
-    Only allows updating subnets owned by the requesting tenant.
+    Restricted to the subnet's project, except an admin-project token may update
+    any project's subnet.
     """
     data = request.get("subnet", {})
-    project_id = _resolve_project_id(data, x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     subnet = db.update_subnet(
         subnet_id=subnet_id,
         project_id=project_id,
@@ -471,10 +472,12 @@ async def update_port(
 ) -> dict[str, Any]:
     """Update a port.
 
-    Only allows updating ports owned by the requesting tenant.
+    Restricted to the port's project, except an admin-project token may update
+    any project's port (e.g. Waldur toggles port security from its admin
+    session).
     """
     data = request.get("port", {})
-    project_id = _resolve_project_id(data, x_auth_token)
+    project_id = _lookup_project_id(x_auth_token)
     port = db.update_port(
         port_id=port_id,
         project_id=project_id,
