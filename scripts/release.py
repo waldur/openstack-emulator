@@ -227,22 +227,6 @@ def generate_changelog(version: str) -> None:
             sys.exit(1)
 
 
-def get_push_remote() -> str:
-    """Remote to push the release to.
-
-    Uses the current branch's configured upstream (e.g. the remote of
-    `origin/main`) so the push targets whatever the user set up, regardless of
-    how the remote is named. Falls back to `origin`.
-    """
-    result = run_command(
-        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-        check=False,
-    )
-    if result.returncode == 0 and "/" in result.stdout:
-        return result.stdout.strip().split("/", 1)[0]
-    return "origin"
-
-
 def create_git_tag(version: str) -> None:
     """Commit the version bump, create the git tag, and push after confirmation.
 
@@ -259,7 +243,7 @@ def create_git_tag(version: str) -> None:
     run_command(["git", "commit", "-m", f"Release version {version}"])
     run_command(["git", "tag", "-a", tag_name, "-m", f"Release {version}"])
 
-    remote = get_push_remote()
+    remote = "origin"
     branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     print(f"\nCreated release commit and tag {tag_name}.")
     print("Pushing the tag triggers GitLab CI to:")
