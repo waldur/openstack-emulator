@@ -231,10 +231,16 @@ def create_git_tag(version: str) -> None:
     print("  - Publish opennode/openstack-emulator:latest to Docker Hub")
     print("  - Push openstack-emulator-X.Y.Z.tgz + updated index.yaml to gh-pages on GitHub")
 
-    if click.confirm("Push tag (and the bump commit) to origin?"):
-        run_command(["git", "push"])
-        run_command(["git", "push", "--tags"])
-        print("Pushed. Watch the GitLab pipeline for the release jobs.")
+    # Push to GitLab explicitly. GitLab is the primary that triggers the
+    # release pipeline on $CI_COMMIT_TAG and push-mirrors to GitHub. Bare
+    # `git push` would target this clone's default remote, which may be a
+    # personal GitHub fork — sending the tag to the mirror side instead of
+    # GitLab and silently skipping the release pipeline.
+    if click.confirm("Push tag (and the bump commit) to GitLab?"):
+        branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+        run_command(["git", "push", "gitlab", branch])
+        run_command(["git", "push", "gitlab", tag_name])
+        print("Pushed to GitLab. Watch the GitLab pipeline for the release jobs.")
 
 
 @click.group()
