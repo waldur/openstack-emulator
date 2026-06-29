@@ -703,8 +703,8 @@ async def create_floating_ip(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a floating IP."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("floatingip", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     fip = db.create_floating_ip(
         floating_network_id=data.get("floating_network_id", ""),
@@ -804,8 +804,8 @@ async def create_security_group(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a security group."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("security_group", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     sg = db.create_security_group(
         name=data.get("name", ""),
@@ -892,8 +892,8 @@ async def create_security_group_rule(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create a security group rule."""
-    project_id = _get_project_id(x_auth_token)
     data = request.get("security_group_rule", {})
+    project_id = _resolve_project_id(data, x_auth_token)
 
     rule = db.create_security_group_rule(
         security_group_id=data.get("security_group_id", ""),
