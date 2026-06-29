@@ -1,6 +1,6 @@
 [project]
 name = "openstack-emulator"
-version = "0.0.2"
+version = "0.2.0"
 description = "OpenStack API emulator for testing purposes"
 readme = "README.md"
 license = { text = "MIT" }
