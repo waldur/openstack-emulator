@@ -82,6 +82,18 @@ def get_chart_version() -> str:
     sys.exit(1)
 
 
+def get_chart_appversion() -> str:
+    """Read appVersion from charts/openstack-emulator/Chart.yaml."""
+    if not CHART_YAML.exists():
+        print(f"Error: {CHART_YAML} not found")
+        sys.exit(1)
+    for line in CHART_YAML.read_text().splitlines():
+        if line.startswith("appVersion:"):
+            return line.split(":", 1)[1].strip().strip("\"'")
+    print("Error: Could not find appVersion: in Chart.yaml")
+    sys.exit(1)
+
+
 def update_pyproject_version(new_version: str) -> None:
     """Update pyproject.toml's [project] section version."""
     content = PYPROJECT.read_text()
@@ -99,26 +111,32 @@ def update_pyproject_version(new_version: str) -> None:
 
 
 def update_chart_version(new_version: str) -> None:
-    """Update charts/openstack-emulator/Chart.yaml's version field.
+    """Update charts/openstack-emulator/Chart.yaml's version AND appVersion.
 
-    Leaves appVersion untouched: the emulator image is currently only published with
-    the :latest tag, and bumping appVersion would make the chart try to pull a
-    non-existent image tag.
+    Both track the release version: ``version`` is the chart version, and
+    ``appVersion`` is the app (image) version the chart deploys. The CI release
+    pipeline publishes a Docker image tagged with this version, and the chart's
+    image tag defaults to ``.Chart.AppVersion`` (see templates/_helpers.tpl), so
+    bumping appVersion makes the chart deploy the matching image.
     """
     lines = CHART_YAML.read_text().splitlines(keepends=True)
     updated_lines = []
-    found = False
+    found_version = found_app = False
     for line in lines:
         if line.startswith("version:"):
             updated_lines.append(f"version: {new_version}\n")
-            found = True
+            found_version = True
+        elif line.startswith("appVersion:"):
+            updated_lines.append(f'appVersion: "{new_version}"\n')
+            found_app = True
         else:
             updated_lines.append(line)
-    if not found:
-        print("Error: Could not find version: line in Chart.yaml")
+    if not found_version or not found_app:
+        missing = "version:" if not found_version else "appVersion:"
+        print(f"Error: Could not find {missing} line in Chart.yaml")
         sys.exit(1)
     CHART_YAML.write_text("".join(updated_lines))
-    print(f"Updated Chart.yaml -> version: {new_version}")
+    print(f"Updated Chart.yaml -> version: {new_version}, appVersion: {new_version}")
 
 
 def validate_version(version: str) -> bool:
@@ -253,10 +271,12 @@ def status() -> None:
     """Show current versions and recent tags."""
     py_v = get_pyproject_version()
     ch_v = get_chart_version()
-    print(f"pyproject.toml      version: {py_v}")
-    print(f"Chart.yaml          version: {ch_v}")
-    if py_v != ch_v:
-        print("WARN: pyproject.toml and Chart.yaml are out of sync.")
+    app_v = get_chart_appversion()
+    print(f"pyproject.toml      version:    {py_v}")
+    print(f"Chart.yaml          version:    {ch_v}")
+    print(f"Chart.yaml          appVersion: {app_v}")
+    if len({py_v, ch_v, app_v}) != 1:
+        print("WARN: pyproject version, Chart version and appVersion are out of sync.")
     result = run_command(["git", "tag", "--list", "--sort=-creatordate"], check=False)
     if result.returncode == 0 and result.stdout.strip():
         print("Recent tags:")
