@@ -150,17 +150,21 @@ EOF
         echo "Created $CHANGELOG_FILE"
     else
         # Insert after the header (after the first blank line following "# Changelog")
+        # `|| true`: grep exits non-zero when there is no match, which would
+        # abort the script under `set -euo pipefail`.
         local header_end
-        header_end=$(grep -n "^$" "$CHANGELOG_FILE" | head -1 | cut -d: -f1)
+        header_end=$(grep -n "^$" "$CHANGELOG_FILE" | head -1 | cut -d: -f1 || true)
 
         if [ -z "$header_end" ]; then
             # No blank line found, append to end
             echo "" >> "$CHANGELOG_FILE"
             echo "$entry" >> "$CHANGELOG_FILE"
         else
-            # Insert after the header section (find the line before the first ## entry)
+            # Insert after the header section (find the line before the first ## entry).
+            # `|| true`: a changelog with no entries yet has no `## ` line, and grep's
+            # non-zero exit would otherwise abort the script under `set -euo pipefail`.
             local first_entry_line
-            first_entry_line=$(grep -n "^## " "$CHANGELOG_FILE" | head -1 | cut -d: -f1)
+            first_entry_line=$(grep -n "^## " "$CHANGELOG_FILE" | head -1 | cut -d: -f1 || true)
 
             if [ -z "$first_entry_line" ]; then
                 # No existing entries, append
