@@ -7286,15 +7286,19 @@ class Database:
         provider we compute effective capacity per resource class
         (``(total - reserved) * allocation_ratio``) minus current usage, and emit
         an allocation request only for providers that can currently fit every
-        requested resource class and carry every required trait. Emulator
-        providers hold no traits, so any ``required`` trait yields no candidates.
+        requested resource class and satisfy every required trait. Per the
+        Placement API, ``required`` members may be forbidden traits (``!``-prefixed);
+        emulator providers hold no traits, so a required trait excludes every
+        provider while a forbidden trait is trivially satisfied.
 
         ``allocation_requests`` is empty when the cloud cannot currently place the
         request; callers (e.g. waldur-mastermind's WAL-9893 pre-flight order check)
         treat that as "no schedulable host". Only the requested resource classes
         are checked, so a VCPU/MEMORY_MB-only request never fails on DISK_GB.
         """
-        required_traits = set(required or [])
+        # Providers carry no traits, so only positive required traits (not the
+        # forbidden `!`-prefixed ones) can exclude a provider.
+        has_required_trait = any(not trait.startswith("!") for trait in (required or []))
         allocation_requests: list[dict[str, Any]] = []
         provider_summaries: dict[str, Any] = {}
         with self._lock:
@@ -7320,7 +7324,7 @@ class Database:
                     ),
                 }
                 # Emulator providers advertise no traits (see get_provider_traits).
-                if required_traits:
+                if has_required_trait:
                     continue
                 fits = all(
                     rc in capacity and capacity[rc] - used_by_class.get(rc, 0) >= amount
@@ -7341,6 +7345,7 @@ class Database:
                         for rc, cap in capacity.items()
                     },
                     "traits": [],
+                    "generation": provider.generation,
                     "parent_provider_uuid": provider.parent_provider_uuid,
                     "root_provider_uuid": provider.root_provider_uuid or provider.uuid,
                 }

@@ -236,13 +236,23 @@ class TestAllocationCandidates:
         assert summary["VCPU"]["used"] == 1
 
     def test_required_trait_yields_no_candidates(self, client, auth_token):
-        # Emulator providers carry no traits, so any required trait excludes them.
+        # Emulator providers carry no traits, so a required trait excludes them.
         response = client.get(
             "/allocation_candidates?resources=VCPU:1&required=HW_CPU_X86_AVX",
             headers={"X-Auth-Token": auth_token},
         )
         assert response.status_code == 200
         assert response.json()["allocation_requests"] == []
+
+    def test_forbidden_trait_is_satisfied(self, client, auth_token):
+        # A forbidden (!-prefixed) trait is trivially satisfied by trait-less
+        # providers, so the candidate is still returned.
+        response = client.get(
+            "/allocation_candidates?resources=VCPU:1&required=!HW_CPU_X86_SSE",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        assert len(response.json()["allocation_requests"]) == 1
 
     def test_malformed_resources_returns_400(self, client, auth_token):
         response = client.get(
