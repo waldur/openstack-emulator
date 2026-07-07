@@ -2,8 +2,30 @@ apiVersion: v1
 entries:
   openstack-emulator:
   - apiVersion: v2
+    appVersion: 0.2.2
+    created: "2026-07-07T10:14:58.197738177Z"
+    description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
+      intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
+    digest: 9655f4f2f133e170056efe82e9d8b9a9075d9adab84c11d5fca7408642a5c057
+    home: https://code.opennodecloud.com/waldur/openstack-emulator
+    keywords:
+    - openstack
+    - emulator
+    - testing
+    - waldur
+    maintainers:
+    - name: Waldur Team
+      url: https://waldur.com/
+    name: openstack-emulator
+    sources:
+    - https://code.opennodecloud.com/waldur/openstack-emulator
+    type: application
+    urls:
+    - https://waldur.github.io/openstack-emulator/charts/openstack-emulator-0.2.2.tgz
+    version: 0.2.2
+  - apiVersion: v2
     appVersion: 0.2.1
-    created: "2026-06-29T20:52:02.826570463Z"
+    created: "2026-07-07T10:14:58.196859781Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 796abbeba168e09141cbc7df6a9d39c11cde2d0a9d2928b7b5b6760411d868c8
@@ -25,7 +47,7 @@ entries:
     version: 0.2.1
   - apiVersion: v2
     appVersion: latest
-    created: "2026-06-29T20:52:02.824859769Z"
+    created: "2026-07-07T10:14:58.195962506Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 734230e7546ced73429c64d012b3825ff36e278d69f6a756aeba78194c889493
@@ -47,7 +69,7 @@ entries:
     version: 0.0.2
   - apiVersion: v2
     appVersion: latest
-    created: "2026-06-29T20:52:02.821996118Z"
+    created: "2026-07-07T10:14:58.195053765Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 0255f094752659a69f4fc87d1e13a663333b6199613c03cd8766ae217427cde2
@@ -67,4 +89,4 @@ entries:
     urls:
     - https://waldur.github.io/openstack-emulator/charts/openstack-emulator-0.0.1.tgz
     version: 0.0.1
-generated: "2026-06-29T20:52:02.82104759Z"
+generated: "2026-07-07T10:14:58.192167755Z"
