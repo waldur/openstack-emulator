@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from emulator.core.models import ResourceProvider
 
 
 @pytest.fixture(autouse=True)
@@ -181,6 +182,92 @@ class TestStubs:
         )
         assert response.status_code == 200
         assert response.json()["allocations"] == {}
+
+
+class TestAllocationCandidates:
+    def test_requires_token(self, client):
+        response = client.get("/allocation_candidates?resources=VCPU:1")
+        assert response.status_code == 401
+
+    def test_candidate_returned_when_request_fits(self, client, auth_token, provider_uuid):
+        response = client.get(
+            "/allocation_candidates?resources=VCPU:2,MEMORY_MB:2048",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["allocation_requests"]) == 1
+        allocation = body["allocation_requests"][0]["allocations"][provider_uuid]
+        assert allocation["resources"] == {"VCPU": 2, "MEMORY_MB": 2048}
+        # provider_summaries surfaces effective capacity for the fitting provider.
+        assert provider_uuid in body["provider_summaries"]
+        summary = body["provider_summaries"][provider_uuid]["resources"]
+        assert summary["VCPU"]["capacity"] == 512  # (32 - 0) * 16.0
+        assert summary["VCPU"]["used"] == 0
+
+    def test_no_candidates_when_request_exceeds_capacity(self, client, auth_token):
+        # Effective VCPU capacity is 512 (32 cores * 16 overcommit); ask for more.
+        response = client.get(
+            "/allocation_candidates?resources=VCPU:1000",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["allocation_requests"] == []
+        assert body["provider_summaries"] == {}
+
+    def test_running_server_reduces_availability(self, client, auth_token):
+        # m1.small (flavor "2") consumes 1 VCPU; usage must be reflected as `used`.
+        db.create_server(
+            name="test-vm",
+            flavor_id="2",
+            image_id="any",
+            tenant_id="some-tenant",
+            user_id="some-user",
+        )
+        response = client.get(
+            "/allocation_candidates?resources=VCPU:1",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["allocation_requests"]) == 1
+        summary = next(iter(body["provider_summaries"].values()))["resources"]
+        assert summary["VCPU"]["used"] == 1
+
+    def test_required_trait_yields_no_candidates(self, client, auth_token):
+        # Emulator providers carry no traits, so any required trait excludes them.
+        response = client.get(
+            "/allocation_candidates?resources=VCPU:1&required=HW_CPU_X86_AVX",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        assert response.json()["allocation_requests"] == []
+
+    def test_malformed_resources_returns_400(self, client, auth_token):
+        response = client.get(
+            "/allocation_candidates?resources=VCPU",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 400
+
+    def test_limit_caps_candidates(self, client, auth_token):
+        # Seed a second provider so an unbounded query would return two candidates.
+        second = ResourceProvider(name="compute-host-2", generation=0)
+        second.root_provider_uuid = second.uuid
+        db._resource_providers[second.uuid] = second
+
+        unbounded = client.get(
+            "/allocation_candidates?resources=VCPU:1",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert len(unbounded.json()["allocation_requests"]) == 2
+
+        limited = client.get(
+            "/allocation_candidates?resources=VCPU:1&limit=1",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert len(limited.json()["allocation_requests"]) == 1
 
 
 class TestServiceCatalog:

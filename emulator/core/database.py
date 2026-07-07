@@ -7274,6 +7274,83 @@ class Database:
                 },
             }
 
+    def get_allocation_candidates(
+        self,
+        resources: dict[str, int],
+        required: list[str] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Placement ``/allocation_candidates``: which providers can place a request.
+
+        Mirrors the real Placement pre-flight scheduler check. For each resource
+        provider we compute effective capacity per resource class
+        (``(total - reserved) * allocation_ratio``) minus current usage, and emit
+        an allocation request only for providers that can currently fit every
+        requested resource class and carry every required trait. Emulator
+        providers hold no traits, so any ``required`` trait yields no candidates.
+
+        ``allocation_requests`` is empty when the cloud cannot currently place the
+        request; callers (e.g. waldur-mastermind's WAL-9893 pre-flight order check)
+        treat that as "no schedulable host". Only the requested resource classes
+        are checked, so a VCPU/MEMORY_MB-only request never fails on DISK_GB.
+        """
+        required_traits = set(required or [])
+        allocation_requests: list[dict[str, Any]] = []
+        provider_summaries: dict[str, Any] = {}
+        with self._lock:
+            usage = self._compute_compute_usage()
+            used_by_class = {
+                "VCPU": usage["vcpus_used"],
+                "MEMORY_MB": usage["memory_mb_used"],
+                "DISK_GB": usage["disk_gb_used"],
+            }
+            for provider in self._resource_providers.values():
+                capacity = {
+                    "VCPU": int(
+                        (provider.total_vcpus - provider.reserved_vcpus)
+                        * provider.allocation_ratio_vcpu
+                    ),
+                    "MEMORY_MB": int(
+                        (provider.total_memory_mb - provider.reserved_memory_mb)
+                        * provider.allocation_ratio_memory
+                    ),
+                    "DISK_GB": int(
+                        (provider.total_disk_gb - provider.reserved_disk_gb)
+                        * provider.allocation_ratio_disk
+                    ),
+                }
+                # Emulator providers advertise no traits (see get_provider_traits).
+                if required_traits:
+                    continue
+                fits = all(
+                    rc in capacity and capacity[rc] - used_by_class.get(rc, 0) >= amount
+                    for rc, amount in resources.items()
+                )
+                if not fits:
+                    continue
+                allocation_requests.append(
+                    {
+                        "allocations": {
+                            provider.uuid: {"resources": dict(resources)},
+                        }
+                    }
+                )
+                provider_summaries[provider.uuid] = {
+                    "resources": {
+                        rc: {"capacity": cap, "used": used_by_class.get(rc, 0)}
+                        for rc, cap in capacity.items()
+                    },
+                    "traits": [],
+                    "parent_provider_uuid": provider.parent_provider_uuid,
+                    "root_provider_uuid": provider.root_provider_uuid or provider.uuid,
+                }
+        if limit is not None:
+            allocation_requests = allocation_requests[:limit]
+        return {
+            "allocation_requests": allocation_requests,
+            "provider_summaries": provider_summaries,
+        }
+
     def _init_default_tokens(self) -> None:
         """Initialize tokens - currently empty, tokens should be created via authentication."""
         logger.info("Token initialization - no default tokens created")
