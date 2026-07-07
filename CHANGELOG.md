@@ -4,6 +4,11 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2] - 2026-07-07
+
+### Added
+- Allow admin users to access servers across all projects
+
 ## [0.2.1] - 2026-06-29
 
 ### Changed
