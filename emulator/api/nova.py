@@ -1,13 +1,13 @@
 """Nova Compute API endpoints for OpenStack emulator."""
 
-from emulator.core.simple_auth import TokenInfo
-from typing import Any
+from typing import Any, TypeGuard
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
-from emulator.core.simple_auth import validate_token_simple
+from emulator.core.models import Server
+from emulator.core.simple_auth import TokenInfo, validate_token_simple
 
 router = APIRouter(tags=["compute"])
 
@@ -108,7 +108,7 @@ def get_token_or_raise(auth_token: str | None) -> TokenInfo:
     return validate_token_simple(auth_token, "Nova")
 
 
-def is_server_accessible(server: Any, token: TokenInfo) -> bool:
+def is_server_accessible(server: Server | None, token: TokenInfo) -> TypeGuard[Server]:
     if not server:
         return False
     return token.is_admin or server.tenant_id == token.project_id
