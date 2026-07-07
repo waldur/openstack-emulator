@@ -1,5 +1,6 @@
 """Nova Compute API endpoints for OpenStack emulator."""
 
+from emulator.core.simple_auth import TokenInfo
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -102,9 +103,15 @@ class KeypairCreateBody(BaseModel):
 
 
 # Helper function to validate tokens
-def get_token_or_raise(auth_token: str | None) -> Any:
+def get_token_or_raise(auth_token: str | None) -> TokenInfo:
     """Validate token using shared database."""
     return validate_token_simple(auth_token, "Nova")
+
+
+def is_server_accessible(server: Any, token: TokenInfo) -> bool:
+    if not server:
+        return False
+    return token.is_admin or server.tenant_id == token.project_id
 
 
 # API Version endpoints
@@ -172,8 +179,11 @@ async def list_servers(
     """List servers (basic info)."""
     token = get_token_or_raise(x_auth_token)
 
+    all_tenants = request.query_params.get("all_tenants")
+    tenant_id = None if (token.is_admin and all_tenants) else token.project_id
+
     servers = db.list_servers(
-        tenant_id=token.project_id,
+        tenant_id=tenant_id,
         status=status,
         name=name,
         flavor=flavor,
@@ -202,8 +212,11 @@ async def list_servers_detail(
     """List servers (detailed info)."""
     token = get_token_or_raise(x_auth_token)
 
+    all_tenants = request.query_params.get("all_tenants")
+    tenant_id = None if (token.is_admin and all_tenants) else token.project_id
+
     servers = db.list_servers(
-        tenant_id=token.project_id,
+        tenant_id=tenant_id,
         status=status,
         name=name,
         flavor=flavor,
@@ -275,10 +288,7 @@ async def get_server(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     return {"server": server.to_dict(detailed=True)}
@@ -294,10 +304,7 @@ async def update_server(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     updated = db.update_server(server_id, name=body.server.name)
@@ -316,10 +323,7 @@ async def delete_server(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     if not db.delete_server(server_id):
@@ -339,10 +343,7 @@ async def server_action(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     body = await request.json()
@@ -483,14 +484,12 @@ async def list_server_security_groups(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     # Ensure default security group exists for this tenant
-    db.get_or_create_default_security_group(token.project_id)
+    project_id = server.tenant_id if token.is_admin else token.project_id
+    db.get_or_create_default_security_group(project_id)
 
     # Get full security group details
     # Server only stores names: [{"name": "default"}]
@@ -500,7 +499,7 @@ async def list_server_security_groups(
         if sg_name:
             # Find the security group by name in the project
             # Note: list_security_groups returns a list
-            sgs = db.list_security_groups(project_id=token.project_id, name=sg_name)
+            sgs = db.list_security_groups(project_id=project_id, name=sg_name)
             if sgs:
                 # Use the first match (names should be unique per project)
                 # Create a shallow copy to ensure we don't mutate any shared state
@@ -523,10 +522,7 @@ async def get_server_metadata(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     return {"metadata": server.metadata}
@@ -542,10 +538,7 @@ async def update_server_metadata(
     token = get_token_or_raise(x_auth_token)
 
     server = db.get_server(server_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    if server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     body = await request.json()
@@ -1229,7 +1222,7 @@ async def list_server_volume_attachments(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     attachments = db.list_server_volume_attachments(server_id)
@@ -1247,7 +1240,7 @@ async def attach_volume_to_server(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     # Verify volume exists
@@ -1284,7 +1277,7 @@ async def get_server_volume_attachment(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     attachment = db.get_server_volume_attachment(server_id, attachment_id)
@@ -1305,7 +1298,7 @@ async def detach_volume_from_server(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     success = db.detach_volume_from_server(server_id, attachment_id)
@@ -1354,7 +1347,7 @@ async def list_server_interfaces(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     interfaces = db.list_server_network_interfaces(server_id)
@@ -1372,7 +1365,7 @@ async def attach_interface_to_server(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     interface = db.attach_interface_to_server(
@@ -1396,7 +1389,7 @@ async def get_server_interface(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     interface = db.get_server_network_interface(server_id, port_id)
@@ -1417,7 +1410,7 @@ async def detach_interface_from_server(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     success = db.detach_interface_from_server(server_id, port_id)
@@ -1440,7 +1433,7 @@ async def get_server_diagnostics(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     try:
@@ -1488,7 +1481,7 @@ async def list_server_consoles(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     consoles = db.list_server_consoles(server_id)
@@ -1506,7 +1499,7 @@ async def create_server_console(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     console = db.create_server_console(server_id, body.console.type)
@@ -1524,7 +1517,7 @@ async def get_server_console(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     console = db.get_server_console(server_id, console_id)
@@ -1545,7 +1538,7 @@ async def delete_server_console(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     success = db.delete_server_console(server_id, console_id)
@@ -1566,7 +1559,7 @@ async def create_remote_console(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     console = db.create_remote_console(
@@ -1594,7 +1587,7 @@ async def list_server_tags(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     tags = db.list_server_tags(server_id)
@@ -1612,7 +1605,7 @@ async def replace_server_tags(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     db.replace_server_tags(server_id, body.tags)
@@ -1629,7 +1622,7 @@ async def clear_server_tags(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     db.clear_server_tags(server_id)
@@ -1647,7 +1640,7 @@ async def check_server_tag(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     tags = db.list_server_tags(server_id)
@@ -1668,7 +1661,7 @@ async def add_server_tag(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     # Check if tag already exists
@@ -1690,7 +1683,7 @@ async def remove_server_tag(
 
     # Verify server exists and user has access
     server = db.get_server(server_id)
-    if not server or server.tenant_id != token.project_id:
+    if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
     success = db.remove_server_tag(server_id, tag)
