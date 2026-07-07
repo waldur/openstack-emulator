@@ -13,6 +13,18 @@ include:
 variables:
   COMPONENT_VERSION: "latest"
 
+# Run in merge-request pipelines (so lint/type/test gate the merge), on the
+# default branch, and on tags. On a feature branch with an open MR only the
+# merge_request_event pipeline matches, so we don't get duplicate branch+MR
+# pipelines. Without a merge_request_event rule these jobs run only in branch
+# pipelines, which GitLab does not treat as the MR merge gate — that gap let a
+# red branch pipeline merge behind a green (near-empty) MR pipeline.
+.gate-rules:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: $CI_COMMIT_TAG
+
 .python-setup:
   image: registry.hpc.ut.ee/mirror/library/python:3.12-bullseye
   before_script:
@@ -20,19 +32,20 @@ variables:
     - pip install -e ".[dev]"
 
 Run linters:
-  extends: .python-setup
+  extends: [.python-setup, .gate-rules]
   stage: test
   script:
     - ruff format --check .
     - ruff check .
 
 Run type checkings:
-  extends: .python-setup
+  extends: [.python-setup, .gate-rules]
   stage: test
   script:
     - mypy emulator
 
 .test-base:
+  extends: .gate-rules
   stage: test
   script:
     - python -m pip install --upgrade pip
