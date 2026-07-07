@@ -158,6 +158,45 @@ def check_git_status() -> None:
             sys.exit(1)
 
 
+def get_default_branch() -> str:
+    """Determine the repo's default branch (e.g. 'main').
+
+    Resolves the remote HEAD symref (origin/HEAD -> origin/main); falls back
+    to 'main' if origin/HEAD is not set locally.
+    """
+    result = run_command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        check=False,
+    )
+    ref = result.stdout.strip()
+    if result.returncode == 0 and ref:
+        return ref.rsplit("/", 1)[-1]
+    return "main"
+
+
+def ensure_release_branch(allow_branch: bool) -> None:
+    """Refuse to cut a release from anything but the default branch.
+
+    The tag is created on and pushed from HEAD, so releasing off a feature
+    branch tags a commit that isn't on the default branch (and CI then
+    publishes from an unmerged commit). Guard against that unless the caller
+    explicitly opts in with --allow-branch or confirms interactively.
+    """
+    current = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    default = get_default_branch()
+    if current == default:
+        return
+    print(f"Warning: You are on '{current}', not the default branch '{default}'.")
+    print("Releasing here tags a commit that is not on the default branch,")
+    print("so CI would publish the release from an unmerged commit.")
+    if allow_branch:
+        print("--allow-branch set; continuing on this branch anyway.")
+        return
+    if not click.confirm(f"Release from '{current}' anyway?"):
+        print(f"Aborted. Switch to the default branch first:  git switch {default}")
+        sys.exit(1)
+
+
 def run_pre_release_checks() -> None:
     """Local equivalents of the CI lint/type/chart jobs.
 
@@ -291,7 +330,18 @@ def status() -> None:
 @click.option("--skip-checks", is_flag=True, help="Skip local pre-release checks.")
 @click.option("--skip-changelog", is_flag=True, help="Skip CHANGELOG.md generation.")
 @click.option("--skip-tag", is_flag=True, help="Bump versions but do not commit/tag.")
-def release(version: str, skip_checks: bool, skip_changelog: bool, skip_tag: bool) -> None:
+@click.option(
+    "--allow-branch",
+    is_flag=True,
+    help="Allow releasing from a non-default branch (skips the branch guard).",
+)
+def release(
+    version: str,
+    skip_checks: bool,
+    skip_changelog: bool,
+    skip_tag: bool,
+    allow_branch: bool,
+) -> None:
     """Cut a new release: bump versions, optionally run checks, optionally tag and push."""
     current = get_pyproject_version()
 
@@ -306,6 +356,8 @@ def release(version: str, skip_checks: bool, skip_changelog: bool, skip_tag: boo
 
     print(f"Releasing {version} (current: {current})")
     check_git_status()
+    if not skip_tag:
+        ensure_release_branch(allow_branch)
     update_pyproject_version(version)
     update_chart_version(version)
 
