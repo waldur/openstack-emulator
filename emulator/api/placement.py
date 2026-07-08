@@ -36,6 +36,49 @@ async def get_versions() -> dict[str, Any]:
     }
 
 
+def _parse_resources(resources: str) -> dict[str, int]:
+    """Parse a Placement ``resources`` query (``VCPU:2,MEMORY_MB:2048``)."""
+    parsed: dict[str, int] = {}
+    for item in resources.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        resource_class, sep, amount = item.partition(":")
+        if not sep:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Malformed resources query member: {item!r}",
+            )
+        try:
+            parsed[resource_class.strip()] = int(amount)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Non-integer amount in resources query member: {item!r}",
+            )
+    return parsed
+
+
+@router.get("/allocation_candidates")
+async def get_allocation_candidates(
+    resources: str = Query(...),
+    required: str | None = Query(None),
+    limit: int | None = Query(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Pre-flight scheduler check: which providers can satisfy `resources`.
+
+    `resources` is comma-joined ``CLASS:amount`` (e.g. ``VCPU:2,MEMORY_MB:2048``);
+    `required` is an optional comma-joined trait list. Returns the Placement
+    allocation-candidates document. ``allocation_requests`` is empty when the
+    cloud cannot currently place the request.
+    """
+    _require_token(x_auth_token)
+    parsed = _parse_resources(resources)
+    required_traits = [t for t in required.split(",") if t] if required else None
+    return db.get_allocation_candidates(parsed, required=required_traits, limit=limit)
+
+
 @router.get("/resource_providers")
 async def list_resource_providers(
     name: str | None = Query(None),

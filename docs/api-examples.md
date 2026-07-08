@@ -576,6 +576,16 @@ curl -s "http://localhost:8778/resource_providers/$RP_UUID/inventories" \
 # Usages: live consumption, computed from running Nova servers
 curl -s "http://localhost:8778/resource_providers/$RP_UUID/usages" \
   -H "X-Auth-Token: $TOKEN" | jq
+
+# Allocation candidates: pre-flight scheduler check. `resources` is comma-joined
+# CLASS:amount. `allocation_requests` is non-empty when a provider can place the
+# request, and empty when the cloud is full (effective capacity minus usage).
+curl -s "http://localhost:8778/allocation_candidates?resources=VCPU:2,MEMORY_MB:2048" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# A request larger than any provider's effective capacity returns no candidates
+curl -s "http://localhost:8778/allocation_candidates?resources=VCPU:1000" \
+  -H "X-Auth-Token: $TOKEN" | jq '.allocation_requests'
 ```
 
 ## Limits and Quotas
