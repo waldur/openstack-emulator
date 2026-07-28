@@ -4,6 +4,11 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.4] - 2026-07-28
+
+### Fixed
+- Validate port ownership in Nova interface attach
+
 ## [0.2.3] - 2026-07-08
 
 ### Added
