@@ -30,8 +30,8 @@ Represents an identity domain that contains users, groups, and projects.
 ```python
 @dataclass
 class Domain:
-    id: str                    # UUID
-    name: str                  # Unique name
+    id: str  # UUID
+    name: str  # Unique name
     description: str = ""
     enabled: bool = True
     tags: list[str] = []
@@ -44,8 +44,8 @@ Represents a project (tenant) that owns resources.
 ```python
 @dataclass
 class Project:
-    id: str                    # UUID
-    name: str                  # Unique within domain
+    id: str  # UUID
+    name: str  # Unique within domain
     description: str = ""
     domain_id: str = "default"
     parent_id: str | None = None  # For hierarchical projects
@@ -61,13 +61,13 @@ Represents an authenticated user. Users belong to a domain and gain access to pr
 ```python
 @dataclass
 class User:
-    id: str                    # UUID
-    name: str                  # Unique within domain
+    id: str  # UUID
+    name: str  # Unique within domain
     description: str = ""
-    domain_id: str = "default" # User belongs to this domain
+    domain_id: str = "default"  # User belongs to this domain
     default_project_id: str | None = None  # Default project for scoping
     enabled: bool = True
-    password_hash: str = ""    # SHA-256 hash
+    password_hash: str = ""  # SHA-256 hash
     email: str = ""
     created_at: datetime
     updated_at: datetime
@@ -83,18 +83,19 @@ Roles define what actions a user can perform. Role assignments grant roles to us
 @dataclass
 class Role:
     id: str
-    name: str                  # admin, member, reader, etc.
+    name: str  # admin, member, reader, etc.
     description: str = ""
     domain_id: str | None = None  # Global or domain-scoped
 
+
 @dataclass
 class RoleAssignment:
-    role_id: str               # The role being assigned
-    user_id: str | None = None    # User receiving the role (or group_id)
-    group_id: str | None = None   # Group receiving the role (or user_id)
-    project_id: str | None = None # Project scope (or domain_id)
+    role_id: str  # The role being assigned
+    user_id: str | None = None  # User receiving the role (or group_id)
+    group_id: str | None = None  # Group receiving the role (or user_id)
+    project_id: str | None = None  # Project scope (or domain_id)
     domain_id: str | None = None  # Domain scope (or project_id)
-    inherited: bool = False       # Inherit to child projects
+    inherited: bool = False  # Inherit to child projects
 ```
 
 A role assignment connects:
@@ -107,7 +108,7 @@ A role assignment connects:
 ```python
 @dataclass
 class Token:
-    id: str                    # Token value
+    id: str  # Token value
     user_id: str
     user_name: str
     project_id: str
@@ -129,15 +130,15 @@ Represents a virtual machine instance.
 ```python
 @dataclass
 class Server:
-    id: str                    # UUID
+    id: str  # UUID
     name: str
-    status: ServerStatus       # ACTIVE, BUILD, SHUTOFF, etc.
+    status: ServerStatus  # ACTIVE, BUILD, SHUTOFF, etc.
     task_state: TaskState | None
-    power_state: PowerState    # RUNNING, SHUTDOWN, etc.
-    tenant_id: str             # Owning project
-    user_id: str               # Creating user
-    flavor_id: str             # Reference to Flavor
-    image_id: str              # Reference to Image
+    power_state: PowerState  # RUNNING, SHUTDOWN, etc.
+    tenant_id: str  # Owning project
+    user_id: str  # Creating user
+    flavor_id: str  # Reference to Flavor
+    image_id: str  # Reference to Image
     host: str = "compute-host-1"
     availability_zone: str = "nova"
     key_name: str | None = None
@@ -174,12 +175,12 @@ Represents a VM size/configuration template.
 @dataclass
 class Flavor:
     id: str
-    name: str                  # m1.tiny, m1.small, etc.
+    name: str  # m1.tiny, m1.small, etc.
     vcpus: int = 1
-    ram: int = 512             # MB
-    disk: int = 10             # GB
-    ephemeral: int = 0         # GB
-    swap: int = 0              # MB
+    ram: int = 512  # MB
+    disk: int = 10  # GB
+    ephemeral: int = 0  # GB
+    swap: int = 0  # MB
     rxtx_factor: float = 1.0
     is_public: bool = True
     disabled: bool = False
@@ -196,8 +197,8 @@ For affinity/anti-affinity scheduling.
 class ServerGroup:
     id: str
     name: str
-    policies: list[str]        # affinity, anti-affinity, soft-*
-    members: list[str]         # Server IDs
+    policies: list[str]  # affinity, anti-affinity, soft-*
+    members: list[str]  # Server IDs
     project_id: str
     user_id: str
     metadata: dict[str, str]
@@ -209,7 +210,7 @@ class ServerGroup:
 ```python
 @dataclass
 class Keypair:
-    name: str                  # Unique per user
+    name: str  # Unique per user
     public_key: str
     fingerprint: str
     user_id: str
@@ -227,8 +228,8 @@ class Volume:
     id: str
     name: str
     description: str = ""
-    status: VolumeStatus       # available, in-use, creating, etc.
-    size: int = 1              # GB
+    status: VolumeStatus  # available, in-use, creating, etc.
+    size: int = 1  # GB
     volume_type: str = "lvmdriver-1"
     availability_zone: str = "nova"
     bootable: bool = False
@@ -265,7 +266,7 @@ class Snapshot:
     description: str = ""
     status: SnapshotStatus
     volume_id: str
-    size: int = 0              # GB (inherited from volume)
+    size: int = 0  # GB (inherited from volume)
     project_id: str
     user_id: str
     metadata: dict[str, str]
@@ -283,13 +284,13 @@ class Snapshot:
 class GlanceImage:
     id: str
     name: str
-    status: ImageStatus        # queued, saving, active, etc.
+    status: ImageStatus  # queued, saving, active, etc.
     visibility: ImageVisibility  # public, private, shared, community
     protected: bool = False
-    owner: str = ""            # project_id
-    min_disk: int = 0          # GB
-    min_ram: int = 0           # MB
-    size: int | None = None    # bytes
+    owner: str = ""  # project_id
+    min_disk: int = 0  # GB
+    min_ram: int = 0  # MB
+    size: int | None = None  # bytes
     virtual_size: int | None = None
     checksum: str | None = None
     os_hash_algo: str | None = None
@@ -315,8 +316,8 @@ For image sharing between projects.
 @dataclass
 class ImageMember:
     image_id: str
-    member_id: str             # project_id
-    status: str = "pending"    # pending, accepted, rejected
+    member_id: str  # project_id
+    status: str = "pending"  # pending, accepted, rejected
     created_at: datetime
     updated_at: datetime
 ```
@@ -331,10 +332,10 @@ class Network:
     id: str
     name: str
     description: str = ""
-    status: NetworkStatus      # ACTIVE, DOWN, BUILD, ERROR
+    status: NetworkStatus  # ACTIVE, DOWN, BUILD, ERROR
     admin_state_up: bool = True
-    shared: bool = False       # Visible to all projects
-    external: bool = False     # router:external
+    shared: bool = False  # Visible to all projects
+    external: bool = False  # router:external
     project_id: str
     mtu: int = 1500
     port_security_enabled: bool = True
@@ -343,7 +344,7 @@ class Network:
     provider_segmentation_id: int | None
     availability_zones: list[str]
     dns_domain: str = ""
-    subnets: list[str]         # Subnet IDs
+    subnets: list[str]  # Subnet IDs
     created_at: datetime
     updated_at: datetime
     tags: list[str]
@@ -358,8 +359,8 @@ class Subnet:
     name: str
     description: str = ""
     network_id: str
-    ip_version: int = 4        # 4 or 6
-    cidr: str                  # e.g., "10.0.0.0/24"
+    ip_version: int = 4  # 4 or 6
+    cidr: str  # e.g., "10.0.0.0/24"
     gateway_ip: str | None
     allocation_pools: list[AllocationPool]
     dns_nameservers: list[str]
@@ -383,12 +384,12 @@ class Port:
     name: str
     description: str = ""
     network_id: str
-    status: PortStatus         # ACTIVE, DOWN, BUILD, ERROR
+    status: PortStatus  # ACTIVE, DOWN, BUILD, ERROR
     admin_state_up: bool = True
-    mac_address: str           # fa:16:3e:xx:xx:xx
-    fixed_ips: list[FixedIP]   # [{subnet_id, ip_address}]
-    device_id: str = ""        # Server ID if attached
-    device_owner: str = ""     # compute:nova, network:router_interface
+    mac_address: str  # fa:16:3e:xx:xx:xx
+    fixed_ips: list[FixedIP]  # [{subnet_id, ip_address}]
+    device_id: str = ""  # Server ID if attached
+    device_owner: str = ""  # compute:nova, network:router_interface
     project_id: str
     security_groups: list[str]  # Security group IDs
     port_security_enabled: bool = True
@@ -408,7 +409,7 @@ class Router:
     id: str
     name: str
     description: str = ""
-    status: RouterStatus       # ACTIVE, ALLOCATING, ERROR
+    status: RouterStatus  # ACTIVE, ALLOCATING, ERROR
     admin_state_up: bool = True
     project_id: str
     external_gateway_info: ExternalGatewayInfo | None
@@ -435,13 +436,14 @@ class SecurityGroup:
     updated_at: datetime
     tags: list[str]
 
+
 @dataclass
 class SecurityGroupRule:
     id: str
     security_group_id: str
     direction: str = "ingress"  # ingress or egress
-    ethertype: str = "IPv4"     # IPv4 or IPv6
-    protocol: str | None        # tcp, udp, icmp, etc.
+    ethertype: str = "IPv4"  # IPv4 or IPv6
+    protocol: str | None  # tcp, udp, icmp, etc.
     port_range_min: int | None
     port_range_max: int | None
     remote_ip_prefix: str | None  # CIDR
@@ -459,12 +461,12 @@ class SecurityGroupRule:
 class FloatingIP:
     id: str
     description: str = ""
-    status: FloatingIPStatus   # ACTIVE, DOWN, ERROR
-    floating_network_id: str   # External network
-    floating_ip_address: str   # Public IP
+    status: FloatingIPStatus  # ACTIVE, DOWN, ERROR
+    floating_network_id: str  # External network
+    floating_ip_address: str  # Public IP
     fixed_ip_address: str | None  # Internal IP
-    port_id: str | None        # Associated port
-    router_id: str | None      # Associated router
+    port_id: str | None  # Associated port
+    router_id: str | None  # Associated router
     project_id: str
     dns_domain: str = ""
     dns_name: str = ""
@@ -533,7 +535,7 @@ class Pool:
     id: str
     name: str
     description: str = ""
-    protocol: PoolProtocol     # HTTP, HTTPS, TCP, etc.
+    protocol: PoolProtocol  # HTTP, HTTPS, TCP, etc.
     lb_algorithm: PoolLBAlgorithm  # ROUND_ROBIN, LEAST_CONNECTIONS, etc.
     admin_state_up: bool = True
     loadbalancer_id: str | None
@@ -547,11 +549,12 @@ class Pool:
     created_at: datetime
     updated_at: datetime
 
+
 @dataclass
 class PoolMember:
     id: str
     name: str = ""
-    address: str = ""          # Backend server IP
+    address: str = ""  # Backend server IP
     protocol_port: int = 80
     weight: int = 1
     subnet_id: str | None
@@ -572,9 +575,9 @@ class PoolMember:
 class HealthMonitor:
     id: str
     name: str = ""
-    type: HealthMonitorType    # HTTP, HTTPS, TCP, PING
-    delay: int = 5             # Seconds between checks
-    timeout: int = 5           # Seconds to wait for response
+    type: HealthMonitorType  # HTTP, HTTPS, TCP, PING
+    delay: int = 5  # Seconds between checks
+    timeout: int = 5  # Seconds to wait for response
     max_retries: int = 3
     max_retries_down: int = 3
     http_method: str = "GET"
@@ -597,12 +600,13 @@ class NovaQuota:
     project_id: str
     instances: int = 10
     cores: int = 20
-    ram: int = 51200           # MB
+    ram: int = 51200  # MB
     metadata_items: int = 128
     injected_files: int = 5
     key_pairs: int = 100
     server_groups: int = 10
     server_group_members: int = 10
+
 
 @dataclass
 class NeutronQuota:
@@ -615,12 +619,13 @@ class NeutronQuota:
     security_group: int = 10
     security_group_rule: int = 100
 
+
 @dataclass
 class CinderQuota:
     project_id: str
     volumes: int = 10
     snapshots: int = 10
-    gigabytes: int = 1000      # GB
+    gigabytes: int = 1000  # GB
     per_volume_gigabytes: int = -1  # -1 = unlimited
     backups: int = 10
     backup_gigabytes: int = 1000

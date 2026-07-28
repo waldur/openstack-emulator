@@ -9,6 +9,32 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
+class PortInUseError(Exception):
+    """A port is already bound to a device and cannot be attached."""
+
+    def __init__(self, port_id: str) -> None:
+        self.port_id = port_id
+        super().__init__(f"Port {port_id} is still in use.")
+
+
+class InvalidFixedIPError(Exception):
+    """A fixed IP does not belong to any subnet of the target network."""
+
+    def __init__(self, ip: str, network_id: str) -> None:
+        self.ip = ip
+        self.network_id = network_id
+        super().__init__(f"Fixed IP {ip} is not a valid ip address for network {network_id}.")
+
+
+class FixedIPAlreadyInUseError(Exception):
+    """A fixed IP is already allocated to another port on the network."""
+
+    def __init__(self, ip: str, network_id: str) -> None:
+        self.ip = ip
+        self.network_id = network_id
+        super().__init__(f"Fixed IP {ip} is already in use.")
+
+
 def add_openstack_exception_handlers(app: FastAPI) -> None:
     """Add OpenStack-style exception handlers to a FastAPI app.
 

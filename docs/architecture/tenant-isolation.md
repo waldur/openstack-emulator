@@ -122,11 +122,7 @@ Get operations optionally verify ownership:
 
 ```python
 # Get volume with ownership check
-def get_volume(
-    self,
-    volume_id: str,
-    project_id: str | None = None
-) -> Volume | None:
+def get_volume(self, volume_id: str, project_id: str | None = None) -> Volume | None:
     volume = self._volumes.get(volume_id)
     if volume is None:
         return None
@@ -141,11 +137,7 @@ Update and delete operations verify ownership:
 
 ```python
 # Delete only if owned
-def delete_volume(
-    self,
-    volume_id: str,
-    project_id: str | None = None
-) -> bool:
+def delete_volume(self, volume_id: str, project_id: str | None = None) -> bool:
     volume = self._volumes.get(volume_id)
     if not volume:
         return False
@@ -190,8 +182,9 @@ Networks can be shared between projects via:
 @dataclass
 class Network:
     project_id: str = ""
-    shared: bool = False      # Visible to all projects
-    external: bool = False    # router:external in API
+    shared: bool = False  # Visible to all projects
+    external: bool = False  # router:external in API
+
 
 @dataclass
 class RbacPolicy:
@@ -228,6 +221,31 @@ class ImageMember:
     member_id: str = ""  # project_id to share with
     status: str = "pending"  # pending, accepted, rejected
 ```
+
+### Interface Attachment (Nova os-interface)
+
+Attaching a port to a server (`POST /v2.1/servers/{id}/os-interface`) resolves
+the port **in the caller's project scope**, mirroring how real Nova queries
+Neutron with the user's context:
+
+- A tenant token can only attach ports owned by its own project; a port owned
+  by another project (e.g. created by an admin without an explicit
+  `tenant_id`) yields `404 Port id ... could not be found.` — identical to a
+  nonexistent port.
+- An admin token may attach any port.
+- A port with `device_id` already set yields `409 Port ... is still in use.`
+  (enforced inside the database layer, under its lock).
+- Attach by `net_id` creates the port on behalf of the **server's** project
+  and binds it (`device_id` = server, `device_owner` = `compute:nova`).
+- A `fixed_ip` is validated against the network's subnet CIDRs: an IP outside
+  every subnet yields `400 Fixed IP ... is not a valid ip address for network
+  ...`, an IP held by another port on the network yields `409 Fixed IP ... is
+  already in use.`, and the interface's `subnet_id` is resolved from the
+  containing subnet. Neutron's `POST /v2.0/ports` applies the same validation
+  to explicit `fixed_ips` (`400`/`409` with Neutron-style messages).
+- Detach mirrors Nova's `deallocate_port_for_instance`: a port created by the
+  attach (`net_id` path) is **deleted**, a pre-existing port is only unbound.
+  Deleting a server releases its interfaces the same way.
 
 ### Admin Access
 
@@ -300,6 +318,7 @@ When writing tests, ensure proper isolation by resetting the database:
 import pytest
 from emulator.core.database import db
 
+
 @pytest.fixture(autouse=True)
 def reset_database():
     """Reset database before each test."""
@@ -317,7 +336,9 @@ def test_volume_isolation():
 
     # Verify isolation
     assert db.get_volume(vol1.id, project_id="project-a") is not None
-    assert db.get_volume(vol1.id, project_id="project-b") is None  # Can't see other project's volume
+    assert (
+        db.get_volume(vol1.id, project_id="project-b") is None
+    )  # Can't see other project's volume
 
     # Verify list isolation
     project_a_volumes = db.list_volumes(project_id="project-a")

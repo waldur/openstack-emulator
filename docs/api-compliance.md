@@ -79,53 +79,54 @@ import yaml
 from openapi_spec_validator import validate_spec
 from deepdiff import DeepDiff
 
+
 def compare_openapi_specs(reference_path, emulator_path, service_name):
     """Compare OpenAPI specs and generate compliance report."""
-    
+
     # Load specs
-    with open(reference_path, 'r') as f:
-        if reference_path.endswith('.yaml'):
+    with open(reference_path, "r") as f:
+        if reference_path.endswith(".yaml"):
             reference_spec = yaml.safe_load(f)
         else:
             reference_spec = json.load(f)
-    
-    with open(emulator_path, 'r') as f:
+
+    with open(emulator_path, "r") as f:
         emulator_spec = json.load(f)
-    
+
     # Validate specs
     validate_spec(reference_spec)
     validate_spec(emulator_spec)
-    
+
     # Compare endpoints
-    ref_paths = set(reference_spec.get('paths', {}).keys())
-    emu_paths = set(emulator_spec.get('paths', {}).keys())
-    
+    ref_paths = set(reference_spec.get("paths", {}).keys())
+    emu_paths = set(emulator_spec.get("paths", {}).keys())
+
     missing_paths = ref_paths - emu_paths
     extra_paths = emu_paths - ref_paths
     common_paths = ref_paths & emu_paths
-    
+
     # Compare schemas for common paths
     schema_diffs = {}
     for path in common_paths:
-        ref_path = reference_spec['paths'][path]
-        emu_path = emulator_spec['paths'][path]
+        ref_path = reference_spec["paths"][path]
+        emu_path = emulator_spec["paths"][path]
         diff = DeepDiff(ref_path, emu_path, ignore_order=True)
         if diff:
             schema_diffs[path] = diff
-    
+
     # Generate report
     report = {
-        'service': service_name,
-        'coverage': {
-            'total_reference_endpoints': len(ref_paths),
-            'implemented_endpoints': len(common_paths),
-            'coverage_percentage': (len(common_paths) / len(ref_paths)) * 100
+        "service": service_name,
+        "coverage": {
+            "total_reference_endpoints": len(ref_paths),
+            "implemented_endpoints": len(common_paths),
+            "coverage_percentage": (len(common_paths) / len(ref_paths)) * 100,
         },
-        'missing_endpoints': list(missing_paths),
-        'extra_endpoints': list(extra_paths),
-        'schema_differences': schema_diffs
+        "missing_endpoints": list(missing_paths),
+        "extra_endpoints": list(extra_paths),
+        "schema_differences": schema_diffs,
     }
-    
+
     return report
 ```
 
