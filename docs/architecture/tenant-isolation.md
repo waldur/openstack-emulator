@@ -229,6 +229,22 @@ class ImageMember:
     status: str = "pending"  # pending, accepted, rejected
 ```
 
+### Interface Attachment (Nova os-interface)
+
+Attaching a port to a server (`POST /v2.1/servers/{id}/os-interface`) resolves
+the port **in the caller's project scope**, mirroring how real Nova queries
+Neutron with the user's context:
+
+- A tenant token can only attach ports owned by its own project; a port owned
+  by another project (e.g. created by an admin without an explicit
+  `tenant_id`) yields `404 Port id ... could not be found.` — identical to a
+  nonexistent port.
+- An admin token may attach any port.
+- A port with `device_id` already set yields `409 Port ... is still in use.`
+- Attach by `net_id` creates the port on behalf of the **server's** project
+  and binds it (`device_id` = server, `device_owner` = `compute:nova`);
+  detach unbinds the port rather than deleting it.
+
 ### Admin Access
 
 The `all_tenants` parameter allows admin users to bypass tenant filtering:

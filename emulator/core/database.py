@@ -7474,42 +7474,31 @@ class Database:
 
     # Server Network Interfaces
 
-    def attach_interface_to_server(
-        self,
-        server_id: str,
-        net_id: str | None = None,
-        port_id: str | None = None,
-        fixed_ip: str | None = None,
-    ) -> ServerNetworkInterface:
-        """Attach a network interface to a server."""
+    def attach_interface_to_server(self, server_id: str, port: Port) -> ServerNetworkInterface:
+        """Attach an existing Neutron port to a server.
+
+        Mirrors Nova: the interface is backed by a real port, whose
+        ``device_id``/``device_owner`` are set on attach. Port lookup,
+        project-visibility, and in-use checks belong to the API layer.
+        """
         with self._lock:
             if server_id not in self._server_network_interfaces:
                 self._server_network_interfaces[server_id] = []
 
-            # Generate MAC address
-            import random
-
-            mac_addr = "fa:16:3e:{:02x}:{:02x}:{:02x}".format(
-                random.randint(0, 255),
-                random.randint(0, 255),
-                random.randint(0, 255),
-            )
-
-            # Set fixed IP if provided
-            fixed_ips = []
-            if fixed_ip:
-                fixed_ips.append(
-                    {"ip_address": fixed_ip, "subnet_id": "subnet-" + str(uuid4())[:8]}
-                )
+            port.device_id = server_id
+            port.device_owner = "compute:nova"
+            port.updated_at = datetime.utcnow()
 
             interface = ServerNetworkInterface(
-                port_id=port_id or str(uuid4()),
-                net_id=net_id or str(uuid4()),
-                mac_addr=mac_addr,
-                fixed_ips=fixed_ips,
+                port_id=port.id,
+                net_id=port.network_id,
+                mac_addr=port.mac_address,
+                fixed_ips=[ip.to_dict() for ip in port.fixed_ips],
             )
 
             self._server_network_interfaces[server_id].append(interface)
+            if self.auto_save:
+                self.save()
             return interface
 
     def list_server_network_interfaces(self, server_id: str) -> list[ServerNetworkInterface]:
@@ -7526,12 +7515,23 @@ class Database:
             return next((i for i in interfaces if i.port_id == port_id), None)
 
     def detach_interface_from_server(self, server_id: str, port_id: str) -> bool:
-        """Detach a network interface from a server."""
+        """Detach a network interface from a server.
+
+        The backing port is unbound (``device_id``/``device_owner`` cleared),
+        matching Nova's behavior for pre-existing ports.
+        """
         with self._lock:
             interfaces = self._server_network_interfaces.get(server_id, [])
             for i, interface in enumerate(interfaces):
                 if interface.port_id == port_id:
                     del interfaces[i]
+                    port = self._ports.get(port_id)
+                    if port and port.device_id == server_id:
+                        port.device_id = ""
+                        port.device_owner = ""
+                        port.updated_at = datetime.utcnow()
+                    if self.auto_save:
+                        self.save()
                     return True
             return False
 

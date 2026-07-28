@@ -212,12 +212,15 @@ class TestServerNetworkInterfaces:
         assert data["interfaceAttachments"] == []
 
     def test_attach_interface_to_server(self, auth_token, test_server):
-        """Test attaching a network interface to a server."""
+        """Test attaching a network interface to a server by network."""
+        network = db.create_network(name="attach-test-net", project_id="admin")
+        db.create_subnet(network_id=network.id, cidr="192.168.1.0/24", project_id="admin")
+
         response = client.post(
             f"/v2.1/servers/{test_server}/os-interface",
             json={
                 "interfaceAttachment": {
-                    "net_id": "test-network-id",
+                    "net_id": network.id,
                     "fixed_ip": "192.168.1.100",
                 }
             },
@@ -227,9 +230,187 @@ class TestServerNetworkInterfaces:
 
         data = response.json()
         assert "interfaceAttachment" in data
-        assert data["interfaceAttachment"]["net_id"] == "test-network-id"
+        assert data["interfaceAttachment"]["net_id"] == network.id
         assert "port_id" in data["interfaceAttachment"]
         assert "mac_addr" in data["interfaceAttachment"]
+
+        # The interface is backed by a real port bound to the server.
+        port = db.get_port(data["interfaceAttachment"]["port_id"])
+        assert port is not None
+        assert port.device_id == test_server
+        assert port.device_owner == "compute:nova"
+
+    def test_attach_interface_unknown_network_returns_404(self, auth_token, test_server):
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": "no-such-network"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 404
+        assert "could not be found" in response.json()["error"]["message"]
+
+    def test_attach_interface_rejects_both_net_and_port(self, auth_token, test_server):
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": "n", "port_id": "p"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 400
+
+    def test_attach_interface_rejects_fixed_ip_without_network(self, auth_token, test_server):
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"fixed_ip": "192.168.1.10"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 400
+
+
+class TestInterfaceAttachPortOwnership:
+    """Port project ownership semantics of interface attach.
+
+    Mirrors real Nova/Neutron: a port created by an admin token without an
+    explicit tenant_id is owned by the admin project, so a tenant-scoped
+    attach cannot see it and gets 404 — while the same port created with the
+    tenant's project id attaches fine.
+    """
+
+    def _make_tenant(self, admin_token, name):
+        """Create a project and return (scoped_token, project_id)."""
+        keystone_client = TestClient(create_all_service_apps()["keystone"])
+        project_response = keystone_client.post(
+            "/v3/projects",
+            json={"project": {"name": name, "domain_id": "default"}},
+            headers={"X-Auth-Token": admin_token},
+        )
+        project_id = project_response.json()["project"]["id"]
+        token_response = keystone_client.post(
+            "/v3/auth/tokens",
+            json={
+                "auth": {
+                    "identity": {
+                        "methods": ["password"],
+                        "password": {
+                            "user": {
+                                "name": "admin",
+                                "domain": {"id": "default"},
+                                "password": "s4l4dus",
+                            }
+                        },
+                    },
+                    "scope": {"project": {"name": name, "domain": {"id": "default"}}},
+                }
+            },
+        )
+        return token_response.headers["X-Subject-Token"], project_id
+
+    def _make_tenant_server(self, tenant_token):
+        response = client.post(
+            "/v2.1/servers",
+            json={"server": {"name": "tenant-vm", "flavorRef": "1", "imageRef": None}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert response.status_code == 202
+        return response.json()["server"]["id"]
+
+    def _admin_create_port(self, admin_token, network_id, tenant_id=None):
+        neutron_client = TestClient(create_all_service_apps()["neutron"])
+        payload = {"port": {"network_id": network_id}}
+        if tenant_id:
+            payload["port"]["tenant_id"] = tenant_id
+        response = neutron_client.post(
+            "/v2.0/ports", json=payload, headers={"X-Auth-Token": admin_token}
+        )
+        assert response.status_code in (200, 201), response.text
+        return response.json()["port"]
+
+    def test_admin_port_without_tenant_id_is_invisible_to_tenant_attach(self, auth_token):
+        tenant_token, tenant_project_id = self._make_tenant(auth_token, "port-owner-test-a")
+        server_id = self._make_tenant_server(tenant_token)
+        network = db.create_network(name="tenant-net", project_id=tenant_project_id)
+        db.create_subnet(network_id=network.id, cidr="10.1.0.0/24", project_id=tenant_project_id)
+
+        # Admin omits tenant_id: Neutron places the port in the admin project.
+        port = self._admin_create_port(auth_token, network.id)
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/os-interface",
+            json={"interfaceAttachment": {"port_id": port["id"]}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == f"Port id {port['id']} could not be found."
+
+    def test_admin_port_with_tenant_id_attaches_for_tenant(self, auth_token):
+        tenant_token, tenant_project_id = self._make_tenant(auth_token, "port-owner-test-b")
+        server_id = self._make_tenant_server(tenant_token)
+        network = db.create_network(name="tenant-net-b", project_id=tenant_project_id)
+        db.create_subnet(network_id=network.id, cidr="10.2.0.0/24", project_id=tenant_project_id)
+
+        port = self._admin_create_port(auth_token, network.id, tenant_id=tenant_project_id)
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/os-interface",
+            json={"interfaceAttachment": {"port_id": port["id"]}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert response.status_code == 200, response.text
+        attachment = response.json()["interfaceAttachment"]
+        assert attachment["port_id"] == port["id"]
+        assert attachment["mac_addr"] == port["mac_address"]
+
+        bound_port = db.get_port(port["id"])
+        assert bound_port is not None
+        assert bound_port.device_id == server_id
+        assert bound_port.device_owner == "compute:nova"
+
+    def test_attach_port_already_in_use_returns_409(self, auth_token):
+        tenant_token, tenant_project_id = self._make_tenant(auth_token, "port-owner-test-c")
+        server_id = self._make_tenant_server(tenant_token)
+        other_server_id = self._make_tenant_server(tenant_token)
+        network = db.create_network(name="tenant-net-c", project_id=tenant_project_id)
+        db.create_subnet(network_id=network.id, cidr="10.3.0.0/24", project_id=tenant_project_id)
+        port = self._admin_create_port(auth_token, network.id, tenant_id=tenant_project_id)
+
+        first = client.post(
+            f"/v2.1/servers/{server_id}/os-interface",
+            json={"interfaceAttachment": {"port_id": port["id"]}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"/v2.1/servers/{other_server_id}/os-interface",
+            json={"interfaceAttachment": {"port_id": port["id"]}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert second.status_code == 409
+        assert second.json()["error"]["message"] == f"Port {port['id']} is still in use."
+
+    def test_detach_unbinds_port(self, auth_token):
+        tenant_token, tenant_project_id = self._make_tenant(auth_token, "port-owner-test-d")
+        server_id = self._make_tenant_server(tenant_token)
+        network = db.create_network(name="tenant-net-d", project_id=tenant_project_id)
+        db.create_subnet(network_id=network.id, cidr="10.4.0.0/24", project_id=tenant_project_id)
+        port = self._admin_create_port(auth_token, network.id, tenant_id=tenant_project_id)
+
+        attach = client.post(
+            f"/v2.1/servers/{server_id}/os-interface",
+            json={"interfaceAttachment": {"port_id": port["id"]}},
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert attach.status_code == 200
+
+        detach = client.delete(
+            f"/v2.1/servers/{server_id}/os-interface/{port['id']}",
+            headers={"X-Auth-Token": tenant_token},
+        )
+        assert detach.status_code == 202
+
+        unbound_port = db.get_port(port["id"])
+        assert unbound_port is not None
+        assert unbound_port.device_id == ""
+        assert unbound_port.device_owner == ""
 
 
 class TestServerDiagnostics:
