@@ -1,5 +1,6 @@
 """In-memory database for OpenStack emulator."""
 
+import ipaddress
 import json
 import logging
 import threading
@@ -8,6 +9,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from emulator.core.exceptions import (
+    FixedIPAlreadyInUseError,
+    InvalidFixedIPError,
+    PortInUseError,
+)
 from emulator.core.models import (
     AllocationPool,
     ApplicationCredential,
@@ -968,7 +974,11 @@ class Database:
             return server
 
     def delete_server(self, server_id: str) -> bool:
-        """Delete a server."""
+        """Delete a server.
+
+        Attached interfaces are released like Nova's deallocate_for_instance:
+        Nova-created ports are deleted, pre-existing ports are unbound.
+        """
         with self._lock:
             if server_id in self._servers:
                 server = self._servers[server_id]
@@ -976,6 +986,8 @@ class Database:
                 server.terminated_at = datetime.now(timezone.utc)
                 server.updated = datetime.now(timezone.utc)
                 del self._servers[server_id]
+                for interface in self._server_network_interfaces.pop(server_id, []):
+                    self._release_interface_port(interface, server_id)
                 if self.auto_save:
                     self.save()
                 return True
@@ -4356,6 +4368,32 @@ class Database:
 
         return None
 
+    def _find_subnet_for_ip(self, network: Network, ip: str) -> Subnet | None:
+        """Return the network's subnet whose CIDR contains ``ip``, if any."""
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        for subnet_id in network.subnets:
+            subnet = self._subnets.get(subnet_id)
+            if subnet is None or not subnet.cidr:
+                continue
+            try:
+                if address in ipaddress.ip_network(subnet.cidr, strict=False):
+                    return subnet
+            except ValueError:
+                continue
+        return None
+
+    def _is_fixed_ip_in_use(self, network_id: str, ip: str) -> bool:
+        """Check whether any port on the network already holds ``ip``."""
+        return any(
+            fixed_ip.ip_address == ip
+            for port in self._ports.values()
+            if port.network_id == network_id
+            for fixed_ip in port.fixed_ips
+        )
+
     # Network operations
     def create_network(
         self,
@@ -4754,8 +4792,20 @@ class Database:
         device_owner: str = "",
         security_groups: list[str] | None = None,
         port_security_enabled: bool = True,
+        validate_fixed_ips: bool = False,
     ) -> Port | None:
-        """Create a new port."""
+        """Create a new port.
+
+        With ``validate_fixed_ips`` (Neutron/Nova user-facing paths), each
+        explicit IP must fall inside a subnet CIDR of the network and be free,
+        and its ``subnet_id`` is resolved from the CIDR when not supplied.
+        Internal callers (e.g. router interfaces binding the gateway IP) skip
+        validation.
+
+        Raises:
+            InvalidFixedIPError: If a validated IP is in no subnet of the network.
+            FixedIPAlreadyInUseError: If a validated IP is held by another port.
+        """
         with self._lock:
             network = self._networks.get(network_id)
             if not network:
@@ -4769,12 +4819,17 @@ class Database:
             port_fixed_ips = []
             if fixed_ips:
                 for fip in fixed_ips:
-                    port_fixed_ips.append(
-                        FixedIP(
-                            subnet_id=fip.get("subnet_id", ""),
-                            ip_address=fip.get("ip_address", ""),
-                        )
-                    )
+                    subnet_id = fip.get("subnet_id", "")
+                    ip_address = fip.get("ip_address", "")
+                    if validate_fixed_ips and ip_address:
+                        subnet = self._find_subnet_for_ip(network, ip_address)
+                        if subnet is None:
+                            raise InvalidFixedIPError(ip_address, network_id)
+                        if self._is_fixed_ip_in_use(network_id, ip_address):
+                            raise FixedIPAlreadyInUseError(ip_address, network_id)
+                        if not subnet_id:
+                            subnet_id = subnet.id
+                    port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip_address))
             else:
                 # Auto-allocate from first subnet
                 for subnet_id in network.subnets:
@@ -7474,14 +7529,25 @@ class Database:
 
     # Server Network Interfaces
 
-    def attach_interface_to_server(self, server_id: str, port: Port) -> ServerNetworkInterface:
+    def attach_interface_to_server(
+        self, server_id: str, port: Port, nova_created: bool = False
+    ) -> ServerNetworkInterface:
         """Attach an existing Neutron port to a server.
 
         Mirrors Nova: the interface is backed by a real port, whose
-        ``device_id``/``device_owner`` are set on attach. Port lookup,
-        project-visibility, and in-use checks belong to the API layer.
+        ``device_id``/``device_owner`` are set on attach. Port lookup and
+        project-visibility belong to the API layer; the in-use check is
+        enforced here, under the lock. ``nova_created`` marks ports created
+        by Nova for this attach — they are deleted on detach/server delete
+        instead of unbound.
+
+        Raises:
+            PortInUseError: If the port is already bound to a device.
         """
         with self._lock:
+            if port.device_id:
+                raise PortInUseError(port.id)
+
             if server_id not in self._server_network_interfaces:
                 self._server_network_interfaces[server_id] = []
 
@@ -7494,6 +7560,7 @@ class Database:
                 net_id=port.network_id,
                 mac_addr=port.mac_address,
                 fixed_ips=[ip.to_dict() for ip in port.fixed_ips],
+                nova_created=nova_created,
             )
 
             self._server_network_interfaces[server_id].append(interface)
@@ -7517,23 +7584,31 @@ class Database:
     def detach_interface_from_server(self, server_id: str, port_id: str) -> bool:
         """Detach a network interface from a server.
 
-        The backing port is unbound (``device_id``/``device_owner`` cleared),
-        matching Nova's behavior for pre-existing ports.
+        Matches Nova's deallocate_port_for_instance: a port Nova created for
+        the attach is deleted, a pre-existing port is unbound
+        (``device_id``/``device_owner`` cleared).
         """
         with self._lock:
             interfaces = self._server_network_interfaces.get(server_id, [])
             for i, interface in enumerate(interfaces):
                 if interface.port_id == port_id:
                     del interfaces[i]
-                    port = self._ports.get(port_id)
-                    if port and port.device_id == server_id:
-                        port.device_id = ""
-                        port.device_owner = ""
-                        port.updated_at = datetime.utcnow()
+                    self._release_interface_port(interface, server_id)
                     if self.auto_save:
                         self.save()
                     return True
             return False
+
+    def _release_interface_port(self, interface: ServerNetworkInterface, server_id: str) -> None:
+        """Delete a Nova-created backing port, or unbind a pre-existing one."""
+        if interface.nova_created:
+            self._ports.pop(interface.port_id, None)
+            return
+        port = self._ports.get(interface.port_id)
+        if port and port.device_id == server_id:
+            port.device_id = ""
+            port.device_owner = ""
+            port.updated_at = datetime.utcnow()
 
     # Server Console Support
 

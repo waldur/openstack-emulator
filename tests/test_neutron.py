@@ -313,6 +313,63 @@ class TestPorts:
         other = client.get("/v2.0/ports", params={"fixed_ips": "subnet_id=does-not-exist"})
         assert port["id"] not in [p["id"] for p in other.json()["ports"]]
 
+    def _make_net_with_subnet(self, name, cidr):
+        net = client.post("/v2.0/networks", json={"network": {"name": name}}).json()["network"]
+        sub = client.post(
+            "/v2.0/subnets",
+            json={"subnet": {"network_id": net["id"], "ip_version": 4, "cidr": cidr}},
+        ).json()["subnet"]
+        return net, sub
+
+    def test_create_port_out_of_cidr_ip_returns_400(self):
+        """Real Neutron rejects an IP outside every subnet CIDR (InvalidIpForNetwork)."""
+        net, sub = self._make_net_with_subnet("bad-ip-net", "10.6.0.0/24")
+        response = client.post(
+            "/v2.0/ports",
+            json={
+                "port": {
+                    "network_id": net["id"],
+                    "fixed_ips": [{"subnet_id": sub["id"], "ip_address": "10.99.0.1"}],
+                }
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == (
+            "IP address 10.99.0.1 is not a valid IP for any of "
+            "the subnets on the specified network."
+        )
+
+    def test_create_port_duplicate_ip_returns_409(self):
+        """Real Neutron rejects an already-allocated IP (IpAddressAlreadyAllocated)."""
+        net, sub = self._make_net_with_subnet("dup-ip-net", "10.7.0.0/24")
+        payload = {
+            "port": {
+                "network_id": net["id"],
+                "fixed_ips": [{"subnet_id": sub["id"], "ip_address": "10.7.0.5"}],
+            }
+        }
+        first = client.post("/v2.0/ports", json=payload)
+        assert first.status_code == 201
+
+        second = client.post("/v2.0/ports", json=payload)
+        assert second.status_code == 409
+        assert "10.7.0.5 already allocated" in second.json()["error"]["message"]
+
+    def test_create_port_resolves_subnet_id_from_cidr(self):
+        """An explicit IP without subnet_id gets the containing subnet's id."""
+        net, sub = self._make_net_with_subnet("resolve-subnet-net", "10.8.0.0/24")
+        response = client.post(
+            "/v2.0/ports",
+            json={
+                "port": {
+                    "network_id": net["id"],
+                    "fixed_ips": [{"ip_address": "10.8.0.5"}],
+                }
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["port"]["fixed_ips"][0]["subnet_id"] == sub["id"]
+
 
 class TestRouters:
     """Test router CRUD operations."""

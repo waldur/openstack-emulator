@@ -2081,6 +2081,9 @@ class ServerNetworkInterface:
     mac_addr: str = ""
     port_state: str = "ACTIVE"  # ACTIVE, DOWN, BUILD, ERROR
     fixed_ips: list[dict[str, str]] = field(default_factory=list)
+    # Nova-created ports (attach by net_id) are deleted on detach/server delete;
+    # pre-existing ports are only unbound. Internal bookkeeping, not exposed.
+    nova_created: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""

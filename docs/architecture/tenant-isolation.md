@@ -234,9 +234,18 @@ Neutron with the user's context:
   nonexistent port.
 - An admin token may attach any port.
 - A port with `device_id` already set yields `409 Port ... is still in use.`
+  (enforced inside the database layer, under its lock).
 - Attach by `net_id` creates the port on behalf of the **server's** project
-  and binds it (`device_id` = server, `device_owner` = `compute:nova`);
-  detach unbinds the port rather than deleting it.
+  and binds it (`device_id` = server, `device_owner` = `compute:nova`).
+- A `fixed_ip` is validated against the network's subnet CIDRs: an IP outside
+  every subnet yields `400 Fixed IP ... is not a valid ip address for network
+  ...`, an IP held by another port on the network yields `409 Fixed IP ... is
+  already in use.`, and the interface's `subnet_id` is resolved from the
+  containing subnet. Neutron's `POST /v2.0/ports` applies the same validation
+  to explicit `fixed_ips` (`400`/`409` with Neutron-style messages).
+- Detach mirrors Nova's `deallocate_port_for_instance`: a port created by the
+  attach (`net_id` path) is **deleted**, a pre-existing port is only unbound.
+  Deleting a server releases its interfaces the same way.
 
 ### Admin Access
 

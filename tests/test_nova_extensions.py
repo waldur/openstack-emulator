@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from emulator.core.exceptions import PortInUseError
 
 # Create Nova app for testing
 service_apps = create_all_service_apps()
@@ -214,7 +215,7 @@ class TestServerNetworkInterfaces:
     def test_attach_interface_to_server(self, auth_token, test_server):
         """Test attaching a network interface to a server by network."""
         network = db.create_network(name="attach-test-net", project_id="admin")
-        db.create_subnet(network_id=network.id, cidr="192.168.1.0/24", project_id="admin")
+        subnet = db.create_subnet(network_id=network.id, cidr="192.168.1.0/24", project_id="admin")
 
         response = client.post(
             f"/v2.1/servers/{test_server}/os-interface",
@@ -233,6 +234,8 @@ class TestServerNetworkInterfaces:
         assert data["interfaceAttachment"]["net_id"] == network.id
         assert "port_id" in data["interfaceAttachment"]
         assert "mac_addr" in data["interfaceAttachment"]
+        # subnet_id is resolved from the subnet CIDR containing the fixed IP.
+        assert data["interfaceAttachment"]["fixed_ips"][0]["subnet_id"] == subnet.id
 
         # The interface is backed by a real port bound to the server.
         port = db.get_port(data["interfaceAttachment"]["port_id"])
@@ -411,6 +414,139 @@ class TestInterfaceAttachPortOwnership:
         assert unbound_port is not None
         assert unbound_port.device_id == ""
         assert unbound_port.device_owner == ""
+
+
+class TestInterfaceFixedIPValidation:
+    """fixed_ip validation on attach-by-network, mirroring real Nova.
+
+    Real Nova maps Neutron's InvalidIpForNetwork to 400 InvalidInput and
+    IpAddressInUse/IpAddressAlreadyAllocated to 409 FixedIpAlreadyInUse.
+    """
+
+    def _make_net(self, cidr="10.20.0.0/24"):
+        network = db.create_network(name="fixed-ip-net", project_id="admin")
+        subnet = db.create_subnet(network_id=network.id, cidr=cidr, project_id="admin")
+        return network, subnet
+
+    def test_attach_out_of_cidr_fixed_ip_returns_400(self, auth_token, test_server):
+        network, _ = self._make_net()
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": network.id, "fixed_ip": "10.99.0.5"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == (
+            f"Fixed IP 10.99.0.5 is not a valid ip address for network {network.id}."
+        )
+
+    def test_attach_malformed_fixed_ip_returns_400(self, auth_token, test_server):
+        network, _ = self._make_net()
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": network.id, "fixed_ip": "not-an-ip"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 400
+
+    def test_attach_duplicate_fixed_ip_returns_409(self, auth_token, test_server):
+        network, subnet = self._make_net()
+        db.create_port(
+            network_id=network.id,
+            project_id="admin",
+            fixed_ips=[{"subnet_id": subnet.id, "ip_address": "10.20.0.9"}],
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": network.id, "fixed_ip": "10.20.0.9"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["message"] == "Fixed IP 10.20.0.9 is already in use."
+
+    def test_attach_resolves_subnet_by_cidr(self, auth_token, test_server):
+        """With several subnets, the fixed IP lands in the one containing it."""
+        network = db.create_network(name="two-subnet-net", project_id="admin")
+        db.create_subnet(network_id=network.id, cidr="10.30.0.0/24", project_id="admin")
+        second = db.create_subnet(network_id=network.id, cidr="10.31.0.0/24", project_id="admin")
+
+        response = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"net_id": network.id, "fixed_ip": "10.31.0.7"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        assert response.json()["interfaceAttachment"]["fixed_ips"][0]["subnet_id"] == second.id
+
+
+class TestInterfacePortLifecycle:
+    """Port lifecycle on detach and server delete, mirroring real Nova.
+
+    Nova's deallocate_port_for_instance deletes ports Nova created for the
+    attach and only unbinds pre-existing ones; instance delete does the same.
+    """
+
+    def _attach_by_network(self, auth_token, server_id):
+        network = db.create_network(name="lifecycle-net", project_id="admin")
+        db.create_subnet(network_id=network.id, cidr="10.40.0.0/24", project_id="admin")
+        response = client.post(
+            f"/v2.1/servers/{server_id}/os-interface",
+            json={"interfaceAttachment": {"net_id": network.id, "fixed_ip": "10.40.0.5"}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        return network, response.json()["interfaceAttachment"]["port_id"]
+
+    def test_detach_deletes_nova_created_port(self, auth_token, test_server):
+        _, port_id = self._attach_by_network(auth_token, test_server)
+
+        detach = client.delete(
+            f"/v2.1/servers/{test_server}/os-interface/{port_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert detach.status_code == 202
+        assert db.get_port(port_id) is None
+
+    def test_db_attach_rejects_in_use_port(self, test_server):
+        """The in-use guard holds even when the API layer is bypassed."""
+        network = db.create_network(name="guard-net", project_id="admin")
+        db.create_subnet(network_id=network.id, cidr="10.41.0.0/24", project_id="admin")
+        port = db.create_port(network_id=network.id, project_id="admin")
+        assert port is not None
+        port.device_id = "some-other-server"
+
+        with pytest.raises(PortInUseError):
+            db.attach_interface_to_server(server_id=test_server, port=port)
+
+    def test_delete_server_releases_ports(self, auth_token, test_server):
+        network, nova_port_id = self._attach_by_network(auth_token, test_server)
+        preexisting = db.create_port(
+            network_id=network.id,
+            project_id="admin",
+            fixed_ips=[{"subnet_id": "", "ip_address": "10.40.0.20"}],
+        )
+        assert preexisting is not None
+        attach = client.post(
+            f"/v2.1/servers/{test_server}/os-interface",
+            json={"interfaceAttachment": {"port_id": preexisting.id}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert attach.status_code == 200
+
+        delete = client.delete(
+            f"/v2.1/servers/{test_server}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert delete.status_code == 204
+
+        # Nova-created port is gone, pre-existing port survives unbound.
+        assert db.get_port(nova_port_id) is None
+        survivor = db.get_port(preexisting.id)
+        assert survivor is not None
+        assert survivor.device_id == ""
+        assert survivor.device_owner == ""
+        assert db.list_server_network_interfaces(test_server) == []
 
 
 class TestServerDiagnostics:
