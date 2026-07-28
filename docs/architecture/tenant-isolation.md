@@ -122,11 +122,7 @@ Get operations optionally verify ownership:
 
 ```python
 # Get volume with ownership check
-def get_volume(
-    self,
-    volume_id: str,
-    project_id: str | None = None
-) -> Volume | None:
+def get_volume(self, volume_id: str, project_id: str | None = None) -> Volume | None:
     volume = self._volumes.get(volume_id)
     if volume is None:
         return None
@@ -141,11 +137,7 @@ Update and delete operations verify ownership:
 
 ```python
 # Delete only if owned
-def delete_volume(
-    self,
-    volume_id: str,
-    project_id: str | None = None
-) -> bool:
+def delete_volume(self, volume_id: str, project_id: str | None = None) -> bool:
     volume = self._volumes.get(volume_id)
     if not volume:
         return False
@@ -190,8 +182,9 @@ Networks can be shared between projects via:
 @dataclass
 class Network:
     project_id: str = ""
-    shared: bool = False      # Visible to all projects
-    external: bool = False    # router:external in API
+    shared: bool = False  # Visible to all projects
+    external: bool = False  # router:external in API
+
 
 @dataclass
 class RbacPolicy:
@@ -316,6 +309,7 @@ When writing tests, ensure proper isolation by resetting the database:
 import pytest
 from emulator.core.database import db
 
+
 @pytest.fixture(autouse=True)
 def reset_database():
     """Reset database before each test."""
@@ -333,7 +327,9 @@ def test_volume_isolation():
 
     # Verify isolation
     assert db.get_volume(vol1.id, project_id="project-a") is not None
-    assert db.get_volume(vol1.id, project_id="project-b") is None  # Can't see other project's volume
+    assert (
+        db.get_volume(vol1.id, project_id="project-b") is None
+    )  # Can't see other project's volume
 
     # Verify list isolation
     project_a_volumes = db.list_volumes(project_id="project-a")

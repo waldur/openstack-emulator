@@ -80,7 +80,7 @@ class Resource:
     id: str
     name: str
     project_id: str  # Required for tenant isolation
-    user_id: str     # Optional: track creating user
+    user_id: str  # Optional: track creating user
 ```
 
 ### Database Operations with Tenant Filtering
@@ -102,11 +102,7 @@ def list_resources(
 Implement ownership verification in get/update/delete:
 
 ```python
-def get_resource(
-    self,
-    resource_id: str,
-    project_id: str | None = None
-) -> Resource | None:
+def get_resource(self, resource_id: str, project_id: str | None = None) -> Resource | None:
     resource = self._resources.get(resource_id)
     if resource is None:
         return None
