@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
+from emulator.core.exceptions import FixedIPAlreadyInUseError, InvalidFixedIPError
 from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
@@ -430,19 +431,34 @@ async def create_port(
     data = request.get("port", {})
     project_id = _resolve_project_id(data, x_auth_token)
 
-    port = db.create_port(
-        network_id=data.get("network_id", ""),
-        project_id=project_id,
-        name=data.get("name", ""),
-        description=data.get("description", ""),
-        admin_state_up=data.get("admin_state_up", True),
-        mac_address=data.get("mac_address"),
-        fixed_ips=data.get("fixed_ips"),
-        device_id=data.get("device_id", ""),
-        device_owner=data.get("device_owner", ""),
-        security_groups=data.get("security_groups"),
-        port_security_enabled=data.get("port_security_enabled", True),
-    )
+    try:
+        port = db.create_port(
+            network_id=data.get("network_id", ""),
+            project_id=project_id,
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            admin_state_up=data.get("admin_state_up", True),
+            mac_address=data.get("mac_address"),
+            fixed_ips=data.get("fixed_ips"),
+            device_id=data.get("device_id", ""),
+            device_owner=data.get("device_owner", ""),
+            security_groups=data.get("security_groups"),
+            port_security_enabled=data.get("port_security_enabled", True),
+            validate_fixed_ips=True,
+        )
+    except InvalidFixedIPError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"IP address {exc.ip} is not a valid IP for any of "
+                "the subnets on the specified network."
+            ),
+        ) from exc
+    except FixedIPAlreadyInUseError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"IP address {exc.ip} already allocated in network {exc.network_id}",
+        ) from exc
     if not port:
         raise HTTPException(status_code=404, detail="Network not found")
     return {"port": port.to_dict()}

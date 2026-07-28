@@ -6,6 +6,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
+from emulator.core.exceptions import (
+    FixedIPAlreadyInUseError,
+    InvalidFixedIPError,
+    PortInUseError,
+)
 from emulator.core.models import Server
 from emulator.core.simple_auth import TokenInfo, validate_token_simple
 
@@ -1360,7 +1365,14 @@ async def attach_interface_to_server(
     body: InterfaceAttachmentBody,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Attach a network interface to a server."""
+    """Attach a network interface to a server.
+
+    Mirrors Nova's os-interface contract: request-shape validation first,
+    then port/network resolution in the caller's project scope. A port owned
+    by another project is invisible to a non-admin token and yields the same
+    404 as a nonexistent port, exactly like Nova asking Neutron with the
+    user's context.
+    """
     token = get_token_or_raise(x_auth_token)
 
     # Verify server exists and user has access
@@ -1368,12 +1380,78 @@ async def attach_interface_to_server(
     if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
-    interface = db.attach_interface_to_server(
-        server_id=server_id,
-        net_id=body.interfaceAttachment.net_id,
-        port_id=body.interfaceAttachment.port_id,
-        fixed_ip=body.interfaceAttachment.fixed_ip,
-    )
+    attachment = body.interfaceAttachment
+    if attachment.net_id and attachment.port_id:
+        raise HTTPException(status_code=400, detail="Must not input both network_id and port_id")
+    if attachment.fixed_ip and not attachment.net_id:
+        raise HTTPException(status_code=400, detail="Must input network_id when request IP address")
+
+    # Admin tokens see resources across projects; tenant tokens only their own.
+    project_filter = None if token.is_admin else token.project_id
+
+    nova_created = False
+    if attachment.port_id:
+        port = db.get_port(attachment.port_id, project_id=project_filter)
+        if port is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Port id {attachment.port_id} could not be found.",
+            )
+    else:
+        if not attachment.net_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "More than one possible network found. Specify network "
+                    "ID(s) to select which one(s) to connect to."
+                ),
+            )
+        network = db.get_network(attachment.net_id, project_id=project_filter)
+        if network is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Network {attachment.net_id} could not be found.",
+            )
+        fixed_ips = None
+        if attachment.fixed_ip:
+            # subnet_id is resolved from the CIDR by create_port validation.
+            fixed_ips = [{"ip_address": attachment.fixed_ip}]
+        # Nova creates the port on behalf of the instance's project.
+        try:
+            port = db.create_port(
+                network_id=attachment.net_id,
+                project_id=server.tenant_id,
+                fixed_ips=fixed_ips,
+                validate_fixed_ips=True,
+            )
+        except InvalidFixedIPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Fixed IP {exc.ip} is not a valid ip address for network {exc.network_id}."
+                ),
+            ) from exc
+        except FixedIPAlreadyInUseError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Fixed IP {exc.ip} is already in use.",
+            ) from exc
+        if port is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Network {attachment.net_id} could not be found.",
+            )
+        nova_created = True
+
+    try:
+        interface = db.attach_interface_to_server(
+            server_id=server_id, port=port, nova_created=nova_created
+        )
+    except PortInUseError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Port {exc.port_id} is still in use.",
+        ) from exc
 
     return {"interfaceAttachment": interface.to_dict()}
 

@@ -72,10 +72,12 @@ uv run pytest --cov=emulator --cov-report=html
 from dataclasses import dataclass, field
 from enum import Enum
 
+
 class ResourceStatus(Enum):
     ACTIVE = "active"
     CREATING = "creating"
     ERROR = "error"
+
 
 @dataclass
 class Resource:
@@ -92,10 +94,12 @@ class Resource:
 # In Database.__init__:
 self._resources: dict[str, Resource] = {}
 
+
 # Add CRUD methods with tenant filtering:
 def create_resource(self, resource: Resource) -> Resource:
     self._resources[resource.id] = resource
     return resource
+
 
 def get_resource(self, resource_id: str, project_id: str | None = None) -> Resource | None:
     resource = self._resources.get(resource_id)
@@ -103,11 +107,13 @@ def get_resource(self, resource_id: str, project_id: str | None = None) -> Resou
         return None
     return resource
 
+
 def list_resources(self, project_id: str | None = None) -> list[Resource]:
     resources = list(self._resources.values())
     if project_id:
         resources = [r for r in resources if r.project_id == project_id]
     return resources
+
 
 def delete_resource(self, resource_id: str, project_id: str | None = None) -> bool:
     resource = self._resources.get(resource_id)
@@ -127,14 +133,17 @@ from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
 
+
 class ResourceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
+
 
 @router.get("/v2/resources")
 async def list_resources():
     # Implementation
     pass
+
 
 @router.post("/v2/resources")
 async def create_resource(request: ResourceRequest):
@@ -248,6 +257,7 @@ Reference: https://docs.openstack.org/install-guide/firewalls-default-ports.html
 def _generate_mac_address(self) -> str:
     """Generate MAC with OpenStack's fa:16:3e prefix."""
     import random
+
     return "fa:16:3e:{:02x}:{:02x}:{:02x}".format(
         random.randint(0, 255),
         random.randint(0, 255),
