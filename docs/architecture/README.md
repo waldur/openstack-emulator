@@ -71,15 +71,29 @@ The emulator uses an in-memory database implemented as Python dictionaries withi
 - Simple reset capability for testing
 - Thread-safe access via `threading.RLock`
 
-**Trade-off**: Data is not persisted across restarts.
+**Trade-off**: Data lives only in memory unless `--persist-db <path>` is given, in
+which case the whole database is written to a single JSON file (on every change
+with `--auto-save`, otherwise on demand) and restored at startup. Serialization
+is derived from the model dataclasses — see
+[`emulator/core/persistence.py`](../../emulator/core/persistence.py) and
+[Development](../development.md#persistence).
 
-### 2. Multi-Process Architecture
+### 2. One Port Per Service, One Process
 
-Each OpenStack service runs as a separate process on its standard port. This:
+Each OpenStack service is a separate FastAPI app listening on its own standard
+port, so clients discover and address them exactly as they would a real
+deployment. All of them run as asyncio tasks inside a single process
+(`run_all_services_async` in
+[`emulator/api/unified_app.py`](../../emulator/api/unified_app.py)), which is
+what lets them share one in-memory database without any IPC. This:
 
-- Mimics real OpenStack deployment topology
-- Allows independent scaling/restart of services
+- Mimics real OpenStack deployment topology from the client's side
 - Enables realistic service discovery testing
+- Means services cannot be restarted or scaled independently
+
+Because the services share a process and therefore one stdout, each request is
+logged by an access-log middleware that names the service and port that handled
+it; uvicorn's own access log cannot distinguish them.
 
 ### 3. Simplified Authentication
 

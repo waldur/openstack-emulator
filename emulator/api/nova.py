@@ -1,5 +1,6 @@
 """Nova Compute API endpoints for OpenStack emulator."""
 
+import logging
 from typing import Any, TypeGuard
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -13,6 +14,8 @@ from emulator.core.exceptions import (
 )
 from emulator.core.models import Server
 from emulator.core.simple_auth import TokenInfo, validate_token_simple
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["compute"])
 
@@ -115,8 +118,20 @@ def get_token_or_raise(auth_token: str | None) -> TokenInfo:
 
 def is_server_accessible(server: Server | None, token: TokenInfo) -> TypeGuard[Server]:
     if not server:
+        logger.debug("Server not found; denying access for project %s", token.project_id)
         return False
-    return token.is_admin or server.tenant_id == token.project_id
+    if token.is_admin or server.tenant_id == token.project_id:
+        return True
+    # Callers turn this into a 404, which is indistinguishable in an access log
+    # from a route that does not exist. Say which mismatch caused it.
+    logger.debug(
+        "Server %s belongs to project %s, token is scoped to %s (%s); denying access",
+        server.id,
+        server.tenant_id,
+        token.project_id,
+        token.project_name,
+    )
+    return False
 
 
 # API Version endpoints

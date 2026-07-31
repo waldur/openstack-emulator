@@ -21,7 +21,10 @@ from emulator.api.scenarios import router as scenarios_router
 from emulator.api.status_ui import router as status_router
 from emulator.core.exceptions import add_openstack_exception_handlers
 from emulator.core.headers import add_openstack_headers_middleware
-from emulator.core.logging_middleware import add_debug_logging_middleware
+from emulator.core.logging_middleware import (
+    add_access_log_middleware,
+    add_debug_logging_middleware,
+)
 from emulator.core.middleware import ScenarioMiddleware
 
 # Configure logging
@@ -81,6 +84,9 @@ def create_service_app(
 
     # Add debug logging middleware for all services
     add_debug_logging_middleware(app, service_name)
+
+    # One access line per request, tagged with the service that handled it.
+    add_access_log_middleware(app, service_name)
 
     # Add scenario injection middleware (except for scenarios service itself)
     if include_scenarios and service_name != "scenarios":
@@ -198,7 +204,9 @@ async def run_service_on_port(app: FastAPI, host: str, port: int, service_name: 
         host=host,
         port=port,
         log_level=log_level,
-        access_log=True,
+        # Superseded by add_access_log_middleware: uvicorn's shared access
+        # logger cannot say which of the co-hosted services answered.
+        access_log=False,
     )
     server = uvicorn.Server(config)
 
