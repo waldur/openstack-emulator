@@ -334,7 +334,7 @@ PERSISTED_SCALARS: tuple[str, ...] = (
 NOT_PERSISTED: dict[str, str] = {
     "_lock": "threading primitive",
     "_load_degraded": "bookkeeping for the current process",
-    "_load_backup_done": "bookkeeping for the current process",
+    "_backup_done": "bookkeeping for the current process",
     "_tokens": "session state; tokens expire in 24h and are re-issued on demand",
     "_nova_extensions": "static capability list, must track the code not the file",
     "_neutron_extensions": "static capability list, must track the code not the file",
@@ -349,11 +349,52 @@ NOT_PERSISTED: dict[str, str] = {
 # --------------------------------------------------------------------------
 
 
-def encode_collection(collection: Collection, value: Any) -> Any:
-    """Serialize one whole collection."""
+def encode_collection(collection: Collection, value: Any) -> tuple[Any, list[str]]:
+    """Serialize one whole collection, skipping records that fail.
+
+    Mirrors :func:`decode_collection`. ``encode`` deliberately raises on a type
+    it does not understand rather than stringifying it, which is what let the
+    original round-trip bug reach disk — but a single off-type value must not
+    cost every other record, and must not stop the file being written at all.
+    Returns the encoded collection plus one description per dropped record.
+    """
     if collection.shape is Shape.DICT_OF_STR_SET:
-        return {key: sorted(items) for key, items in value.items()}
-    return encode(value)
+        return {key: sorted(items) for key, items in value.items()}, []
+
+    dropped: list[str] = []
+
+    if collection.shape is Shape.DICT:
+        encoded: dict[str, Any] = {}
+        for key, record in value.items():
+            try:
+                encoded[key] = encode(record)
+            except Exception as e:
+                dropped.append(f"{key}: {e}")
+        return encoded, dropped
+
+    if collection.shape is Shape.LIST:
+        items = []
+        for index, record in enumerate(value):
+            try:
+                items.append(encode(record))
+            except Exception as e:
+                dropped.append(f"[{index}]: {e}")
+        return items, dropped
+
+    if collection.shape is Shape.DICT_OF_LIST:
+        grouped: dict[str, list[Any]] = {}
+        for key, records in value.items():
+            bucket = []
+            for index, record in enumerate(records):
+                try:
+                    bucket.append(encode(record))
+                except Exception as e:
+                    dropped.append(f"{key}[{index}]: {e}")
+            grouped[key] = bucket
+        return grouped, dropped
+
+    # DICT_OF_STR and DATACLASS are single small values with nothing to isolate.
+    return encode(value), []
 
 
 def decode_collection(collection: Collection, data: Any) -> Any:
