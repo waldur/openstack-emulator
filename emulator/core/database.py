@@ -1394,9 +1394,14 @@ class Database:
                     self._backup_unreadable_file(path)
 
                 tmp = path.with_name(f"{path.name}.tmp")
-                with open(tmp, "w") as f:
-                    json.dump(data, f, indent=2)
-                os.replace(tmp, path)
+                try:
+                    with open(tmp, "w") as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp, path)
+                except Exception:
+                    # Never leave a half-written temp file next to the database.
+                    tmp.unlink(missing_ok=True)
+                    raise
                 logger.info(f"Database saved to {self.persist_path}")
             except Exception as e:
                 logger.error(f"Failed to save database: {e}")
@@ -1454,26 +1459,26 @@ class Database:
 
     def _load_current(self, data: dict[str, Any]) -> None:
         """Load a schema_version >= 2 file."""
-        skipped_total = 0
+        dropped_total = 0
         for collection in persistence.PERSISTED:
             if collection.key not in data:
                 continue
             try:
-                value, skipped = persistence.decode_collection(collection, data[collection.key])
+                value, dropped = persistence.decode_collection(collection, data[collection.key])
             except Exception as e:
                 logger.error(f"Could not load '{collection.key}', keeping defaults: {e}")
                 self._load_degraded = True
                 continue
             setattr(self, collection.attr, value)
-            if skipped:
-                skipped_total += skipped
-                logger.error(f"Dropped {skipped} unreadable record(s) from '{collection.key}'")
+            for failure in dropped:
+                logger.error(f"Dropped unreadable record from '{collection.key}' -> {failure}")
+            dropped_total += len(dropped)
 
         for name, value in data.get("scalars", {}).items():
             if name in persistence.PERSISTED_SCALARS:
                 setattr(self, name, value)
 
-        if skipped_total:
+        if dropped_total:
             self._load_degraded = True
 
     def _load_legacy_v1(self, data: dict[str, Any]) -> None:
