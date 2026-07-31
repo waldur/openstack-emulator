@@ -356,51 +356,52 @@ def encode_collection(collection: Collection, value: Any) -> Any:
     return encode(value)
 
 
-def decode_collection(collection: Collection, data: Any) -> Any:
+def decode_collection(collection: Collection, data: Any) -> tuple[Any, list[str]]:
     """Deserialize one whole collection, skipping records that fail.
 
-    Returns the rebuilt collection plus the number of records dropped, so the
-    caller can decide whether the load was clean. A malformed record must not
-    take the rest of the file with it.
+    Returns the rebuilt collection plus one ``"<id>: <error>"`` string per
+    dropped record, so the caller can say exactly what was lost. A malformed
+    record must not take the rest of the file with it, but a bare count leaves
+    nobody able to work out which record to repair.
     """
     model = collection.model
 
     if collection.shape is Shape.DICT_OF_STR_SET:
-        return {key: set(items) for key, items in data.items()}, 0
+        return {key: set(items) for key, items in data.items()}, []
     if collection.shape is Shape.DICT_OF_STR:
-        return dict(data), 0
+        return dict(data), []
     if collection.shape is Shape.DATACLASS:
         assert model is not None
-        return decode_dataclass(model, data), 0
+        return decode_dataclass(model, data), []
 
     assert model is not None
-    skipped = 0
+    dropped: list[str] = []
 
     if collection.shape is Shape.LIST:
         items = []
-        for record in data:
+        for index, record in enumerate(data):
             try:
                 items.append(decode_dataclass(model, record))
-            except Exception:
-                skipped += 1
-        return items, skipped
+            except Exception as e:
+                dropped.append(f"[{index}]: {e}")
+        return items, dropped
 
     if collection.shape is Shape.DICT_OF_LIST:
         grouped: dict[str, list[Any]] = {}
         for key, records in data.items():
             bucket = []
-            for record in records:
+            for index, record in enumerate(records):
                 try:
                     bucket.append(decode_dataclass(model, record))
-                except Exception:
-                    skipped += 1
+                except Exception as e:
+                    dropped.append(f"{key}[{index}]: {e}")
             grouped[key] = bucket
-        return grouped, skipped
+        return grouped, dropped
 
     mapping: dict[str, Any] = {}
     for key, record in data.items():
         try:
             mapping[key] = decode_dataclass(model, record)
-        except Exception:
-            skipped += 1
-    return mapping, skipped
+        except Exception as e:
+            dropped.append(f"{key}: {e}")
+    return mapping, dropped
