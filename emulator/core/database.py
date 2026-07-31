@@ -3,12 +3,15 @@
 import ipaddress
 import json
 import logging
+import os
+import shutil
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from emulator.core import persistence
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
@@ -64,6 +67,7 @@ from emulator.core.models import (
     LoadBalancerProvisioningStatus,
     MetadefNamespace,
     Network,
+    NetworkStatus,
     NeutronAgent,
     NeutronExtension,
     NeutronFlavor,
@@ -77,6 +81,7 @@ from emulator.core.models import (
     PoolMember,
     PoolProtocol,
     Port,
+    PortStatus,
     PowerState,
     Project,
     QosPolicy,
@@ -90,6 +95,7 @@ from emulator.core.models import (
     Role,
     RoleAssignment,
     Router,
+    RouterStatus,
     SecurityGroup,
     SecurityGroupRule,
     Server,
@@ -134,6 +140,10 @@ class Database:
         self._lock = threading.RLock()
         self.persist_path = persist_path
         self.auto_save = auto_save
+        # Set when a load could not read everything, so the first save keeps a
+        # copy of the original instead of silently replacing it.
+        self._load_degraded = False
+        self._load_backup_done = False
 
         # Storage dictionaries - Nova
         self._servers: dict[str, Server] = {}
@@ -558,9 +568,12 @@ class Database:
             if not project:
                 # Synthesize a project, preserving the requested id if any so the
                 # token stays consistent with the scope the client asked for.
+                # An unnamed scope gets a name derived from the id rather than
+                # an empty one: "admin" is a privileged name, so a synthesized
+                # project must never accidentally acquire it.
                 project = Project(
                     id=project_id or self._default_project_id,
-                    name=project_name,
+                    name=project_name or f"project-{project_id}",
                     domain_id=domain_id,
                 )
 
@@ -1353,59 +1366,64 @@ class Database:
 
     # Persistence
     def save(self) -> None:
-        """Save database state to disk."""
+        """Write the whole database to disk.
+
+        The write is atomic (temp file + rename) so an interrupted save cannot
+        leave a truncated file behind. If the last load dropped records, the
+        original file is copied aside first: overwriting a file we could not
+        fully read would turn a recoverable problem into permanent data loss.
+        """
         if not self.persist_path:
             return
 
         with self._lock:
             try:
-                data = {
-                    # Nova resources
-                    "servers": {k: self._server_to_dict(v) for k, v in self._servers.items()},
-                    "flavors": {k: self._flavor_to_dict(v) for k, v in self._flavors.items()},
-                    "images": {k: self._image_to_dict(v) for k, v in self._images.items()},
-                    "keypairs": {k: self._keypair_to_dict(v) for k, v in self._keypairs.items()},
-                    # Keystone resources
-                    "domains": {k: self._domain_to_dict(v) for k, v in self._domains.items()},
-                    "projects": {k: self._project_to_dict(v) for k, v in self._projects.items()},
-                    "users": {k: self._user_to_dict(v) for k, v in self._users.items()},
-                    "roles": {k: self._role_to_dict(v) for k, v in self._roles.items()},
-                    "role_assignments": [
-                        self._role_assignment_to_dict(ra) for ra in self._role_assignments
-                    ],
-                    # Neutron resources
-                    "networks": {k: self._network_to_dict(v) for k, v in self._networks.items()},
-                    "subnets": {k: self._subnet_to_dict(v) for k, v in self._subnets.items()},
-                    "ports": {k: self._port_to_dict(v) for k, v in self._ports.items()},
-                    "routers": {k: self._router_to_dict(v) for k, v in self._routers.items()},
-                    "floating_ips": {
-                        k: self._floating_ip_to_dict(v) for k, v in self._floating_ips.items()
-                    },
-                    "security_groups": {
-                        k: self._security_group_to_dict(v) for k, v in self._security_groups.items()
-                    },
-                    # Cinder resources
-                    "volumes": {k: self._volume_to_dict(v) for k, v in self._volumes.items()},
-                    "snapshots": {k: self._snapshot_to_dict(v) for k, v in self._snapshots.items()},
-                    "volume_types": {
-                        k: self._volume_type_to_dict(v) for k, v in self._volume_types.items()
-                    },
-                    # Glance resources
-                    "glance_images": {
-                        k: self._glance_image_to_dict(v) for k, v in self._glance_images.items()
-                    },
+                data: dict[str, Any] = {"schema_version": persistence.SCHEMA_VERSION}
+                for collection in persistence.PERSISTED:
+                    data[collection.key] = persistence.encode_collection(
+                        collection, getattr(self, collection.attr)
+                    )
+                data["scalars"] = {
+                    name: getattr(self, name) for name in persistence.PERSISTED_SCALARS
                 }
 
                 path = Path(self.persist_path)
                 path.parent.mkdir(parents=True, exist_ok=True)
-                with open(path, "w") as f:
-                    json.dump(data, f, indent=2, default=str)
+
+                if self._load_degraded:
+                    self._backup_unreadable_file(path)
+
+                tmp = path.with_name(f"{path.name}.tmp")
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, path)
                 logger.info(f"Database saved to {self.persist_path}")
             except Exception as e:
                 logger.error(f"Failed to save database: {e}")
 
+    def _backup_unreadable_file(self, path: Path) -> None:
+        """Preserve a file we only partially understood, once."""
+        if self._load_backup_done or not path.exists():
+            return
+        self._load_backup_done = True
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = path.with_name(f"{path.name}.corrupt-{stamp}")
+        try:
+            shutil.copy2(path, backup)
+            logger.error(
+                f"Database at {path} did not load cleanly; original preserved at {backup} "
+                "before overwriting"
+            )
+        except Exception as e:  # pragma: no cover - best effort
+            logger.error(f"Could not back up {path}: {e}")
+
     def load(self) -> None:
-        """Load database state from disk."""
+        """Restore database state from disk.
+
+        Each collection, and each record within it, is decoded independently.
+        A malformed record is logged and skipped rather than discarding
+        everything after it, which is what the previous single try/except did.
+        """
         if not self.persist_path:
             return
 
@@ -1418,403 +1436,102 @@ class Database:
             try:
                 with open(path) as f:
                     data = json.load(f)
-
-                # Clear existing data (except defaults that were initialized)
-                # We'll keep default flavors, images, etc. and only override with persisted data
-
-                # Load Nova resources
-                if "servers" in data:
-                    self._servers = {k: self._dict_to_server(v) for k, v in data["servers"].items()}
-                if "flavors" in data:
-                    self._flavors = {k: self._dict_to_flavor(v) for k, v in data["flavors"].items()}
-                if "images" in data:
-                    self._images = {k: self._dict_to_image(v) for k, v in data["images"].items()}
-                if "keypairs" in data:
-                    self._keypairs = {
-                        k: self._dict_to_keypair(v) for k, v in data["keypairs"].items()
-                    }
-
-                # Load Keystone resources
-                if "domains" in data:
-                    self._domains = {k: self._dict_to_domain(v) for k, v in data["domains"].items()}
-                if "projects" in data:
-                    self._projects = {
-                        k: self._dict_to_project(v) for k, v in data["projects"].items()
-                    }
-                if "users" in data:
-                    self._users = {k: self._dict_to_user(v) for k, v in data["users"].items()}
-                if "roles" in data:
-                    self._roles = {k: self._dict_to_role(v) for k, v in data["roles"].items()}
-                if "role_assignments" in data:
-                    self._role_assignments = [
-                        self._dict_to_role_assignment(ra) for ra in data["role_assignments"]
-                    ]
-
-                # Load Neutron resources
-                if "networks" in data:
-                    self._networks = {
-                        k: self._dict_to_network(v) for k, v in data["networks"].items()
-                    }
-                if "subnets" in data:
-                    self._subnets = {k: self._dict_to_subnet(v) for k, v in data["subnets"].items()}
-                if "ports" in data:
-                    self._ports = {k: self._dict_to_port(v) for k, v in data["ports"].items()}
-                if "routers" in data:
-                    self._routers = {k: self._dict_to_router(v) for k, v in data["routers"].items()}
-                if "floating_ips" in data:
-                    self._floating_ips = {
-                        k: self._dict_to_floating_ip(v) for k, v in data["floating_ips"].items()
-                    }
-                if "security_groups" in data:
-                    self._security_groups = {
-                        k: self._dict_to_security_group(v)
-                        for k, v in data["security_groups"].items()
-                    }
-
-                # Load Cinder resources
-                if "volumes" in data:
-                    self._volumes = {k: self._dict_to_volume(v) for k, v in data["volumes"].items()}
-                if "snapshots" in data:
-                    self._snapshots = {
-                        k: self._dict_to_snapshot(v) for k, v in data["snapshots"].items()
-                    }
-                if "volume_types" in data:
-                    self._volume_types = {
-                        k: self._dict_to_volume_type(v) for k, v in data["volume_types"].items()
-                    }
-
-                # Load Glance resources
-                if "glance_images" in data:
-                    self._glance_images = {
-                        k: self._dict_to_glance_image(v) for k, v in data["glance_images"].items()
-                    }
-                    # Sync to Nova images
-                    for glance_img in self._glance_images.values():
-                        self._images[glance_img.id] = glance_img.to_nova_image()
-
-                logger.info(f"Database loaded from {self.persist_path}")
             except Exception as e:
-                logger.error(f"Failed to load database: {e}")
+                logger.error(f"Failed to read database at {self.persist_path}: {e}")
+                self._load_degraded = True
+                return
 
-    # Serialization methods (to dict)
+            if data.get("schema_version") is None:
+                self._load_legacy_v1(data)
+            else:
+                self._load_current(data)
 
-    def _server_to_dict(self, server: Server) -> dict[str, Any]:
-        """Convert server to dictionary for persistence."""
-        return {
-            "id": server.id,
-            "name": server.name,
-            "status": server.status.value,
-            "power_state": server.power_state.value,
-            "tenant_id": server.tenant_id,
-            "user_id": server.user_id,
-            "flavor_id": server.flavor_id,
-            "image_id": server.image_id,
-            "host": server.host,
-            "availability_zone": server.availability_zone,
-            "key_name": server.key_name,
-            "created": server.created.isoformat(),
-            "updated": server.updated.isoformat(),
-            "launched_at": server.launched_at.isoformat() if server.launched_at else None,
-            "metadata": server.metadata,
-            "addresses": server.addresses,
-            "security_groups": server.security_groups,
-            "admin_pass": server.admin_pass,
-        }
+            # Nova's image view is a projection of the Glance images.
+            for glance_img in self._glance_images.values():
+                self._images[glance_img.id] = glance_img.to_nova_image()
 
-    def _flavor_to_dict(self, flavor: Flavor) -> dict[str, Any]:
-        """Convert flavor to dictionary for persistence."""
-        return {
-            "id": flavor.id,
-            "name": flavor.name,
-            "vcpus": flavor.vcpus,
-            "ram": flavor.ram,
-            "disk": flavor.disk,
-            "ephemeral": flavor.ephemeral,
-            "swap": flavor.swap,
-            "is_public": flavor.is_public,
-            "description": flavor.description,
-        }
+            logger.info(f"Database loaded from {self.persist_path}")
 
-    def _image_to_dict(self, image: Image) -> dict[str, Any]:
-        """Convert image to dictionary for persistence."""
-        return {
-            "id": image.id,
-            "name": image.name,
-            "status": image.status,
-            "min_disk": image.min_disk,
-            "min_ram": image.min_ram,
-            "size": image.size,
-            "created": image.created.isoformat(),
-            "updated": image.updated.isoformat(),
-            "metadata": image.metadata,
-        }
+    def _load_current(self, data: dict[str, Any]) -> None:
+        """Load a schema_version >= 2 file."""
+        skipped_total = 0
+        for collection in persistence.PERSISTED:
+            if collection.key not in data:
+                continue
+            try:
+                value, skipped = persistence.decode_collection(collection, data[collection.key])
+            except Exception as e:
+                logger.error(f"Could not load '{collection.key}', keeping defaults: {e}")
+                self._load_degraded = True
+                continue
+            setattr(self, collection.attr, value)
+            if skipped:
+                skipped_total += skipped
+                logger.error(f"Dropped {skipped} unreadable record(s) from '{collection.key}'")
 
-    def _keypair_to_dict(self, keypair: Keypair) -> dict[str, Any]:
-        """Convert keypair to dictionary for persistence."""
-        return {
-            "name": keypair.name,
-            "public_key": keypair.public_key,
-            "fingerprint": keypair.fingerprint,
-            "user_id": keypair.user_id,
-            "type": keypair.type,
-            "created_at": keypair.created_at.isoformat(),
-        }
+        for name, value in data.get("scalars", {}).items():
+            if name in persistence.PERSISTED_SCALARS:
+                setattr(self, name, value)
 
-    def _domain_to_dict(self, domain: Domain) -> dict[str, Any]:
-        """Convert domain to dictionary for persistence."""
-        return {
-            "id": domain.id,
-            "name": domain.name,
-            "description": domain.description,
-            "enabled": domain.enabled,
-            "tags": domain.tags,
-        }
+        if skipped_total:
+            self._load_degraded = True
 
-    def _project_to_dict(self, project: Project) -> dict[str, Any]:
-        """Convert project to dictionary for persistence."""
-        return {
-            "id": project.id,
-            "name": project.name,
-            "description": project.description,
-            "domain_id": project.domain_id,
-            "parent_id": project.parent_id,
-            "enabled": project.enabled,
-            "is_domain": project.is_domain,
-            "tags": project.tags,
-            "options": project.options,
-        }
+    def _load_legacy_v1(self, data: dict[str, Any]) -> None:
+        """Load a file written before the format was versioned.
 
-    def _user_to_dict(self, user: User) -> dict[str, Any]:
-        """Convert user to dictionary for persistence."""
-        return {
-            "id": user.id,
-            "name": user.name,
-            "description": user.description,
-            "domain_id": user.domain_id,
-            "default_project_id": user.default_project_id,
-            "enabled": user.enabled,
-            "password_hash": user.password_hash,
-            "email": user.email,
-            "created_at": user.created_at.isoformat(),
-            "updated_at": user.updated_at.isoformat(),
-        }
+        Only the 17 collections the old ``save()`` knew about are present. The
+        next save rewrites the file in the current format, so this path runs at
+        most once per deployment after an upgrade.
+        """
+        logger.info("Persistence file predates schema versioning; upgrading on next save")
+        legacy: list[tuple[str, str, Any]] = [
+            ("servers", "_servers", self._dict_to_server),
+            ("flavors", "_flavors", self._dict_to_flavor),
+            ("images", "_images", self._dict_to_image),
+            ("keypairs", "_keypairs", self._dict_to_keypair),
+            ("domains", "_domains", self._dict_to_domain),
+            ("projects", "_projects", self._dict_to_project),
+            ("users", "_users", self._dict_to_user),
+            ("roles", "_roles", self._dict_to_role),
+            ("networks", "_networks", self._dict_to_network),
+            ("subnets", "_subnets", self._dict_to_subnet),
+            ("ports", "_ports", self._dict_to_port),
+            ("routers", "_routers", self._dict_to_router),
+            ("floating_ips", "_floating_ips", self._dict_to_floating_ip),
+            ("security_groups", "_security_groups", self._dict_to_security_group),
+            ("volumes", "_volumes", self._dict_to_volume),
+            ("snapshots", "_snapshots", self._dict_to_snapshot),
+            ("volume_types", "_volume_types", self._dict_to_volume_type),
+            ("glance_images", "_glance_images", self._dict_to_glance_image),
+        ]
 
-    def _role_to_dict(self, role: Role) -> dict[str, Any]:
-        """Convert role to dictionary for persistence."""
-        return {
-            "id": role.id,
-            "name": role.name,
-            "description": role.description,
-            "domain_id": role.domain_id,
-        }
+        for key, attr, builder in legacy:
+            if key not in data:
+                continue
+            loaded = {}
+            for record_id, record in data[key].items():
+                try:
+                    loaded[record_id] = builder(record)
+                except Exception as e:
+                    self._load_degraded = True
+                    logger.error(f"Dropped unreadable record {record_id} from '{key}': {e}")
+            setattr(self, attr, loaded)
 
-    def _role_assignment_to_dict(self, ra: RoleAssignment) -> dict[str, Any]:
-        """Convert role assignment to dictionary for persistence."""
-        return {
-            "role_id": ra.role_id,
-            "user_id": ra.user_id,
-            "group_id": ra.group_id,
-            "project_id": ra.project_id,
-            "domain_id": ra.domain_id,
-            "inherited": ra.inherited,
-        }
+        if "role_assignments" in data:
+            assignments = []
+            for record in data["role_assignments"]:
+                try:
+                    assignments.append(self._dict_to_role_assignment(record))
+                except Exception as e:
+                    self._load_degraded = True
+                    logger.error(f"Dropped unreadable role assignment: {e}")
+            self._role_assignments = assignments
 
-    def _network_to_dict(self, network: Network) -> dict[str, Any]:
-        """Convert network to dictionary for persistence."""
-        return {
-            "id": network.id,
-            "name": network.name,
-            "description": network.description,
-            "tenant_id": network.project_id,
-            "project_id": network.project_id,
-            "admin_state_up": network.admin_state_up,
-            "status": network.status,
-            "shared": network.shared,
-            "router:external": network.external,
-            "mtu": network.mtu,
-            "port_security_enabled": network.port_security_enabled,
-            "provider:network_type": network.provider_network_type,
-            "provider:physical_network": network.provider_physical_network,
-            "provider:segmentation_id": network.provider_segmentation_id,
-            "created_at": network.created_at.isoformat(),
-            "updated_at": network.updated_at.isoformat(),
-        }
-
-    def _subnet_to_dict(self, subnet: Subnet) -> dict[str, Any]:
-        """Convert subnet to dictionary for persistence."""
-        return {
-            "id": subnet.id,
-            "name": subnet.name,
-            "description": subnet.description,
-            "network_id": subnet.network_id,
-            "tenant_id": subnet.project_id,
-            "project_id": subnet.project_id,
-            "cidr": subnet.cidr,
-            "gateway_ip": subnet.gateway_ip,
-            "ip_version": subnet.ip_version,
-            "enable_dhcp": subnet.enable_dhcp,
-            "dns_nameservers": subnet.dns_nameservers,
-            "allocation_pools": [{"start": p.start, "end": p.end} for p in subnet.allocation_pools],
-            "host_routes": subnet.host_routes,
-            "created_at": subnet.created_at.isoformat(),
-            "updated_at": subnet.updated_at.isoformat(),
-        }
-
-    def _port_to_dict(self, port: Port) -> dict[str, Any]:
-        """Convert port to dictionary for persistence."""
-        return {
-            "id": port.id,
-            "name": port.name,
-            "description": port.description,
-            "network_id": port.network_id,
-            "tenant_id": port.project_id,
-            "project_id": port.project_id,
-            "mac_address": port.mac_address,
-            "admin_state_up": port.admin_state_up,
-            "status": port.status,
-            "device_id": port.device_id,
-            "device_owner": port.device_owner,
-            "fixed_ips": [
-                {"subnet_id": f.subnet_id, "ip_address": f.ip_address} for f in port.fixed_ips
-            ],
-            "security_groups": port.security_groups,
-            "port_security_enabled": port.port_security_enabled,
-            "created_at": port.created_at.isoformat(),
-            "updated_at": port.updated_at.isoformat(),
-        }
-
-    def _router_to_dict(self, router: Router) -> dict[str, Any]:
-        """Convert router to dictionary for persistence."""
-        ext_gw = None
-        if router.external_gateway_info:
-            ext_gw = {
-                "network_id": router.external_gateway_info.network_id,
-                "enable_snat": router.external_gateway_info.enable_snat,
-                "external_fixed_ips": [
-                    {"subnet_id": f.subnet_id, "ip_address": f.ip_address}
-                    for f in router.external_gateway_info.external_fixed_ips
-                ],
-            }
-        return {
-            "id": router.id,
-            "name": router.name,
-            "description": router.description,
-            "tenant_id": router.project_id,
-            "project_id": router.project_id,
-            "admin_state_up": router.admin_state_up,
-            "status": router.status,
-            "external_gateway_info": ext_gw,
-            "created_at": router.created_at.isoformat(),
-            "updated_at": router.updated_at.isoformat(),
-        }
-
-    def _floating_ip_to_dict(self, fip: FloatingIP) -> dict[str, Any]:
-        """Convert floating IP to dictionary for persistence."""
-        return {
-            "id": fip.id,
-            "floating_ip_address": fip.floating_ip_address,
-            "floating_network_id": fip.floating_network_id,
-            "router_id": fip.router_id,
-            "port_id": fip.port_id,
-            "fixed_ip_address": fip.fixed_ip_address,
-            "tenant_id": fip.project_id,
-            "project_id": fip.project_id,
-            "status": fip.status.value,
-            "description": fip.description,
-            "created_at": fip.created_at.isoformat(),
-            "updated_at": fip.updated_at.isoformat(),
-        }
-
-    def _security_group_to_dict(self, sg: SecurityGroup) -> dict[str, Any]:
-        """Convert security group to dictionary for persistence."""
-        return {
-            "id": sg.id,
-            "name": sg.name,
-            "description": sg.description,
-            "tenant_id": sg.project_id,
-            "project_id": sg.project_id,
-            "created_at": sg.created_at.isoformat(),
-            "updated_at": sg.updated_at.isoformat(),
-        }
-
-    def _volume_to_dict(self, volume: Volume) -> dict[str, Any]:
-        """Convert volume to dictionary for persistence."""
-        return {
-            "id": volume.id,
-            "name": volume.name,
-            "description": volume.description,
-            "size": volume.size,
-            "status": volume.status.value,
-            "availability_zone": volume.availability_zone,
-            "tenant_id": volume.project_id,
-            "user_id": volume.user_id,
-            "volume_type": volume.volume_type,
-            "bootable": volume.bootable,
-            "encrypted": volume.encrypted,
-            "multiattach": volume.multiattach,
-            "source_volid": volume.source_volid,
-            "snapshot_id": volume.snapshot_id,
-            "image_id": volume.image_id,
-            "metadata": volume.metadata,
-            "created_at": volume.created_at.isoformat(),
-            "updated_at": volume.updated_at.isoformat(),
-        }
-
-    def _snapshot_to_dict(self, snapshot: Snapshot) -> dict[str, Any]:
-        """Convert snapshot to dictionary for persistence."""
-        return {
-            "id": snapshot.id,
-            "name": snapshot.name,
-            "description": snapshot.description,
-            "volume_id": snapshot.volume_id,
-            "status": snapshot.status.value,
-            "size": snapshot.size,
-            "tenant_id": snapshot.project_id,
-            "user_id": snapshot.user_id,
-            "metadata": snapshot.metadata,
-            "created_at": snapshot.created_at.isoformat(),
-            "updated_at": snapshot.updated_at.isoformat(),
-        }
-
-    def _volume_type_to_dict(self, vtype: VolumeType) -> dict[str, Any]:
-        """Convert volume type to dictionary for persistence."""
-        return {
-            "id": vtype.id,
-            "name": vtype.name,
-            "description": vtype.description,
-            "is_public": vtype.is_public,
-            "extra_specs": vtype.extra_specs,
-        }
-
-    def _glance_image_to_dict(self, image: GlanceImage) -> dict[str, Any]:
-        """Convert Glance image to dictionary for persistence."""
-        return {
-            "id": image.id,
-            "name": image.name,
-            "status": image.status.value,
-            "visibility": image.visibility.value,
-            "protected": image.protected,
-            "owner": image.owner,
-            "min_disk": image.min_disk,
-            "min_ram": image.min_ram,
-            "size": image.size,
-            "virtual_size": image.virtual_size,
-            "checksum": image.checksum,
-            "os_hash_algo": image.os_hash_algo,
-            "os_hash_value": image.os_hash_value,
-            "os_hidden": image.os_hidden,
-            "container_format": image.container_format.value if image.container_format else None,
-            "disk_format": image.disk_format.value if image.disk_format else None,
-            "created_at": image.created_at.isoformat(),
-            "updated_at": image.updated_at.isoformat(),
-            "tags": image.tags,
-            "properties": image.properties,
-            "architecture": image.architecture,
-            "os_distro": image.os_distro,
-            "os_version": image.os_version,
-        }
-
-    # Deserialization methods (from dict)
+    # Legacy deserialization methods, used only by _load_legacy_v1.
+    #
+    # Do not extend these: state written today goes through
+    # emulator.core.persistence, which derives the mapping from the dataclass
+    # annotations. These exist purely to read files written before that.
 
     def _dict_to_server(self, data: dict[str, Any]) -> Server:
         """Convert dictionary to Server object."""
@@ -1963,7 +1680,7 @@ class Database:
             description=data.get("description", ""),
             project_id=data["tenant_id"],
             admin_state_up=data.get("admin_state_up", True),
-            status=data.get("status", "ACTIVE"),
+            status=NetworkStatus(data.get("status", "ACTIVE")),
             shared=data.get("shared", False),
             external=data.get("router:external", False),
             mtu=data.get("mtu", 1500),
@@ -2023,7 +1740,7 @@ class Database:
             project_id=data["tenant_id"],
             mac_address=data["mac_address"],
             admin_state_up=data.get("admin_state_up", True),
-            status=data.get("status", "ACTIVE"),
+            status=PortStatus(data.get("status", "ACTIVE")),
             device_id=data.get("device_id", ""),
             device_owner=data.get("device_owner", ""),
             fixed_ips=[
@@ -2063,7 +1780,7 @@ class Database:
             description=data.get("description", ""),
             project_id=data["tenant_id"],
             admin_state_up=data.get("admin_state_up", True),
-            status=data.get("status", "ACTIVE"),
+            status=RouterStatus(data.get("status", "ACTIVE")),
             external_gateway_info=ext_gw,
             created_at=(
                 datetime.fromisoformat(data["created_at"])
@@ -5506,6 +5223,8 @@ class Database:
                 sg.security_group_rules.append(rule)
                 self._security_group_rules[rule.id] = rule
             self._security_groups[sg.id] = sg
+            if self.auto_save:
+                self.save()
             return sg
 
     def get_security_group(

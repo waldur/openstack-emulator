@@ -313,7 +313,12 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     if body.auth.scope and body.auth.scope.project:
         project_scope = body.auth.scope.project
         project_id = project_scope.get("id")
-        project_name = project_scope.get("name", "admin")
+        # Never invent the name "admin" for an id-scoped request. A token whose
+        # project is named "admin" is privileged (see validate_token_simple), so
+        # defaulting the name here meant that scoping to an id the emulator did
+        # not know about produced an admin token with cross-tenant access.
+        # Unscoped requests keep the historical admin default.
+        project_name = project_scope.get("name") or ("" if project_id else "admin")
 
     logger.debug(
         "Creating token for user: %s, project: %s (id=%s), domain: %s",
