@@ -3,8 +3,12 @@
 import logging
 import traceback
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+# fastapi.HTTPException subclasses this one, so handling the Starlette class
+# covers both application-raised errors and the router's own 404/405.
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +49,14 @@ def add_openstack_exception_handlers(app: FastAPI) -> None:
         app: The FastAPI application instance to add handlers to
     """
 
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    # Registered against the Starlette base class, not fastapi.HTTPException:
+    # the router raises the Starlette one for an unmatched route, so handling
+    # only the FastAPI subclass let those 404s fall through to Starlette's
+    # default handler and return {"detail": "Not Found"} instead of the
+    # OpenStack error body. Clients then saw two different shapes for 404
+    # depending on whether the route existed.
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle HTTP exceptions in OpenStack error format."""
         return JSONResponse(
             status_code=exc.status_code,

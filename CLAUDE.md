@@ -40,7 +40,8 @@ Keep `README.md` minimal with links to detailed docs.
 - **FastAPI**: REST API framework
 - **Pydantic**: Request/response validation
 - **In-memory database**: No external dependencies
-- **Multiprocessing**: Each service runs on its own port
+- **One process, one port per service**: every service is a separate FastAPI app on its own standard port, all running as asyncio tasks in a single process and sharing one in-memory database
+- **Persistence**: optional (`--persist-db`); serialization is derived from the model dataclasses in `emulator/core/persistence.py`, and every `Database` collection must be registered there
 
 For detailed documentation:
 - [Architecture Overview](docs/architecture/README.md)

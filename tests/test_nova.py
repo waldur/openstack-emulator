@@ -505,3 +505,97 @@ class TestEmulatorEndpoints:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
+
+
+class TestServerSecurityGroups:
+    """Test GET /v2.1/servers/{id}/os-security-groups.
+
+    This endpoint shipped without any test and later produced a run of
+    unexplained 404s in production, which turned out to be indistinguishable in
+    the logs from a route that does not exist.
+    """
+
+    @staticmethod
+    def _create_server(client, token, name="sg-server"):
+        image_id = client.get("/v2.1/images", headers={"X-Auth-Token": token}).json()["images"][0][
+            "id"
+        ]
+        response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": token},
+            json={"server": {"name": name, "flavorRef": "1", "imageRef": image_id}},
+        )
+        assert response.status_code == 202
+        return response.json()["server"]["id"]
+
+    def test_admin_token_lists_groups(self, client, auth_token):
+        server_id = self._create_server(client, auth_token)
+
+        response = client.get(
+            f"/v2.1/servers/{server_id}/os-security-groups",
+            headers={"X-Auth-Token": auth_token},
+        )
+
+        assert response.status_code == 200
+        groups = response.json()["security_groups"]
+        assert [g["name"] for g in groups] == ["default"]
+        # This endpoint renames the rules key; the Neutron spelling must be gone.
+        assert "rules" in groups[0]
+        assert "security_group_rules" not in groups[0]
+
+    def test_owning_tenant_lists_groups(self, client):
+        project = db.create_project(name="tenant-a", domain_id="default")
+        token = db.create_token(user_name="alice", project_name="tenant-a", domain_id="default").id
+        assert db.get_project(project.id) is not None
+        server_id = self._create_server(client, token)
+
+        response = client.get(
+            f"/v2.1/servers/{server_id}/os-security-groups",
+            headers={"X-Auth-Token": token},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["security_groups"][0]["tenant_id"] == project.id
+
+    def test_foreign_tenant_gets_404(self, client, auth_token):
+        """Tenant isolation, matching Nova: another project's server is invisible."""
+        server_id = self._create_server(client, auth_token, name="owned-by-admin")
+        db.create_project(name="tenant-b", domain_id="default")
+        other = db.create_token(user_name="bob", project_name="tenant-b", domain_id="default").id
+
+        response = client.get(
+            f"/v2.1/servers/{server_id}/os-security-groups",
+            headers={"X-Auth-Token": other},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == "Server not found"
+
+    def test_unknown_server_gets_404(self, client, auth_token):
+        response = client.get(
+            "/v2.1/servers/does-not-exist/os-security-groups",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 404
+
+    def test_requires_a_token(self, client):
+        response = client.get("/v2.1/servers/whatever/os-security-groups")
+        assert response.status_code == 401
+
+
+class TestErrorFormat:
+    """Every 4xx must use the OpenStack error envelope."""
+
+    def test_unmatched_route_uses_openstack_error_body(self, client, auth_token):
+        """Starlette's router raises its own HTTPException for a missing route.
+
+        Handling only fastapi.HTTPException let these return {"detail": ...},
+        so a 404 body differed depending on why it was a 404.
+        """
+        response = client.get(
+            "/v2.1/servers/some-id/os-security_groups",
+            headers={"X-Auth-Token": auth_token},
+        )
+
+        assert response.status_code == 404
+        assert response.json() == {"error": {"message": "Not Found", "code": 404}}

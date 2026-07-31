@@ -125,6 +125,9 @@ def delete_resource(self, resource_id: str, project_id: str | None = None) -> bo
     return True
 ```
 
+Then register the new collection for persistence (see below) — a test fails
+until you do.
+
 ### 3. Create API Routes (`emulator/api/<service>.py`)
 
 ```python
@@ -226,6 +229,41 @@ def test_create_resource():
 - Add API examples to `docs/api-examples.md`
 - Update `docs/usage.md` if needed
 - Update `README.md` service table
+
+## Persistence
+
+With `--persist-db <path>` the whole database is written to one JSON file and
+restored at startup. You do not write serialization code: `encode`/`decode` in
+[`emulator/core/persistence.py`](../emulator/core/persistence.py) derive it from
+the model's dataclass annotations, so adding a field to a model is enough for it
+to round-trip. Enums, datetimes, nested dataclasses and containers are all
+handled from the declared type.
+
+What you *must* do is register any new collection you add to `Database`:
+
+```python
+# emulator/core/persistence.py
+PERSISTED = (
+    ...
+    _c("_resources", Resource),                     # dict[str, Resource]
+    _c("_things_by_owner", Thing, Shape.DICT_OF_LIST),
+)
+```
+
+If the collection genuinely should not survive a restart, add it to
+`NOT_PERSISTED` with the reason instead. `TestRegistryCoverage` in
+`tests/test_persistence.py` fails until the attribute appears in one of them —
+this exists because persistence silently covered only 17 of ~75 collections for
+a long time, so state disappeared on restart with nothing to indicate it.
+
+Two behaviours worth knowing when debugging a persisted deployment:
+
+- Records that fail to decode are skipped and logged rather than aborting the
+  load, and the original file is copied to `<path>.corrupt-<timestamp>` before
+  the first save replaces it.
+- Files written before `schema_version` existed are read by
+  `Database._load_legacy_v1` and upgraded on the next save. Do not extend those
+  legacy readers; they only exist to read old files.
 
 ## Standard OpenStack Ports
 

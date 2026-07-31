@@ -14,6 +14,8 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
+#: Separate logger so access lines can be filtered independently of debug output.
+access_logger = logging.getLogger("emulator.access")
 
 
 def log_request_response(
@@ -146,3 +148,37 @@ def add_debug_logging_middleware(app: FastAPI, service_name: str) -> None:
     """
     # Apply the debug logging middleware directly to the app
     app.middleware("http")(debug_logging_middleware)
+
+
+def add_access_log_middleware(app: FastAPI, service_name: str) -> None:
+    """Log one line per request, naming the service that answered it.
+
+    Replaces uvicorn's access log, which cannot do this: all services run in a
+    single process and uvicorn reconfigures one shared ``uvicorn.access``
+    logger, whose default format carries neither the service name nor the port.
+    A 404 in the pod log was therefore unattributable — it could equally have
+    been the owning service rejecting the request or a different service that
+    has no such route.
+    """
+
+    @app.middleware("http")
+    async def access_log_middleware(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        client = f"{request.client.host}:{request.client.port}" if request.client else "-"
+        query = f"?{request.url.query}" if request.url.query else ""
+        # The bound port, so the line stays right under --port-offset.
+        server = request.scope.get("server") or ("", 0)
+        access_logger.info(
+            '%s:%s %s - "%s %s%s HTTP/%s" %d',
+            service_name,
+            server[1],
+            client,
+            request.method,
+            request.url.path,
+            query,
+            request.scope.get("http_version", "1.1"),
+            response.status_code,
+        )
+        return response
