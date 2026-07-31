@@ -1,5 +1,6 @@
 """Tests for Scenario management and failure injection."""
 
+import time
 from typing import Generator
 
 import pytest
@@ -14,7 +15,6 @@ from emulator.core.scenarios import (
     Scenario,
     ScenarioCategory,
 )
-from emulator.core.simple_scenarios import simple_scenario_manager
 
 # Create all apps once at module level
 _apps = create_all_service_apps()
@@ -24,7 +24,6 @@ _apps = create_all_service_apps()
 def reset_state() -> Generator[None, None, None]:
     """Reset scenario manager and database before each test."""
     scenario_manager.reset()
-    simple_scenario_manager.reset()
     db._servers.clear()
     db._tokens.clear()
     db._init_default_flavors()
@@ -32,7 +31,6 @@ def reset_state() -> Generator[None, None, None]:
     db.reset_keystone()
     yield
     scenario_manager.reset()
-    simple_scenario_manager.reset()
 
 
 @pytest.fixture
@@ -370,26 +368,27 @@ class TestMiddlewareIntegration:
 
     def test_health_endpoint_bypasses_middleware(self, nova_client: TestClient) -> None:
         """Test that health endpoint is not affected by scenarios."""
-        simple_scenario_manager.enable_scenario("nova_oom_crash")
+        scenario_manager.enable_scenario("nova_oom_crash")
 
         response = nova_client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
-    @pytest.mark.skip(reason="Delay injection not implemented in simple_scenario_manager")
     def test_delay_injection(self, nova_client: TestClient, auth_token: str) -> None:
-        """Test that delays are actually injected.
+        """Delay-only scenarios slow a request down instead of failing it."""
+        scenario_manager.enable_scenario("system_under_load")
 
-        Note: The simple_scenario_manager currently doesn't support delay-only
-        scenarios. All scenarios with default FailureConfig have failure_probability=1.0
-        which causes failures instead of just delays.
-        This test is skipped until delay-only scenario support is implemented.
-        """
-        pass
+        started = time.monotonic()
+        response = nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+        elapsed_ms = (time.monotonic() - started) * 1000
+
+        assert response.status_code == 200
+        # system_under_load injects 500-3000ms; allow slack on a busy machine.
+        assert elapsed_ms >= 400
 
     def test_failure_injection(self, nova_client: TestClient, auth_token: str) -> None:
         """Test that failures are injected."""
-        simple_scenario_manager.enable_scenario("nova_oom_crash")
+        scenario_manager.enable_scenario("nova_oom_crash")
 
         response = nova_client.get(
             "/v2.1/servers",
@@ -399,3 +398,76 @@ class TestMiddlewareIntegration:
         # Should get 503 Service Unavailable
         assert response.status_code == 503
         assert "error" in response.json()
+
+
+class TestControlPlaneReachesDataPlane:
+    """Enable a scenario the way a user does, then check it actually fires.
+
+    The suite used to drive the scenarios API and the injection middleware
+    separately, asserting each half against a different manager instance. Both
+    halves passed while the feature did nothing: the API wrote one singleton and
+    the middleware read another, so an "enabled" scenario never affected a
+    single request. These tests cross that seam.
+    """
+
+    def test_enabling_via_the_api_makes_nova_fail(
+        self, scenarios_client: TestClient, nova_client: TestClient, auth_token: str
+    ) -> None:
+        ok = nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+        assert ok.status_code == 200
+
+        enable = scenarios_client.post("/scenarios/nova_oom_crash/enable", json={})
+        assert enable.status_code == 200
+
+        response = nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+
+        assert response.status_code == 503
+        assert response.json()["error"]["scenario"] == "nova_oom_crash"
+        assert response.headers["X-Scenario-Injection"] == "nova_oom_crash"
+
+    def test_disabling_via_the_api_stops_the_failures(
+        self, scenarios_client: TestClient, nova_client: TestClient, auth_token: str
+    ) -> None:
+        scenarios_client.post("/scenarios/nova_oom_crash/enable", json={})
+        assert (
+            nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token}).status_code
+            == 503
+        )
+
+        scenarios_client.post("/scenarios/nova_oom_crash/disable")
+
+        response = nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+
+    def test_reset_via_the_api_stops_the_failures(
+        self, scenarios_client: TestClient, nova_client: TestClient, auth_token: str
+    ) -> None:
+        scenarios_client.post("/scenarios/nova_oom_crash/enable", json={})
+
+        scenarios_client.post("/scenarios/reset")
+
+        response = nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+        assert response.status_code == 200
+
+    def test_scenario_only_affects_its_target_service(
+        self, scenarios_client: TestClient, nova_client: TestClient, auth_token: str
+    ) -> None:
+        scenarios_client.post("/scenarios/nova_oom_crash/enable", json={})
+
+        neutron = TestClient(_apps["neutron"])
+        response = neutron.get("/v2.0/networks", headers={"X-Auth-Token": auth_token})
+
+        assert response.status_code == 200
+
+    def test_stats_record_the_injections(
+        self, scenarios_client: TestClient, nova_client: TestClient, auth_token: str
+    ) -> None:
+        """Stats reported zero forever, which made the disconnect look like success."""
+        scenarios_client.post("/scenarios/nova_oom_crash/enable", json={})
+
+        for _ in range(3):
+            nova_client.get("/v2.1/flavors", headers={"X-Auth-Token": auth_token})
+
+        stats = scenarios_client.get("/scenarios/stats").json()["global"]
+        assert stats["failures_injected"] == 3
+        assert stats["last_triggered"] is not None

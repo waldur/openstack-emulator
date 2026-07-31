@@ -151,31 +151,41 @@ time curl -s http://localhost:8774/v2.1/flavors \
 curl -X POST http://localhost:8999/scenarios/reset
 ```
 
-## Cross-Process State Sharing
+## How Injection Works
 
-When running multiple services as separate processes, the Scenario service shares state via file:
+All services run in one process, so the Scenarios API, the Status UI and the
+injection middleware share a single in-memory `scenario_manager`. Enabling a
+scenario takes effect on the very next request — there is no synchronisation
+step and no state file.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Multi-Process Architecture                    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Scenarios Service (8999)         Nova Service (8774)           │
-│  ┌─────────────────────┐         ┌─────────────────────┐        │
-│  │ POST /enable        │         │ ScenarioMiddleware  │        │
-│  │       │             │         │       │             │        │
-│  │       ▼             │         │       ▼             │        │
-│  │  Write to file ─────┼─────────┼──► Read from file   │        │
-│  └─────────────────────┘         └─────────────────────┘        │
-│                                                                  │
-│  State File: /tmp/openstack-emulator-scenarios.json             │
+│  Scenarios API (8999)  ──┐                                       │
+│  Status UI (10000)     ──┤                                       │
+│                          ▼                                       │
+│                  scenario_manager  ◄─── ScenarioMiddleware       │
+│                   (in memory)            on every service app    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-- **State File**: `/tmp/openstack-emulator-scenarios.json`
-- **File Locking**: Uses `fcntl` for safe concurrent access
-- **Caching**: State cached with 0.5s TTL
-- **Automatic Sync**: Middleware reads state before each request
+Per request the middleware derives an operation from the HTTP method
+(`GET` → `read`, `POST` → `create`, …) and a resource from the path
+(`/servers` → `server`), then asks the manager whether this service, operation
+and resource should fail or be delayed. Scenarios only affect their
+`target_service`, so enabling a Nova scenario leaves Neutron alone.
+
+Injected responses are identifiable:
+
+- `X-Scenario-Injection` — the scenario id that fired
+- `X-Failure-Type` — e.g. `service_unavailable`
+- `X-Timeout-Injected: true` — on an injected 504
+
+`/health` and `/healthcheck` are never injected into, so probes stay green while
+a scenario is active.
+
+> **Note**: earlier versions synchronised this state through
+> `/tmp/openstack-emulator-scenarios.json` for a multi-process layout that no
+> longer exists. That file is gone; nothing reads or writes it.
 
 ## Related Documentation
 

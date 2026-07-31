@@ -4,6 +4,15 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- Make failure injection work at all. The scenarios API and the Status UI enabled scenarios on one manager instance while the injection middleware read a different one, so an "enabled" scenario never affected a request — the API reported it active and the stats reported zero injections. Broken since the single-process refactor in December 2025.
+- Restore delay and timeout injection, including delay-only load scenarios and injected 504s, which the replacement manager never implemented.
+
+### Removed
+- `emulator/core/shared_state.py` and `emulator/core/simple_scenarios.py`, along with `ScenarioManager.sync_from_shared_state()`. These synchronised scenario state through `/tmp/openstack-emulator-scenarios.json` for a multi-process layout that no longer exists; nothing read the file.
+
 ## [0.2.4] - 2026-07-28
 
 ### Fixed
