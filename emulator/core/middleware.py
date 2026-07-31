@@ -1,6 +1,8 @@
-"""Simplified middleware for scenario-based failure and load injection.
+"""Middleware for scenario-based failure and load injection.
 
-Uses direct in-memory state sharing in single-process architecture.
+Reads ``scenario_manager`` — the same instance the scenarios API and the status
+UI write to. All services share one process, so enabling a scenario on that
+singleton is immediately visible here with no synchronisation.
 """
 
 import asyncio
@@ -10,7 +12,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
-from emulator.core.simple_scenarios import simple_scenario_manager
+from emulator.core.scenario_manager import scenario_manager
 
 
 def get_operation_from_method(method: str) -> str:
@@ -98,10 +100,15 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(excluded) for excluded in self.exclude_paths):
             return await call_next(request)
 
-        # Check for failure scenarios (simplified - no sync needed in single process)
-        failure = simple_scenario_manager.should_inject_failure(
-            service_name=self.service_name,
-            endpoint=path,
+        # Scenarios can be scoped to an operation (read/create/...) and a
+        # resource (server/volume/...), so derive both from the request.
+        operation = get_operation_from_method(request.method)
+        resource = get_resource_from_path(path)
+
+        failure = scenario_manager.should_fail(
+            service=self.service_name,
+            operation=operation,
+            resource=resource,
         )
 
         if failure and failure.should_fail:
@@ -116,13 +123,38 @@ class ScenarioMiddleware(BaseHTTPMiddleware):
                 },
                 headers={
                     "X-Scenario-Injection": failure.scenario_id or "unknown",
-                    "X-Failure-Type": failure.failure_type or "unknown",
+                    "X-Failure-Type": (
+                        failure.failure_type.value if failure.failure_type else "unknown"
+                    ),
                 },
             )
 
-        # Apply delay if any (simplified)
-        if failure.delay_seconds > 0:
-            await asyncio.sleep(failure.delay_seconds)
+        delay = scenario_manager.calculate_delay(
+            service=self.service_name,
+            operation=operation,
+        )
+
+        if delay.should_timeout:
+            # Make the client wait as it would for a real timeout, capped so a
+            # misconfigured scenario cannot hang the test suite.
+            await asyncio.sleep(min(delay.delay_ms / 1000.0, 30.0))
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "error": {
+                        "message": "Gateway Timeout: Request timed out",
+                        "code": 504,
+                        "scenarios": delay.scenario_ids,
+                    }
+                },
+                headers={
+                    "X-Scenario-Injection": ",".join(delay.scenario_ids or []),
+                    "X-Timeout-Injected": "true",
+                },
+            )
+
+        if delay.delay_ms > 0:
+            await asyncio.sleep(delay.delay_ms / 1000.0)
 
         # Process the actual request
         return await call_next(request)

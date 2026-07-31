@@ -123,9 +123,9 @@ def reset_database() -> Generator[None, None, None]:
     db._init_default_resource_providers()
 
     # Reset scenarios to prevent random failures during tests
-    from emulator.core.simple_scenarios import simple_scenario_manager
+    from emulator.core.scenario_manager import scenario_manager
 
-    simple_scenario_manager.reset()
+    scenario_manager.reset()
 
     yield
 
