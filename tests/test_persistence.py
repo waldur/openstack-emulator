@@ -458,6 +458,20 @@ class TestDamagedFile(unittest.TestCase):
         # Collections decoded after the bad one must still be present.
         self.assertTrue(db._flavors)
 
+    def test_dropped_records_are_named_in_the_log(self):
+        """A count alone leaves nobody able to find the record to repair."""
+        self._corrupt_file()
+
+        db = Database(persist_path=self.db_path)
+        with self.assertLogs("emulator.core.database", level="ERROR") as captured:
+            db.load()
+
+        dropped = [line for line in captured.output if "Dropped unreadable record" in line]
+        self.assertEqual(len(dropped), 1)
+        self.assertIn("networks", dropped[0])
+        self.assertIn("broken", dropped[0])  # the record id
+        self.assertIn("SHRUG", dropped[0])  # the underlying error
+
     def test_original_is_preserved_before_being_overwritten(self):
         self._corrupt_file()
 

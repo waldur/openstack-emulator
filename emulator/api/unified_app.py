@@ -85,15 +85,19 @@ def create_service_app(
     # Add debug logging middleware for all services
     add_debug_logging_middleware(app, service_name)
 
-    # One access line per request, tagged with the service that handled it.
-    add_access_log_middleware(app, service_name)
-
     # Add scenario injection middleware (except for scenarios service itself)
     if include_scenarios and service_name != "scenarios":
         app.add_middleware(ScenarioMiddleware, service_name=service_name)
 
     # Add OpenStack headers middleware
     add_openstack_headers_middleware(app, service_name, api_version)
+
+    # One access line per request, tagged with the service that handled it.
+    # Added last so it is the outermost middleware and therefore sees every
+    # response, including the ones ScenarioMiddleware short-circuits: an
+    # injected 503 is exactly the kind of response you want in the log, and
+    # from anywhere inside the stack it would leave no trace at all.
+    add_access_log_middleware(app, service_name)
 
     # Add OpenStack-style exception handlers
     add_openstack_exception_handlers(app)
