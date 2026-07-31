@@ -143,7 +143,7 @@ class Database:
         # Set when a load could not read everything, so the first save keeps a
         # copy of the original instead of silently replacing it.
         self._load_degraded = False
-        self._load_backup_done = False
+        self._backup_done = False
 
         # Storage dictionaries - Nova
         self._servers: dict[str, Server] = {}
@@ -1378,11 +1378,27 @@ class Database:
 
         with self._lock:
             try:
+                lossy = False
                 data: dict[str, Any] = {"schema_version": persistence.SCHEMA_VERSION}
                 for collection in persistence.PERSISTED:
-                    data[collection.key] = persistence.encode_collection(
-                        collection, getattr(self, collection.attr)
-                    )
+                    try:
+                        encoded, dropped = persistence.encode_collection(
+                            collection, getattr(self, collection.attr)
+                        )
+                    except Exception as e:
+                        # The container itself is unusable. Omitting the key
+                        # leaves the in-memory defaults in place on the next
+                        # load, which beats abandoning the whole write.
+                        logger.error(f"Could not serialize '{collection.key}', omitting it: {e}")
+                        lossy = True
+                        continue
+                    data[collection.key] = encoded
+                    for failure in dropped:
+                        logger.error(
+                            f"Dropped unserializable record from '{collection.key}' -> {failure}"
+                        )
+                    lossy = lossy or bool(dropped)
+
                 data["scalars"] = {
                     name: getattr(self, name) for name in persistence.PERSISTED_SCALARS
                 }
@@ -1390,8 +1406,10 @@ class Database:
                 path = Path(self.persist_path)
                 path.parent.mkdir(parents=True, exist_ok=True)
 
-                if self._load_degraded:
-                    self._backup_unreadable_file(path)
+                # Keep the last file we cannot faithfully reproduce, whether the
+                # gap came from reading it or from writing this one.
+                if self._load_degraded or lossy:
+                    self._backup_existing_file(path)
 
                 tmp = path.with_name(f"{path.name}.tmp")
                 try:
@@ -1406,18 +1424,18 @@ class Database:
             except Exception as e:
                 logger.error(f"Failed to save database: {e}")
 
-    def _backup_unreadable_file(self, path: Path) -> None:
-        """Preserve a file we only partially understood, once."""
-        if self._load_backup_done or not path.exists():
+    def _backup_existing_file(self, path: Path) -> None:
+        """Preserve the current file once, before replacing it with a lossy one."""
+        if self._backup_done or not path.exists():
             return
-        self._load_backup_done = True
+        self._backup_done = True
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup = path.with_name(f"{path.name}.corrupt-{stamp}")
         try:
             shutil.copy2(path, backup)
             logger.error(
-                f"Database at {path} did not load cleanly; original preserved at {backup} "
-                "before overwriting"
+                f"Database at {path} could not be read or written faithfully; original "
+                f"preserved at {backup} before overwriting"
             )
         except Exception as e:  # pragma: no cover - best effort
             logger.error(f"Could not back up {path}: {e}")
