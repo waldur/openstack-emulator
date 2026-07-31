@@ -491,3 +491,90 @@ class TestDamagedFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnserializableRecordsOnSave(unittest.TestCase):
+    """A value the codec cannot encode must cost that record, not the file.
+
+    ``encode`` raises rather than stringifying unknown types, which is what
+    keeps bad data off disk. But with the whole save wrapped in one try/except,
+    a single off-type value stopped every subsequent save: the file silently
+    froze at a past state while the emulator carried on serving.
+    """
+
+    class Unserializable:
+        pass
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.temp_dir.name, "db.json")
+        self.db = Database(persist_path=self.db_path)
+        self.db.auto_save = True
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _poison(self):
+        network = self.db.create_network("poisoned", "p1")
+        self.db.create_volume("v1", 10, "p1", "u1")
+        self.db.save()
+        network.tags = [self.Unserializable()]
+        return network
+
+    def test_only_the_bad_record_is_lost(self):
+        self._poison()
+        self.db.create_network("healthy", "p1")
+
+        reloaded = Database(persist_path=self.db_path)
+        reloaded.load()
+
+        names = {n.name for n in reloaded._networks.values()}
+        self.assertIn("healthy", names)
+        self.assertNotIn("poisoned", names)
+
+    def test_other_collections_still_persist(self):
+        self._poison()
+        self.db.save()
+
+        reloaded = Database(persist_path=self.db_path)
+        reloaded.load()
+
+        self.assertEqual([v.name for v in reloaded._volumes.values()], ["v1"])
+
+    def test_saving_keeps_working_afterwards(self):
+        """The regression: one bad value used to freeze all future writes."""
+        self._poison()
+
+        self.db.create_network("later", "p1")
+
+        reloaded = Database(persist_path=self.db_path)
+        reloaded.load()
+        self.assertIn("later", {n.name for n in reloaded._networks.values()})
+
+    def test_the_dropped_record_is_named(self):
+        network = self._poison()
+
+        with self.assertLogs("emulator.core.database", level="ERROR") as captured:
+            self.db.save()
+
+        dropped = [line for line in captured.output if "Dropped unserializable record" in line]
+        self.assertEqual(len(dropped), 1)
+        self.assertIn("networks", dropped[0])
+        self.assertIn(network.id, dropped[0])
+
+    def test_previous_file_is_preserved_before_the_lossy_write(self):
+        self._poison()
+        self.db.save()
+
+        backups = [n for n in os.listdir(self.temp_dir.name) if ".corrupt-" in n]
+        self.assertEqual(len(backups), 1)
+        with open(os.path.join(self.temp_dir.name, backups[0])) as f:
+            preserved = json.load(f)
+        self.assertIn("poisoned", {n["name"] for n in preserved["networks"].values()})
+
+    def test_no_stale_temp_file_is_left(self):
+        self._poison()
+        self.db.save()
+
+        leftovers = [n for n in os.listdir(self.temp_dir.name) if n.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
