@@ -16,11 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Persist the default security group when `--auto-save` is enabled.
 - Do not grant admin privileges to a token scoped to an unknown project id. The project name defaulted to `admin`, which the emulator treats as privileged, so such a session got cross-tenant access.
 - Return the OpenStack error body for unmatched routes; only `fastapi.HTTPException` was handled, so those 404s used a different shape from every other error.
+- Make failure injection work at all. The scenarios API and the Status UI enabled scenarios on one manager instance while the injection middleware read a different one, so an "enabled" scenario never affected a request — the API reported it active and the stats reported zero injections. Broken since the single-process refactor in December 2025.
+- Restore delay and timeout injection, including delay-only load scenarios and injected 504s, which the replacement manager never implemented.
 
 ### Added
 - Access log naming the service and port that handled each request. All services share one process and one stdout, and uvicorn's access log identified neither, which made production 404s unattributable.
 - Persistence schema versioning with a compatibility path for files written by earlier versions; they are read as-is and upgraded on the next save.
 - Tests for `GET /v2.1/servers/{id}/os-security-groups`, which had none.
+
+### Removed
+- `emulator/core/shared_state.py` and `emulator/core/simple_scenarios.py`, along with `ScenarioManager.sync_from_shared_state()`. These synchronised scenario state through `/tmp/openstack-emulator-scenarios.json` for a multi-process layout that no longer exists; nothing read the file.
 
 ## [0.2.4] - 2026-07-28
 

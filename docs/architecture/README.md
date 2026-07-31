@@ -124,8 +124,7 @@ emulator/
     ├── models.py        # Data models (dataclasses)
     ├── middleware.py    # Scenario injection middleware
     ├── scenarios.py     # Scenario definitions
-    ├── scenario_manager.py  # Scenario state management
-    └── shared_state.py  # Cross-process state sharing
+    └── scenario_manager.py  # Scenario state (shared by the API, UI and middleware)
 ```
 
 ## Related Documentation
