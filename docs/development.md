@@ -235,7 +235,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def reset_db():
-    db.reset_<service>()
+    db.reset_swift()  # your service's reset method
     yield
 ```
 
