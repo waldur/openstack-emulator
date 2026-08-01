@@ -29,6 +29,14 @@ spec:
       port: 8080
       targetPort: swift
       protocol: TCP
+    - name: oidc
+      port: 5556
+      targetPort: oidc
+      protocol: TCP
+    - name: cloudkitty
+      port: 8889
+      targetPort: cloudkitty
+      protocol: TCP
     - name: placement
       port: 8778
       targetPort: placement

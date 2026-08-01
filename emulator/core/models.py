@@ -3202,3 +3202,103 @@ class SwiftObject:
             "content_type": self.content_type,
             "last_modified": format_datetime_utc(self.last_modified),
         }
+
+
+# OpenID Connect Provider Models
+
+
+@dataclass
+class OidcClient:
+    """A relying party registered with the embedded OpenID Provider."""
+
+    client_id: str = ""
+    client_secret: str = ""
+    #: Redirect URIs accepted for the authorization code grant. Empty means any.
+    redirect_uris: list[str] = field(default_factory=list)
+    grant_types: list[str] = field(
+        default_factory=lambda: [
+            "password",
+            "client_credentials",
+            "authorization_code",
+            "refresh_token",
+        ]
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "client_id": self.client_id,
+            "redirect_uris": self.redirect_uris,
+            "grant_types": self.grant_types,
+        }
+
+
+@dataclass
+class OidcUser:
+    """An end user the embedded OpenID Provider can authenticate.
+
+    ``claims`` holds anything beyond the standard fields, so a mapping rule can
+    be exercised against realistic federation attributes (``groups``,
+    ``eduperson_entitlement``, and so on).
+    """
+
+    username: str = ""
+    password: str = ""
+    subject: str = field(default_factory=lambda: str(uuid4()))
+    email: str = ""
+    name: str = ""
+    groups: list[str] = field(default_factory=list)
+    claims: dict[str, str] = field(default_factory=dict)
+
+    def to_claims(self, issuer: str, audience: str) -> dict[str, Any]:
+        """Build the claim set carried by an access token or returned by userinfo."""
+        claims: dict[str, Any] = {
+            "iss": issuer,
+            "aud": audience,
+            "sub": self.subject,
+            "preferred_username": self.username,
+        }
+        if self.email:
+            claims["email"] = self.email
+        if self.name:
+            claims["name"] = self.name
+        if self.groups:
+            claims["groups"] = list(self.groups)
+        claims.update(self.claims)
+        return claims
+
+
+@dataclass
+class OidcAuthorizationCode:
+    """A short-lived authorization code awaiting exchange for a token."""
+
+    code: str = field(default_factory=lambda: str(uuid4()))
+    client_id: str = ""
+    username: str = ""
+    redirect_uri: str = ""
+    scope: str = "openid profile"
+    expires_at: datetime | None = None
+
+
+@dataclass
+class ServiceProvider:
+    """Represents a Keystone service provider (the K2K federation peer)."""
+
+    id: str = ""
+    auth_url: str = ""
+    sp_url: str = ""
+    description: str = ""
+    enabled: bool = True
+    relay_state_prefix: str = "ss:mem:"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to API response format."""
+        return {
+            "id": self.id,
+            "auth_url": self.auth_url,
+            "sp_url": self.sp_url,
+            "description": self.description,
+            "enabled": self.enabled,
+            "relay_state_prefix": self.relay_state_prefix,
+            "links": {"self": f"/v3/OS-FEDERATION/service_providers/{self.id}"},
+        }

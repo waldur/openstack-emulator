@@ -604,7 +604,95 @@ curl -s "http://localhost:9696/v2.0/quotas/$PROJECT_ID" \
   -H "X-Auth-Token: $TOKEN" | jq
 ```
 
+## Object Storage (Swift)
+
+The account is the `AUTH_<project id>` segment of the storage URL, which is what
+the service catalog points a client at.
+
+```bash
+ACCOUNT="AUTH_$PROJECT_ID"
+
+# Account metadata, usage totals and quotas
+curl -s -I "http://localhost:8080/v1/$ACCOUNT" -H "X-Auth-Token: $TOKEN"
+
+# Set a byte quota. Only a reseller (an admin token here) may write this;
+# X-Account-Meta-Quota-Bytes is the obsoleted spelling and is translated.
+curl -s -X POST "http://localhost:8080/v1/$ACCOUNT" \
+  -H "X-Auth-Token: $TOKEN" -H "X-Account-Quota-Bytes: 10737418240"
+
+# Containers and objects
+curl -s -X PUT "http://localhost:8080/v1/$ACCOUNT/backups" -H "X-Auth-Token: $TOKEN"
+curl -s -X PUT "http://localhost:8080/v1/$ACCOUNT/backups/dump.tar" \
+  -H "X-Auth-Token: $TOKEN" --data-binary @dump.tar
+curl -s "http://localhost:8080/v1/$ACCOUNT/backups?format=json" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# An upload over the quota is refused with 413
+```
+
+## Per-volume-type quotas (Cinder)
+
+Cinder derives a quota key per metric for every volume type, so a quota set
+carries `gigabytes_<type>`, `volumes_<type>` and `snapshots_<type>` alongside the
+totals. A key naming a type that does not exist is a 400.
+
+```bash
+curl -s -X PUT "http://localhost:8776/v3/$PROJECT_ID/os-quota-sets/$PROJECT_ID" \
+  -H "X-Auth-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"quota_set": {"gigabytes": 2000, "gigabytes_nvme": 500, "volumes_nvme": 20}}' | jq
+
+# With usage, every key reports limit / in_use / reserved
+curl -s "http://localhost:8776/v3/$PROJECT_ID/os-quota-sets/$PROJECT_ID?usage=true" \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
+## Rating (CloudKitty)
+
+```bash
+# Summary grouped by project, table format (the default)
+curl -s "http://localhost:8889/v2/summary?groupby=project_id" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Object format, filtered to one metric
+curl -s "http://localhost:8889/v2/summary?response_format=object&filters=type:instance" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# The individual rating points behind the summary
+curl -s "http://localhost:8889/v2/dataframes" -H "X-Auth-Token: $TOKEN" | jq
+```
+
+## Federated identity
+
+See [Federated identity (OIDC)](./federation.md) for the full flow. In short:
+
+```bash
+# Get an access token from the embedded OpenID Provider
+ACCESS_TOKEN=$(curl -s -X POST http://localhost:5556/token \
+  -d grant_type=password -d username=alice -d password=password \
+  -d client_id=waldur -d client_secret=secret | jq -r .access_token)
+
+# Exchange it for an unscoped Keystone token
+curl -s -i -X POST \
+  "http://localhost:5000/v3/OS-FEDERATION/identity_providers/keycloak/protocols/openid/auth" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | grep -i x-subject-token
+
+# Discover what it may scope to
+curl -s http://localhost:5000/v3/OS-FEDERATION/projects \
+  -H "X-Auth-Token: $UNSCOPED_TOKEN" | jq
+```
+
+## Project tags
+
+```bash
+curl -s -X PUT "http://localhost:5000/v3/projects/$PROJECT_ID/tags/managed-by-agent" \
+  -H "X-Auth-Token: $TOKEN"
+
+curl -s "http://localhost:5000/v3/projects?tags=managed-by-agent" \
+  -H "X-Auth-Token: $TOKEN" | jq '.projects[].name'
+```
+
 ## Related Documentation
 
 - [Usage Guide](./usage.md) - General usage instructions
+- [Federated identity (OIDC)](./federation.md) - Keystone federation and the embedded provider
 - [Scenario Injection](./scenarios.md) - Failure testing

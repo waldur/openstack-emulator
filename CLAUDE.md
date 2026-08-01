@@ -17,6 +17,7 @@ docs/
 │   ├── data-models.md      # Data model definitions
 │   └── tenant-isolation.md # Multi-tenancy documentation
 ├── development.md          # Development guide (code style, adding services)
+├── federation.md           # OIDC federated identity guide
 ├── kubernetes.md           # Helm chart install + operator guide
 ├── usage.md                # Usage guide
 ├── api-examples.md         # API examples (curl, SDK)
@@ -145,6 +146,8 @@ For detailed tenant isolation documentation, see [docs/architecture/tenant-isola
 | Octavia | 9876 |
 | Placement | 8778 |
 | Swift | 8080 |
+| OIDC | 5556 |
+| CloudKitty | 8889 |
 
 For full port list and development instructions, see [docs/development.md](docs/development.md).
 

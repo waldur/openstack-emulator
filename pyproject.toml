@@ -23,6 +23,12 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "httpx>=0.25.0",
     "pyyaml>=6.0.0",
+    # The embedded OpenID Provider signs RS256 tokens, and Keystone federation
+    # validates bearer tokens issued by external providers against their JWKS.
+    "pyjwt[crypto]>=2.8.0",
+    # The OAuth 2 token endpoint takes form-encoded bodies, which FastAPI parses
+    # through python-multipart.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

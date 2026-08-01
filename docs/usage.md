@@ -23,6 +23,8 @@ openstack-emulator --service=neutron    # Port 9696
 openstack-emulator --service=octavia    # Port 9876
 openstack-emulator --service=placement  # Port 8778
 openstack-emulator --service=swift      # Port 8080
+openstack-emulator --service=oidc       # Port 5556 (OpenID Provider)
+openstack-emulator --service=cloudkitty # Port 8889 (Rating)
 openstack-emulator --service=status     # Port 10000 (Web UI)
 openstack-emulator --service=scenarios  # Port 8999
 ```

@@ -1,0 +1,138 @@
+name: waldur-site-agent
+description: >
+  A cloud shaped for testing an out-of-process agent that manages OpenStack
+  tenants: a dedicated domain for managed projects, per-volume-type quota keys,
+  object storage, and a federated login path so a user the agent pre-created can
+  actually sign in.
+
+reset_first: true
+
+keystone:
+  # Managed projects and their users live in their own domain, apart from the
+  # cloud's own service accounts.
+  domains:
+    - managed
+  roles:
+    - member
+    - reader
+  projects:
+    - name: demo-tenant
+      description: A tenant the agent would have provisioned
+      domain: managed
+      tags:
+        - managed-by-agent
+      users:
+        # Named after the user's email, which is what lets the federated login
+        # below resolve to this exact account.
+        - name: alice@example.org
+          password: password
+          email: alice@example.org
+          roles:
+            - member
+        - name: bob@example.org
+          password: password
+          email: bob@example.org
+          roles:
+            - member
+    - name: empty-tenant
+      description: A tenant with no members yet
+      domain: managed
+  groups:
+    - name: hpc-users
+      domain: managed
+      description: Grants access through a federated group claim
+      users:
+        - bob@example.org
+      role_assignments:
+        - project: demo-tenant
+          role: member
+
+cinder:
+  # Named so that quota keys like gigabytes_nvme and volumes_standard resolve;
+  # a key naming a type absent from this list is rejected with a 400.
+  volume_types:
+    - name: nvme
+      description: Fast local NVMe
+      extra_specs:
+        volume_backend_name: nvme
+    - name: standard
+      description: Spinning disk
+      extra_specs:
+        volume_backend_name: standard
+  volumes:
+    - name: demo-data
+      project: demo-tenant
+      size: 20
+      volume_type: nvme
+
+glance:
+  images:
+    - name: cirros-0.6.2
+      visibility: public
+      size: 21430272
+      os_distro: cirros
+
+nova:
+  servers:
+    - name: demo-vm
+      project: demo-tenant
+      flavor: m1.small
+      image: cirros-0.6.2
+
+swift:
+  accounts:
+    - project: demo-tenant
+      quota_bytes: 10737418240
+      metadata:
+        owner: demo-tenant
+  containers:
+    - name: backups
+      project: demo-tenant
+
+federation:
+  identity_providers:
+    - id: keycloak
+      description: Federated login for managed-domain users
+      domain: managed
+      # Populate remote_ids with an external issuer URL to trust tokens from a
+      # real provider instead of the embedded one.
+      remote_ids: []
+  mappings:
+    - id: email-to-local-user
+      rules:
+        # The account must already exist: type "local" means a login for an
+        # unknown user is refused rather than silently creating one.
+        - local:
+            - user:
+                name: "{0}"
+                type: local
+                domain:
+                  name: managed
+          remote:
+            - type: email
+  protocols:
+    - id: openid
+      identity_provider: keycloak
+      mapping: email-to-local-user
+  oidc_clients:
+    - client_id: waldur
+      client_secret: secret
+  oidc_users:
+    - username: alice
+      password: password
+      email: alice@example.org
+      name: Alice Example
+      groups:
+        - hpc-users
+    - username: bob
+      password: password
+      email: bob@example.org
+      name: Bob Example
+      groups:
+        - hpc-users
+    # Authenticates with the provider but maps to no local account, so the
+    # federated login is refused: the negative case worth having a fixture for.
+    - username: mallory
+      password: password
+      email: mallory@example.org
+      name: Mallory Example

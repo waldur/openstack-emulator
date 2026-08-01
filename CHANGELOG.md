@@ -4,6 +4,37 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Swift object storage service on port 8080, including the account_quotas
+  behaviour: reseller-only quota writes, readable by anyone, and 413 on an
+  upload that would exceed the limit
+- Embedded OpenID Provider on port 5556 issuing RS256 tokens, and Keystone
+  OS-FEDERATION support: protocols, the bearer-token auth endpoint, an attribute
+  mapping engine, project and domain discovery, and service providers
+- CloudKitty rating service on port 8889 with v2 summary and dataframes derived
+  from the emulated servers and volumes
+- Keystone project tags, the /tags sub-resource, and tag-based project filters
+- Per-volume-type Cinder quotas, quota classes for Cinder and Nova, and the
+  application_credential authentication method
+- A waldur-site-agent preset covering a managed domain, per-volume-type quotas,
+  object storage and a working federated login
+
+### Changed
+- Resolve token privilege from a real admin role assignment or the admin
+  project instead of inferring it from the project name, so the default-role
+  fallback for users with no assignments no longer confers access
+- Nova and Cinder now require all_tenants to list across projects, matching the
+  upstream services: a project_id filter alone never crosses a boundary
+- Nova and Cinder detailed quota sets derive their keys from the quota model
+  rather than a fixed list
+
+### Fixed
+- Preset users are created in their project's domain rather than always in the
+  default one
+- `--service=placement` is accepted by the CLI
+
 ## [0.3.0] - 2026-07-31
 
 ### Added

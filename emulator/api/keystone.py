@@ -5,10 +5,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import jwt
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
+from emulator.core.federation import MappingError, process_rules
 
 logger = logging.getLogger(__name__)
 
@@ -2108,6 +2110,419 @@ async def delete_federation_mapping(
     if not db.delete_federation_mapping(mapping_id):
         raise HTTPException(status_code=404, detail="Federation mapping not found")
 
+    return Response(status_code=204)
+
+
+# Federation helpers
+
+
+def validate_bearer_token(raw_token: str, provider: Any) -> dict[str, Any]:
+    """Validate a bearer token and return the claims it asserts.
+
+    Two sources are accepted. A token minted by the emulator's own OpenID
+    Provider is verified against its in-process signing key. A token from an
+    external provider is accepted when its ``iss`` is listed in the identity
+    provider's ``remote_ids`` — the same field a real Keystone uses to decide
+    which issuers it trusts — and its signature checks out against that
+    issuer's published JWKS.
+    """
+    from emulator.api.oidc import decode_access_token
+
+    try:
+        return decode_access_token(raw_token)
+    except jwt.PyJWTError:
+        pass
+
+    try:
+        unverified = jwt.decode(raw_token, options={"verify_signature": False})
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Malformed bearer token") from exc
+
+    issuer = str(unverified.get("iss", ""))
+    if not issuer or issuer not in (provider.remote_ids or []):
+        raise HTTPException(
+            status_code=401,
+            detail="Bearer token issuer is not trusted by this identity provider",
+        )
+
+    try:
+        jwks_client = jwt.PyJWKClient(f"{issuer.rstrip('/')}/.well-known/jwks.json")
+        signing = jwks_client.get_signing_key_from_jwt(raw_token)
+        verified: dict[str, Any] = jwt.decode(
+            raw_token,
+            signing.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Bearer token failed validation") from exc
+    return verified
+
+
+def _resolve_mapped_domain(user_spec: dict[str, Any], provider: Any) -> str:
+    """Resolve the domain a mapped user belongs to.
+
+    The mapping may name a domain explicitly; otherwise the identity provider's
+    own domain applies, as in Keystone.
+    """
+    domain = user_spec.get("domain") or {}
+    if domain.get("id"):
+        return str(domain["id"])
+    if domain.get("name"):
+        found = db.get_domain_by_name(str(domain["name"]))
+        if found is None:
+            raise HTTPException(status_code=401, detail="Mapped domain does not exist")
+        return found.id
+    return provider.domain_id or "default"
+
+
+def _resolve_mapped_user(user_spec: dict[str, Any], domain_id: str) -> Any:
+    """Resolve the mapped identity to a concrete user.
+
+    ``type: local`` (the default in this emulator, and what an agent that
+    pre-creates accounts relies on) requires the user to already exist: if the
+    mapping names someone unknown, that is an authentication failure, not a
+    silent account creation. ``type: ephemeral`` synthesizes a user record that
+    is stored so later lookups and role assignments have something to point at,
+    but it is not backed by a password.
+    """
+    name = user_spec.get("name")
+    user_id = user_spec.get("id")
+
+    if user_id:
+        existing = db.get_user(str(user_id))
+        if existing is not None:
+            return existing
+        raise HTTPException(status_code=401, detail="Mapped user does not exist")
+
+    if not name:
+        raise HTTPException(status_code=401, detail="Mapping produced no user name")
+
+    existing = db.get_user_by_name(str(name), domain_id)
+    if existing is not None:
+        return existing
+
+    if user_spec.get("type", "local") == "ephemeral":
+        return db.create_user(name=str(name), domain_id=domain_id, email=user_spec.get("email", ""))
+
+    raise HTTPException(
+        status_code=401,
+        detail=f"Mapped user {name!r} does not exist in domain {domain_id!r}",
+    )
+
+
+def _resolve_mapped_groups(groups: list[dict[str, Any]], domain_id: str) -> list[str]:
+    """Resolve mapped group references to existing group ids.
+
+    Groups that do not exist are skipped rather than created: group membership
+    is an authorization statement, and inventing one would grant access the
+    deployment never configured.
+    """
+    resolved: list[str] = []
+    for spec in groups:
+        if spec.get("id"):
+            group = db.get_group(str(spec["id"]))
+        elif spec.get("name"):
+            group_domain = (spec.get("domain") or {}).get("id", domain_id)
+            group = db.get_group_by_name(str(spec["name"]), str(group_domain))
+        else:
+            group = None
+        if group is None:
+            logger.warning("Mapped group %s does not exist; skipping", spec)
+            continue
+        resolved.append(group.id)
+    return resolved
+
+
+def _apply_mapped_projects(projects: list[dict[str, Any]], user_id: str, domain_id: str) -> None:
+    """Auto-provision the projects and roles a mapping asks for.
+
+    Unlike groups, Keystone does create these on demand; the roles named must
+    already exist.
+    """
+    for spec in projects:
+        name = spec.get("name")
+        if not name:
+            continue
+        project = db.get_project_by_name(str(name), domain_id)
+        if project is None:
+            project = db.create_project(name=str(name), domain_id=domain_id)
+        for role_spec in spec.get("roles", []):
+            role = None
+            if role_spec.get("id"):
+                role = db.get_role(str(role_spec["id"]))
+            elif role_spec.get("name"):
+                role = db.get_role_by_name(str(role_spec["name"]))
+            if role is None:
+                logger.warning("Mapped role %s does not exist; skipping", role_spec)
+                continue
+            db.assign_role_to_user_on_project(role.id, user_id, project.id)
+
+
+def _scopable_projects(token: Any) -> list[Any]:
+    """Projects the token's user actually holds a role assignment on.
+
+    Both direct assignments and assignments inherited through group membership
+    count, which is what makes a mapping that only grants groups still yield a
+    scopable project.
+    """
+    assignments = db.list_role_assignments(user_id=token.user_id)
+    project_ids = {a.project_id for a in assignments if a.project_id}
+    for group_id in getattr(token, "groups", []) or []:
+        for assignment in db.list_role_assignments(group_id=group_id):
+            if assignment.project_id:
+                project_ids.add(assignment.project_id)
+
+    projects = [db.get_project(project_id) for project_id in sorted(project_ids)]
+    return [project for project in projects if project]
+
+
+# Federation protocols
+
+
+class FederationProtocolRequest(BaseModel):
+    """Federation protocol create/update request."""
+
+    mapping_id: str
+
+
+class FederationProtocolBody(BaseModel):
+    """Wrapper for a federation protocol request."""
+
+    protocol: FederationProtocolRequest
+
+
+@router.get("/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols")
+async def list_federation_protocols(
+    idp_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List the protocols an identity provider supports."""
+    validate_token_header(x_auth_token)
+    if not db.get_identity_provider(idp_id):
+        raise HTTPException(status_code=404, detail="Identity provider not found")
+
+    protocols = db.list_federation_protocols(idp_id)
+    return {"protocols": [protocol.to_dict() for protocol in protocols]}
+
+
+@router.put(
+    "/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols/{protocol_id}", status_code=201
+)
+async def create_federation_protocol(
+    idp_id: str,
+    protocol_id: str,
+    body: FederationProtocolBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Associate a mapping with a protocol on an identity provider."""
+    validate_token_header(x_auth_token)
+    if not db.get_identity_provider(idp_id):
+        raise HTTPException(status_code=404, detail="Identity provider not found")
+    if not db.get_federation_mapping(body.protocol.mapping_id):
+        raise HTTPException(status_code=400, detail="Federation mapping not found")
+
+    protocol = db.create_federation_protocol(idp_id, protocol_id, body.protocol.mapping_id)
+    return {"protocol": protocol.to_dict()}
+
+
+@router.get("/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols/{protocol_id}")
+async def get_federation_protocol(
+    idp_id: str,
+    protocol_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a protocol of an identity provider."""
+    validate_token_header(x_auth_token)
+
+    protocol = db.get_federation_protocol(idp_id, protocol_id)
+    if not protocol:
+        raise HTTPException(status_code=404, detail="Federation protocol not found")
+    return {"protocol": protocol.to_dict()}
+
+
+@router.patch("/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols/{protocol_id}")
+async def update_federation_protocol(
+    idp_id: str,
+    protocol_id: str,
+    body: FederationProtocolBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Point a protocol at a different mapping."""
+    validate_token_header(x_auth_token)
+    if not db.get_federation_protocol(idp_id, protocol_id):
+        raise HTTPException(status_code=404, detail="Federation protocol not found")
+
+    protocol = db.create_federation_protocol(idp_id, protocol_id, body.protocol.mapping_id)
+    return {"protocol": protocol.to_dict()}
+
+
+@router.delete("/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols/{protocol_id}")
+async def delete_federation_protocol(
+    idp_id: str,
+    protocol_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Remove a protocol from an identity provider."""
+    validate_token_header(x_auth_token)
+
+    if not db.delete_federation_protocol(idp_id, protocol_id):
+        raise HTTPException(status_code=404, detail="Federation protocol not found")
+    return Response(status_code=204)
+
+
+# Federated authentication
+
+
+@router.post("/v3/OS-FEDERATION/identity_providers/{idp_id}/protocols/{protocol_id}/auth")
+async def federated_auth(
+    idp_id: str,
+    protocol_id: str,
+    request: Request,
+    response: Response,
+    authorization: str | None = Header(None),
+) -> dict[str, Any]:
+    """Exchange an identity provider's bearer token for an unscoped token.
+
+    This is the endpoint keystoneauth's OIDC plugins post to after obtaining an
+    access token from the provider. The bearer token is validated, its claims
+    are run through the protocol's mapping, and the resulting identity is issued
+    as an unscoped Keystone token for the client to rescope.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Bearer token required")
+
+    provider = db.get_identity_provider(idp_id)
+    if provider is None or not provider.enabled:
+        raise HTTPException(status_code=401, detail="Unknown or disabled identity provider")
+
+    protocol = db.get_federation_protocol(idp_id, protocol_id)
+    if protocol is None:
+        raise HTTPException(status_code=401, detail="Unknown federation protocol")
+
+    mapping = db.get_federation_mapping(protocol.mapping_id)
+    if mapping is None:
+        raise HTTPException(status_code=401, detail="Federation mapping not found")
+
+    claims = validate_bearer_token(authorization.split(" ", 1)[1], provider)
+
+    try:
+        mapped = process_rules(mapping.rules, claims)
+    except MappingError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    user_spec = mapped["user"]
+    domain_id = _resolve_mapped_domain(user_spec, provider)
+    user = _resolve_mapped_user(user_spec, domain_id)
+    group_ids = _resolve_mapped_groups(mapped["groups"], domain_id)
+    _apply_mapped_projects(mapped["projects"], user.id, domain_id)
+
+    token = db.create_token(
+        user_name=user.name,
+        user_id=user.id,
+        domain_id=domain_id,
+        base_url=str(request.base_url).rstrip("/"),
+        unscoped=True,
+        methods=[protocol_id],
+        is_federated=True,
+        idp_id=idp_id,
+        protocol_id=protocol_id,
+        groups=group_ids,
+    )
+    response.headers["X-Subject-Token"] = token.id
+    return token.to_dict()
+
+
+@router.get("/v3/OS-FEDERATION/projects")
+async def list_federated_projects(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List the projects the federated token's user may scope to."""
+    token = validate_token_header(x_auth_token)
+    return {"projects": [project.to_dict() for project in _scopable_projects(token)]}
+
+
+@router.get("/v3/OS-FEDERATION/domains")
+async def list_federated_domains(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List the domains the federated token's user may scope to."""
+    token = validate_token_header(x_auth_token)
+    domain_ids = {project.domain_id for project in _scopable_projects(token)}
+    domains = [db.get_domain(domain_id) for domain_id in domain_ids]
+    return {"domains": [domain.to_dict() for domain in domains if domain]}
+
+
+# Service providers
+
+
+class ServiceProviderRequest(BaseModel):
+    """Service provider create/update request."""
+
+    auth_url: str = ""
+    sp_url: str = ""
+    description: str = ""
+    enabled: bool = True
+    relay_state_prefix: str = "ss:mem:"
+
+
+class ServiceProviderBody(BaseModel):
+    """Wrapper for a service provider request."""
+
+    service_provider: ServiceProviderRequest
+
+
+@router.get("/v3/OS-FEDERATION/service_providers")
+async def list_service_providers(
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List registered service providers."""
+    validate_token_header(x_auth_token)
+    return {"service_providers": [sp.to_dict() for sp in db.list_service_providers()]}
+
+
+@router.put("/v3/OS-FEDERATION/service_providers/{sp_id}", status_code=201)
+async def create_service_provider(
+    sp_id: str,
+    body: ServiceProviderBody,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Register a service provider."""
+    validate_token_header(x_auth_token)
+    req = body.service_provider
+    provider = db.create_service_provider(
+        sp_id=sp_id,
+        auth_url=req.auth_url,
+        sp_url=req.sp_url,
+        description=req.description,
+        enabled=req.enabled,
+        relay_state_prefix=req.relay_state_prefix,
+    )
+    return {"service_provider": provider.to_dict()}
+
+
+@router.get("/v3/OS-FEDERATION/service_providers/{sp_id}")
+async def get_service_provider(
+    sp_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a registered service provider."""
+    validate_token_header(x_auth_token)
+    provider = db.get_service_provider(sp_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Service provider not found")
+    return {"service_provider": provider.to_dict()}
+
+
+@router.delete("/v3/OS-FEDERATION/service_providers/{sp_id}")
+async def delete_service_provider(
+    sp_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Remove a registered service provider."""
+    validate_token_header(x_auth_token)
+    if not db.delete_service_provider(sp_id):
+        raise HTTPException(status_code=404, detail="Service provider not found")
     return Response(status_code=204)
 
 

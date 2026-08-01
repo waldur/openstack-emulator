@@ -75,6 +75,9 @@ from emulator.core.models import (
     NovaExtension,
     NovaQuota,
     OctaviaQuota,
+    OidcAuthorizationCode,
+    OidcClient,
+    OidcUser,
     PolicyDocument,
     Pool,
     PoolLBAlgorithm,
@@ -107,6 +110,7 @@ from emulator.core.models import (
     ServerVolumeAttachment,
     Service,
     ServiceProfile,
+    ServiceProvider,
     Snapshot,
     SnapshotStatus,
     Subnet,
@@ -199,6 +203,13 @@ class Database:
         # ("default" is the only one most deployments ever use).
         self._cinder_quota_classes: dict[str, CinderQuota] = {}
         self._nova_quota_classes: dict[str, NovaQuota] = {}
+
+        self._service_providers: dict[str, ServiceProvider] = {}
+
+        # Storage dictionaries - embedded OpenID Provider
+        self._oidc_clients: dict[str, OidcClient] = {}
+        self._oidc_users: dict[str, OidcUser] = {}
+        self._oidc_codes: dict[str, OidcAuthorizationCode] = {}
 
         # Storage dictionaries - Swift object storage. Containers and objects
         # are keyed by their full path so a name is only unique within its
@@ -509,6 +520,16 @@ class Database:
         )
         self._services[object_store_service.id] = object_store_service
 
+        # Rating service (CloudKitty)
+        rating_service = Service(
+            id=str(uuid4()),
+            name="cloudkitty",
+            type="rating",
+            description="OpenStack Rating Service",
+            enabled=True,
+        )
+        self._services[rating_service.id] = rating_service
+
         # Store service IDs for catalog generation
         self._service_ids = {
             "identity": identity_service.id,
@@ -516,6 +537,7 @@ class Database:
             "image": image_service.id,
             "volumev3": volume_service.id,
             "object-store": object_store_service.id,
+            "rating": rating_service.id,
         }
 
     def _init_default_volume_types(self) -> None:
@@ -746,6 +768,7 @@ class Database:
         octavia_url = f"{scheme}://{host}:9876"
         placement_url = f"{scheme}://{host}:8778"
         swift_url = f"{scheme}://{host}:8080"
+        rating_url = f"{scheme}://{host}:8889"
 
         return [
             {
@@ -892,6 +915,27 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{placement_url}",
+                    },
+                ],
+            },
+            {
+                "type": "rating",
+                "name": "cloudkitty",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{rating_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{rating_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{rating_url}",
                     },
                 ],
             },
@@ -5930,6 +5974,25 @@ class Database:
                 quota.per_type.update(per_type)
             return quota
 
+    def get_cinder_quota_limits(self, project_id: str) -> dict[str, int]:
+        """Every Cinder quota limit for a project, including per-volume-type keys.
+
+        Cinder derives one quota resource per metric for every volume type that
+        exists, so those keys are always present in a quota set even when they
+        were never set explicitly; they fall back to the corresponding global
+        default. Reproduced here so a client reading a quota set sees the same
+        key set it would from a real Cinder.
+        """
+        with self._lock:
+            quota = self.get_cinder_quota(project_id)
+            limits = quota.limits()
+            for vtype in self._volume_types.values():
+                for metric in CinderQuota.PER_TYPE_METRICS:
+                    key = f"{metric}_{vtype.name}"
+                    if key not in limits:
+                        limits[key] = getattr(quota, metric)
+            return limits
+
     def get_cinder_quota_class(self, class_name: str = "default") -> CinderQuota:
         """Get a Cinder quota class, creating it from the defaults if unseen."""
         with self._lock:
@@ -5993,6 +6056,104 @@ class Database:
                 usage[f"snapshots_{vtype.name}"] = len(typed_snapshots)
 
             return usage
+
+    # ==================== OpenID Provider Operations ====================
+
+    def create_oidc_client(
+        self,
+        client_id: str,
+        client_secret: str = "",
+        redirect_uris: list[str] | None = None,
+        grant_types: list[str] | None = None,
+    ) -> OidcClient:
+        """Register a relying party with the embedded OpenID Provider."""
+        with self._lock:
+            client = OidcClient(
+                client_id=client_id,
+                client_secret=client_secret,
+                redirect_uris=list(redirect_uris or []),
+                **({"grant_types": list(grant_types)} if grant_types else {}),
+            )
+            self._oidc_clients[client_id] = client
+            if self.auto_save:
+                self.save()
+            return client
+
+    def get_oidc_client(self, client_id: str) -> OidcClient | None:
+        """Get a registered relying party."""
+        with self._lock:
+            return self._oidc_clients.get(client_id)
+
+    def create_oidc_user(
+        self,
+        username: str,
+        password: str = "",
+        email: str = "",
+        name: str = "",
+        groups: list[str] | None = None,
+        claims: dict[str, str] | None = None,
+        subject: str | None = None,
+    ) -> OidcUser:
+        """Create an end user the OpenID Provider can authenticate."""
+        with self._lock:
+            user = OidcUser(
+                username=username,
+                password=password,
+                email=email,
+                name=name,
+                groups=list(groups or []),
+                claims=dict(claims or {}),
+                **({"subject": subject} if subject else {}),
+            )
+            self._oidc_users[username] = user
+            if self.auto_save:
+                self.save()
+            return user
+
+    def get_oidc_user(self, username: str) -> OidcUser | None:
+        """Get an OpenID Provider end user by username."""
+        with self._lock:
+            return self._oidc_users.get(username)
+
+    def get_oidc_user_by_subject(self, subject: str) -> OidcUser | None:
+        """Get an OpenID Provider end user by its stable subject identifier."""
+        with self._lock:
+            for user in self._oidc_users.values():
+                if user.subject == subject:
+                    return user
+            return None
+
+    def create_oidc_code(
+        self, client_id: str, username: str, redirect_uri: str, scope: str
+    ) -> OidcAuthorizationCode:
+        """Issue a short-lived authorization code."""
+        with self._lock:
+            record = OidcAuthorizationCode(
+                client_id=client_id,
+                username=username,
+                redirect_uri=redirect_uri,
+                scope=scope,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            self._oidc_codes[record.code] = record
+            return record
+
+    def consume_oidc_code(self, code: str) -> OidcAuthorizationCode | None:
+        """Redeem an authorization code. Codes are single use, as in OAuth 2."""
+        with self._lock:
+            record = self._oidc_codes.pop(code, None)
+            if record is None:
+                return None
+            if record.expires_at and record.expires_at <= datetime.now(timezone.utc):
+                return None
+            return record
+
+    def reset_oidc(self) -> None:
+        """Reset all OpenID Provider data."""
+        with self._lock:
+            self._oidc_clients.clear()
+            self._oidc_users.clear()
+            self._oidc_codes.clear()
 
     # ==================== Swift Object Storage Operations ====================
 
@@ -9451,6 +9612,50 @@ class Database:
             key = f"{idp_id}:{protocol_id}"
             if key in self._federation_protocols:
                 del self._federation_protocols[key]
+                return True
+            return False
+
+    def create_service_provider(
+        self,
+        sp_id: str,
+        auth_url: str = "",
+        sp_url: str = "",
+        description: str = "",
+        enabled: bool = True,
+        relay_state_prefix: str = "ss:mem:",
+    ) -> ServiceProvider:
+        """Register a service provider."""
+        with self._lock:
+            provider = ServiceProvider(
+                id=sp_id,
+                auth_url=auth_url,
+                sp_url=sp_url,
+                description=description,
+                enabled=enabled,
+                relay_state_prefix=relay_state_prefix,
+            )
+            self._service_providers[sp_id] = provider
+            if self.auto_save:
+                self.save()
+            return provider
+
+    def list_service_providers(self) -> list[ServiceProvider]:
+        """List registered service providers."""
+        with self._lock:
+            return list(self._service_providers.values())
+
+    def get_service_provider(self, sp_id: str) -> ServiceProvider | None:
+        """Get a registered service provider."""
+        with self._lock:
+            return self._service_providers.get(sp_id)
+
+    def delete_service_provider(self, sp_id: str) -> bool:
+        """Remove a registered service provider."""
+        with self._lock:
+            if sp_id in self._service_providers:
+                del self._service_providers[sp_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 

@@ -189,13 +189,116 @@ class ProjectConfig(BaseModel):
     name: str
     description: str = ""
     domain: str = "default"
+    tags: list[str] = Field(default_factory=list)
     users: list[UserConfig] = Field(default_factory=list)
+
+
+class GroupConfig(BaseModel):
+    """Configuration for a Keystone group."""
+
+    name: str
+    domain: str = "default"
+    description: str = ""
+    users: list[str] = Field(default_factory=list)
+    #: Roles the group holds, as ``{"project": ..., "role": ...}`` pairs.
+    role_assignments: list[dict[str, str]] = Field(default_factory=list)
 
 
 class KeystoneConfig(BaseModel):
     """Configuration for Keystone resources."""
 
+    domains: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    groups: list[GroupConfig] = Field(default_factory=list)
     projects: list[ProjectConfig] = Field(default_factory=list)
+
+
+class VolumeTypeConfig(BaseModel):
+    """Configuration for a Cinder volume type."""
+
+    name: str
+    description: str = ""
+    is_public: bool = True
+    extra_specs: dict[str, str] = Field(default_factory=dict)
+
+
+class SwiftContainerConfig(BaseModel):
+    """Configuration for a Swift container."""
+
+    name: str
+    project: str | None = None
+
+
+class SwiftAccountConfig(BaseModel):
+    """Configuration for a Swift account and its quotas."""
+
+    project: str
+    quota_bytes: int | None = None
+    quota_count: int | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class SwiftConfig(BaseModel):
+    """Configuration for Swift resources."""
+
+    accounts: list[SwiftAccountConfig] = Field(default_factory=list)
+    containers: list[SwiftContainerConfig] = Field(default_factory=list)
+
+
+class OidcClientConfig(BaseModel):
+    """Configuration for an OpenID Provider relying party."""
+
+    client_id: str
+    client_secret: str = ""
+    redirect_uris: list[str] = Field(default_factory=list)
+
+
+class OidcUserConfig(BaseModel):
+    """Configuration for an OpenID Provider end user."""
+
+    username: str
+    password: str = "password"
+    email: str = ""
+    name: str = ""
+    groups: list[str] = Field(default_factory=list)
+    claims: dict[str, str] = Field(default_factory=dict)
+
+
+class IdentityProviderConfig(BaseModel):
+    """Configuration for a Keystone identity provider."""
+
+    id: str
+    description: str = ""
+    domain: str = "default"
+    enabled: bool = True
+    #: Issuer URLs whose tokens this provider trusts. Needed only when the
+    #: bearer tokens come from an external provider rather than the embedded one.
+    remote_ids: list[str] = Field(default_factory=list)
+
+
+class MappingConfig(BaseModel):
+    """Configuration for a Keystone attribute mapping."""
+
+    id: str
+    rules: list[dict] = Field(default_factory=list)
+
+
+class ProtocolConfig(BaseModel):
+    """Configuration for a federation protocol on an identity provider."""
+
+    id: str
+    identity_provider: str
+    mapping: str
+
+
+class FederationConfig(BaseModel):
+    """Configuration for Keystone federation and the embedded provider."""
+
+    identity_providers: list[IdentityProviderConfig] = Field(default_factory=list)
+    mappings: list[MappingConfig] = Field(default_factory=list)
+    protocols: list[ProtocolConfig] = Field(default_factory=list)
+    oidc_clients: list[OidcClientConfig] = Field(default_factory=list)
+    oidc_users: list[OidcUserConfig] = Field(default_factory=list)
 
 
 class GlanceConfig(BaseModel):
@@ -223,6 +326,7 @@ class NovaConfig(BaseModel):
 class CinderConfig(BaseModel):
     """Configuration for Cinder resources."""
 
+    volume_types: list[VolumeTypeConfig] = Field(default_factory=list)
     volumes: list[VolumeConfig] = Field(default_factory=list)
     snapshots: list[SnapshotConfig] = Field(default_factory=list)
 
@@ -247,3 +351,5 @@ class PresetConfig(BaseModel):
     nova: NovaConfig = Field(default_factory=NovaConfig)
     cinder: CinderConfig = Field(default_factory=CinderConfig)
     octavia: OctaviaConfig = Field(default_factory=OctaviaConfig)
+    swift: SwiftConfig = Field(default_factory=SwiftConfig)
+    federation: FederationConfig = Field(default_factory=FederationConfig)

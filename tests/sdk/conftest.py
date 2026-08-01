@@ -114,6 +114,7 @@ def reset_database() -> Generator[None, None, None]:
     db.reset_neutron()
     db.reset_octavia()
     db.reset_swift()
+    db.reset_oidc()
     # Clear Nova data (no reset method available)
     db._servers.clear()
     db._keypairs.clear()

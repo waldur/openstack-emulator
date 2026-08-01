@@ -151,6 +151,7 @@ class TestTokens:
             "load-balancer",
             "placement",
             "object-store",
+            "rating",
         }
         assert expected == service_types
 

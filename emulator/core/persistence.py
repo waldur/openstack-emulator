@@ -60,6 +60,8 @@ from emulator.core.models import (
     NeutronQuota,
     NovaQuota,
     OctaviaQuota,
+    OidcClient,
+    OidcUser,
     PolicyDocument,
     Pool,
     PoolMember,
@@ -83,6 +85,7 @@ from emulator.core.models import (
     ServerVolumeAttachment,
     Service,
     ServiceProfile,
+    ServiceProvider,
     Snapshot,
     Subnet,
     SwiftAccount,
@@ -266,6 +269,7 @@ PERSISTED: tuple[Collection, ...] = (
     _c("_identity_providers", IdentityProvider),
     _c("_federation_protocols", FederationProtocol),
     _c("_federation_mappings", FederationMapping),
+    _c("_service_providers", ServiceProvider),
     _c("_registered_limits", RegisteredLimit),
     # Cinder
     _c("_volumes", Volume),
@@ -274,6 +278,10 @@ PERSISTED: tuple[Collection, ...] = (
     _c("_qos_specs", QosSpec),
     _c("_cinder_quotas", CinderQuota),
     _c("_cinder_quota_classes", CinderQuota),
+    # OpenID Provider. Authorization codes are session state and deliberately
+    # transient, like tokens.
+    _c("_oidc_clients", OidcClient),
+    _c("_oidc_users", OidcUser),
     # Swift
     _c("_swift_accounts", SwiftAccount),
     _c("_swift_containers", SwiftContainer),
@@ -341,6 +349,7 @@ PERSISTED_SCALARS: tuple[str, ...] = (
 #: ``Database`` attribute to appear here or in ``PERSISTED``/``PERSISTED_SCALARS``,
 #: so a new collection cannot be added without making this choice.
 NOT_PERSISTED: dict[str, str] = {
+    "_oidc_codes": "short-lived authorization codes; session state",
     "_lock": "threading primitive",
     "_load_degraded": "bookkeeping for the current process",
     "_backup_done": "bookkeeping for the current process",

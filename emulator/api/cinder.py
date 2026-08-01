@@ -1007,7 +1007,7 @@ async def get_quota_set(
     """Get volume quota set for a tenant."""
     get_token_or_raise(x_auth_token)
 
-    quota = db.get_cinder_quota(tenant_id)
+    limits = db.get_cinder_quota_limits(tenant_id)
 
     if usage:
         quota_usage = db.get_cinder_quota_usage(tenant_id)
@@ -1015,11 +1015,11 @@ async def get_quota_set(
         # per-volume-type limits are reported without further wiring.
         detail = {
             key: {"limit": limit, "in_use": quota_usage.get(key, 0), "reserved": 0}
-            for key, limit in quota.limits().items()
+            for key, limit in limits.items()
         }
         return {"quota_set": {"id": tenant_id, **detail}}
 
-    return {"quota_set": quota.to_dict()}
+    return {"quota_set": {"id": tenant_id, **limits}}
 
 
 # Keys a quota set may echo back without them being limits. Same list as

@@ -9,6 +9,7 @@ import uvicorn
 from fastapi import APIRouter, FastAPI
 
 from emulator.api.cinder import router as cinder_router
+from emulator.api.cloudkitty import router as cloudkitty_router
 from emulator.api.glance import router as glance_router
 
 # Import all service routers
@@ -16,6 +17,7 @@ from emulator.api.keystone import router as keystone_router
 from emulator.api.neutron import router as neutron_router
 from emulator.api.nova import router as nova_router
 from emulator.api.octavia import router as octavia_router
+from emulator.api.oidc import router as oidc_router
 from emulator.api.placement import router as placement_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.api.status_ui import router as status_router
@@ -164,6 +166,18 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
             "1.0",
             "A lightweight OpenStack Placement (Resource Provider) API emulator",
         ),
+        "cloudkitty": create_service_app(
+            "cloudkitty",
+            cloudkitty_router,
+            "2.0",
+            "A lightweight OpenStack CloudKitty (Rating) API emulator",
+        ),
+        "oidc": create_service_app(
+            "oidc",
+            oidc_router,
+            "1.0",
+            "An embedded OpenID Provider, for testing Keystone federation",
+        ),
         "swift": create_service_app(
             "swift",
             swift_router,
@@ -197,6 +211,8 @@ SERVICE_PORTS = {
     "octavia": 9876,
     "placement": 8778,
     "swift": 8080,
+    "oidc": 5556,
+    "cloudkitty": 8889,
     "status": 10000,
     "scenarios": 8999,
 }
@@ -248,6 +264,8 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
     print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
     print(f"  - Placement (Resource):    http://{host}:{ports['placement']}")
     print(f"  - Swift (Object Storage):  http://{host}:{ports['swift']}")
+    print(f"  - OIDC (OpenID Provider):  http://{host}:{ports['oidc']}")
+    print(f"  - CloudKitty (Rating):     http://{host}:{ports['cloudkitty']}")
     print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
     print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
     print(f"\nLog level: {log_level}")

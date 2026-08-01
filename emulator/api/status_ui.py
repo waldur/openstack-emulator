@@ -40,6 +40,8 @@ SERVICES: dict[str, ServiceInfo] = {
     "octavia": {"port": 9876, "name": "Load Balancer"},
     "placement": {"port": 8778, "name": "Placement"},
     "swift": {"port": 8080, "name": "Object Storage"},
+    "oidc": {"port": 5556, "name": "OpenID Provider"},
+    "cloudkitty": {"port": 8889, "name": "Rating"},
     "scenarios": {"port": 8999, "name": "Scenarios"},
 }
 
