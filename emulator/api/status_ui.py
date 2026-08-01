@@ -2421,6 +2421,241 @@ def render_volume_types_table(volume_types: list, authenticated: bool) -> str:
     return wrap_table_with_pagination(table_html, "volume-types-table", len(volume_types))
 
 
+def render_swift_containers_table(containers: list, usage_by_key: dict) -> str:
+    """Render the object storage containers table HTML.
+
+    Read-only: containers are created through the Swift API or a preset, and the
+    dashboard's create/delete affordances stop at the resources it can safely
+    round-trip.
+    """
+    if not containers:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO CONTAINERS FOUND ]</div>'
+
+    rows = ""
+    for container in containers:
+        usage = usage_by_key.get((container.account, container.name), {})
+        rows += f"""
+        <tr>
+            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{container.account}">{container.account}</td>
+            <td>{container.name}</td>
+            <td>{usage.get("object_count", 0)}</td>
+            <td>{usage.get("bytes_used", 0)}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Account</th>
+                <th>Container</th>
+                <th>Objects</th>
+                <th>Bytes Used</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "swift-containers-table", len(containers))
+
+
+def render_swift_accounts_table(accounts: list, usage_by_account: dict) -> str:
+    """Render the object storage accounts table, including quotas."""
+    if not accounts:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO OBJECT STORAGE ACCOUNTS FOUND ]</div>'
+
+    rows = ""
+    for account in accounts:
+        usage = usage_by_account.get(account.name, {})
+        quota_bytes = account.quota("quota-bytes")
+        quota_count = account.quota("quota-count")
+        rows += f"""
+        <tr>
+            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{account.name}">{account.name}</td>
+            <td>{usage.get("container_count", 0)}</td>
+            <td>{usage.get("object_count", 0)}</td>
+            <td>{usage.get("bytes_used", 0)}</td>
+            <td>{"unlimited" if quota_bytes < 0 else quota_bytes}</td>
+            <td>{"unlimited" if quota_count < 0 else quota_count}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Account</th>
+                <th>Containers</th>
+                <th>Objects</th>
+                <th>Bytes Used</th>
+                <th>Quota Bytes</th>
+                <th>Quota Count</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "swift-accounts-table", len(accounts))
+
+
+def render_identity_providers_table(providers: list, protocols_by_idp: dict) -> str:
+    """Render the federation identity providers table HTML."""
+    if not providers:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO IDENTITY PROVIDERS FOUND ]</div>'
+
+    rows = ""
+    for provider in providers:
+        protocols = protocols_by_idp.get(provider.id, [])
+        protocol_text = ", ".join(f"{p.id} &rarr; {p.mapping_id}" for p in protocols) or "&mdash;"
+        remote_ids = ", ".join(provider.remote_ids) if provider.remote_ids else "embedded only"
+        rows += f"""
+        <tr>
+            <td>{provider.id}</td>
+            <td>{provider.description or "&mdash;"}</td>
+            <td>{provider.domain_id}</td>
+            <td>{"Yes" if provider.enabled else "No"}</td>
+            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{protocol_text}">{protocol_text}</td>
+            <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis;" title="{remote_ids}">{remote_ids}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Description</th>
+                <th>Domain</th>
+                <th>Enabled</th>
+                <th>Protocols</th>
+                <th>Trusted Issuers</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "identity-providers-table", len(providers))
+
+
+def render_federation_mappings_table(mappings: list) -> str:
+    """Render the federation attribute mappings table HTML."""
+    if not mappings:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO MAPPINGS FOUND ]</div>'
+
+    rows = ""
+    for mapping in mappings:
+        claims = sorted(
+            {
+                str(requirement.get("type", ""))
+                for rule in mapping.rules
+                for requirement in rule.get("remote", [])
+                if requirement.get("type")
+            }
+        )
+        user_types = sorted(
+            {
+                str(local["user"].get("type", "local"))
+                for rule in mapping.rules
+                for local in rule.get("local", [])
+                if isinstance(local.get("user"), dict)
+            }
+        )
+        rows += f"""
+        <tr>
+            <td>{mapping.id}</td>
+            <td>{len(mapping.rules)}</td>
+            <td>{", ".join(claims) or "&mdash;"}</td>
+            <td>{", ".join(user_types) or "&mdash;"}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Rules</th>
+                <th>Claims Matched</th>
+                <th>User Type</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "federation-mappings-table", len(mappings))
+
+
+def render_oidc_users_table(users: list) -> str:
+    """Render the embedded OpenID Provider's end users table HTML."""
+    if not users:
+        return (
+            '<div class="text-center py-8 text-[#4a5568]">[ NO OPENID PROVIDER USERS FOUND ]</div>'
+        )
+
+    rows = ""
+    for user in users:
+        groups = ", ".join(user.groups) if user.groups else "&mdash;"
+        extra = ", ".join(sorted(user.claims)) if user.claims else "&mdash;"
+        rows += f"""
+        <tr>
+            <td>{user.username}</td>
+            <td>{user.email or "&mdash;"}</td>
+            <td>{user.name or "&mdash;"}</td>
+            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="{groups}">{groups}</td>
+            <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis;" title="{extra}">{extra}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Groups</th>
+                <th>Extra Claims</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "oidc-users-table", len(users))
+
+
+def render_oidc_clients_table(clients: list) -> str:
+    """Render the embedded OpenID Provider's relying parties table HTML."""
+    if not clients:
+        return '<div class="text-center py-8 text-[#4a5568]">[ NO OPENID PROVIDER CLIENTS FOUND ]</div>'
+
+    rows = ""
+    for client in clients:
+        redirects = ", ".join(client.redirect_uris) if client.redirect_uris else "any"
+        rows += f"""
+        <tr>
+            <td>{client.client_id}</td>
+            <td>{"confidential" if client.client_secret else "public"}</td>
+            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="{", ".join(client.grant_types)}">{", ".join(client.grant_types)}</td>
+            <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis;" title="{redirects}">{redirects}</td>
+        </tr>
+        """
+
+    table_html = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Client ID</th>
+                <th>Type</th>
+                <th>Grant Types</th>
+                <th>Redirect URIs</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>
+    """
+    return wrap_table_with_pagination(table_html, "oidc-clients-table", len(clients))
+
+
 def render_load_balancers_table(
     load_balancers: list, authenticated: bool, project_map: dict[str, str] | None = None
 ) -> str:
@@ -3862,7 +4097,12 @@ async def status_page(
         "glance": "storage",
         "neutron": "network",
         "octavia": "loadbalancer",
+        "placement": "compute",
+        "swift": "storage",
+        "oidc": "identity",
     }
+    # Services whose card opens a page rather than a tab.
+    service_to_page = {"scenarios": "/scenarios"}
     service_cards = ""
     for service, status in service_status.items():
         if status["healthy"]:
@@ -3877,9 +4117,27 @@ async def status_page(
             status_color = "text-[#ff3366]"
             status_text = "OFFLINE"
             indicator = ""
-        target_tab = service_to_tab.get(service, "compute")
+        target_tab = service_to_tab.get(service)
+        target_page = service_to_page.get(service)
+        base_class = f"bg-[#0d1117] border {border_color} p-5 {glow_class} relative"
+        if target_tab:
+            link_attrs = (
+                f'class="{base_class} service-card-link" '
+                f"onclick=\"switchTab('{target_tab}')\" "
+                f'title="Click to view {target_tab} resources"'
+            )
+        elif target_page:
+            link_attrs = (
+                f'class="{base_class} service-card-link" '
+                f"onclick=\"window.location.href='{target_page}'\" "
+                f'title="Open {target_page}"'
+            )
+        else:
+            # No resource view for this service; a card that silently jumped to
+            # an unrelated tab was worse than one that does nothing.
+            link_attrs = f'class="{base_class}"'
         service_cards += f"""
-        <div class="bg-[#0d1117] border {border_color} p-5 {glow_class} relative service-card-link" onclick="switchTab('{target_tab}')" title="Click to view {target_tab} resources">
+        <div {link_attrs}>
             <div class="absolute top-2 right-2 w-2 h-2 rounded-full bg-current {status_color} {indicator}"></div>
             <div class="text-[#00d4ff] text-xs uppercase tracking-wider mb-1">{status["name"]}</div>
             <div class="text-lg font-semibold text-[#e2e8f0] mb-3">{service.upper()}</div>
@@ -3906,6 +4164,23 @@ async def status_page(
     keypairs = list(db._keypairs.values())
     snapshots = db.list_snapshots()
     volume_types = db.list_volume_types()
+    # Swift resources
+    swift_accounts = db.list_swift_accounts()
+    swift_containers = db.list_swift_containers()
+    swift_account_usage = {a.name: db.get_swift_account_usage(a.name) for a in swift_accounts}
+    swift_container_usage = {
+        (c.account, c.name): db.get_swift_container_usage(c.account, c.name)
+        for c in swift_containers
+    }
+    # Federation and the embedded OpenID Provider
+    identity_providers = db.list_identity_providers()
+    federation_protocols = db.list_all_federation_protocols()
+    protocols_by_idp: dict[str, list] = {}
+    for protocol in federation_protocols:
+        protocols_by_idp.setdefault(protocol.identity_provider_id, []).append(protocol)
+    federation_mappings = db.list_federation_mappings()
+    oidc_clients = db.list_oidc_clients()
+    oidc_users = db.list_oidc_users()
     # Octavia resources
     load_balancers = db.list_load_balancers()
     listeners = db.list_listeners()
@@ -4118,6 +4393,24 @@ async def status_page(
                         </div>
                         {render_volume_types_table(volume_types, authenticated)}
                     </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Object Storage Accounts
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(swift_accounts)}</span>
+                            </h3>
+                        </div>
+                        {render_swift_accounts_table(swift_accounts, swift_account_usage)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Object Storage Containers
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(swift_containers)}</span>
+                            </h3>
+                        </div>
+                        {render_swift_containers_table(swift_containers, swift_container_usage)}
+                    </div>
                 </div>
 
                 <!-- Network Tab -->
@@ -4248,6 +4541,42 @@ async def status_page(
                             {create_btn("create-user-modal", "+ NEW")}
                         </div>
                         {render_users_table(users, authenticated)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Identity Providers
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(identity_providers)}</span>
+                            </h3>
+                        </div>
+                        {render_identity_providers_table(identity_providers, protocols_by_idp)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> Attribute Mappings
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(federation_mappings)}</span>
+                            </h3>
+                        </div>
+                        {render_federation_mappings_table(federation_mappings)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> OpenID Provider Clients
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(oidc_clients)}</span>
+                            </h3>
+                        </div>
+                        {render_oidc_clients_table(oidc_clients)}
+                    </div>
+                    <div class="mb-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-[#00d4ff] uppercase tracking-wider flex items-center gap-2">
+                                <span class="text-[#ffb000]">&gt;</span> OpenID Provider Users
+                                <span class="bg-[#00d4ff] bg-opacity-20 text-[#00d4ff] px-2 py-0.5 text-xs border border-[#00d4ff]">{len(oidc_users)}</span>
+                            </h3>
+                        </div>
+                        {render_oidc_users_table(oidc_users)}
                     </div>
                 </div>
             </div>
@@ -4511,6 +4840,14 @@ async def api_status(request: Request) -> dict:
             "listeners": len(db.list_listeners()),
             "pools": len(db.list_pools()),
             "health_monitors": len(db.list_health_monitors()),
+            "swift_accounts": len(db.list_swift_accounts()),
+            "swift_containers": len(db.list_swift_containers()),
+            "swift_objects": len(db._swift_objects),
+            "identity_providers": len(db.list_identity_providers()),
+            "federation_mappings": len(db.list_federation_mappings()),
+            "federation_protocols": len(db.list_all_federation_protocols()),
+            "oidc_clients": len(db.list_oidc_clients()),
+            "oidc_users": len(db.list_oidc_users()),
         },
     }
 

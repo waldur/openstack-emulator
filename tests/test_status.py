@@ -805,3 +805,122 @@ class TestStatusPageAuthentication:
         assert "Create Server" in response.text
         assert "Create Volume" in response.text
         assert "Create Network" in response.text
+
+
+class TestStatusPageNewServices:
+    """The dashboard must show the state the newer services own.
+
+    Swift, federation and the embedded OpenID Provider hold configuration that
+    was previously invisible: the service health cards appeared, but nothing on
+    the page reflected what those services actually contained.
+    """
+
+    @pytest.fixture(autouse=True)
+    def seeded(self):
+        """A little state in each of the newer services."""
+        db.reset_swift()
+        db.reset_oidc()
+        project = db.create_project(name="tenant-x", domain_id="default")
+        db.update_swift_account(f"AUTH_{project.id}", sysmeta={"quota-bytes": "1073741824"})
+        db.create_swift_container(f"AUTH_{project.id}", "backups")
+        db.put_swift_object(f"AUTH_{project.id}", "backups", "dump.tar", b"payload")
+        db.create_identity_provider(idp_id="keycloak", description="Test IdP", domain_id="default")
+        db.create_federation_mapping(
+            mapping_id="email-map",
+            rules=[
+                {
+                    "local": [{"user": {"name": "{0}", "type": "local"}}],
+                    "remote": [{"type": "email"}],
+                }
+            ],
+        )
+        db.create_federation_protocol("keycloak", "openid", "email-map")
+        db.create_oidc_client(client_id="waldur", client_secret="secret")
+        db.create_oidc_user(username="alice", email="alice@example.org", groups=["hpc"])
+        yield
+        db.reset_swift()
+        db.reset_oidc()
+
+    def test_page_has_the_new_sections(self, client):
+        body = client.get("/").text
+
+        for heading in (
+            "Object Storage Accounts",
+            "Object Storage Containers",
+            "Identity Providers",
+            "Attribute Mappings",
+            "OpenID Provider Clients",
+            "OpenID Provider Users",
+        ):
+            assert heading in body, heading
+
+    def test_page_renders_the_seeded_values(self, client):
+        body = client.get("/").text
+
+        assert "backups" in body
+        assert "1073741824" in body
+        assert "keycloak" in body
+        assert "email-map" in body
+        assert "waldur" in body
+        assert "alice@example.org" in body
+
+    def test_api_status_counts_the_new_resources(self, client):
+        counts = client.get("/api/status").json()["resources"]
+
+        assert counts["swift_accounts"] == 1
+        assert counts["swift_containers"] == 1
+        assert counts["swift_objects"] == 1
+        assert counts["identity_providers"] == 1
+        assert counts["federation_mappings"] == 1
+        assert counts["federation_protocols"] == 1
+        assert counts["oidc_clients"] == 1
+        assert counts["oidc_users"] == 1
+
+    def test_every_service_card_links_somewhere_meaningful(self, client):
+        """A card either opens a relevant view or is inert — never a wrong tab.
+
+        Previously any service without an explicit mapping fell through to the
+        compute tab, so clicking Swift or the OpenID Provider silently showed
+        servers.
+        """
+        import re
+
+        body = client.get("/").text
+        cards = re.findall(
+            r'<div class="bg-\[#0d1117\][^>]*>\s*<div class="absolute[^>]*>[^<]*</div>\s*'
+            r'<div class="text-\[#00d4ff\][^>]*>[^<]*</div>\s*'
+            r'<div class="text-lg font-semibold[^>]*>(\w+)</div>',
+            body,
+            re.S,
+        )
+        assert {"SWIFT", "OIDC", "CLOUDKITTY"} <= set(cards)
+
+        expected = {
+            "KEYSTONE": "identity",
+            "NOVA": "compute",
+            "CINDER": "storage",
+            "GLANCE": "storage",
+            "NEUTRON": "network",
+            "OCTAVIA": "loadbalancer",
+            "PLACEMENT": "compute",
+            "SWIFT": "storage",
+            "OIDC": "identity",
+        }
+        for name, tab in expected.items():
+            index = body.index(f">{name}</div>")
+            segment = body[index - 600 : index + 400]
+            assert f"switchTab('{tab}')" in segment, f"{name} should open the {tab} tab"
+
+        # CloudKitty owns no stored resources, so its card is deliberately inert
+        # rather than pointing at an unrelated tab.
+        index = body.index(">CLOUDKITTY</div>")
+        segment = body[index - 600 : index + 400]
+        assert "switchTab(" not in segment
+
+    def test_empty_state_is_handled(self, client):
+        db.reset_swift()
+        db.reset_oidc()
+
+        body = client.get("/").text
+        assert "NO OBJECT STORAGE ACCOUNTS FOUND" in body
+        assert "NO OPENID PROVIDER USERS FOUND" in body

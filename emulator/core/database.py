@@ -6115,6 +6115,24 @@ class Database:
         with self._lock:
             return self._oidc_users.get(username)
 
+    def list_oidc_clients(self) -> list[OidcClient]:
+        """List registered relying parties."""
+        with self._lock:
+            return sorted(self._oidc_clients.values(), key=lambda c: c.client_id)
+
+    def list_oidc_users(self) -> list[OidcUser]:
+        """List the end users the OpenID Provider can authenticate."""
+        with self._lock:
+            return sorted(self._oidc_users.values(), key=lambda u: u.username)
+
+    def list_all_federation_protocols(self) -> list[FederationProtocol]:
+        """List protocols across every identity provider."""
+        with self._lock:
+            return sorted(
+                self._federation_protocols.values(),
+                key=lambda p: (p.identity_provider_id, p.id),
+            )
+
     def get_oidc_user_by_subject(self, subject: str) -> OidcUser | None:
         """Get an OpenID Provider end user by its stable subject identifier."""
         with self._lock:
@@ -6208,11 +6226,24 @@ class Database:
                 self.save()
             return record
 
-    def list_swift_containers(self, account: str) -> list[SwiftContainer]:
-        """List an account's containers, ordered by name as Swift does."""
+    def list_swift_accounts(self) -> list[SwiftAccount]:
+        """List every Swift account the emulator has seen."""
         with self._lock:
-            containers = [c for c in self._swift_containers.values() if c.account == account]
-            containers.sort(key=lambda c: c.name)
+            return sorted(self._swift_accounts.values(), key=lambda a: a.name)
+
+    def list_swift_containers(self, account: str | None = None) -> list[SwiftContainer]:
+        """List containers, ordered by name as Swift does.
+
+        With no account, lists across every account — which the API layer never
+        does, but the status dashboard needs to show the whole cloud.
+        """
+        with self._lock:
+            containers = [
+                c
+                for c in self._swift_containers.values()
+                if account is None or c.account == account
+            ]
+            containers.sort(key=lambda c: (c.account, c.name))
             return containers
 
     def get_swift_container(self, account: str, container: str) -> SwiftContainer | None:
