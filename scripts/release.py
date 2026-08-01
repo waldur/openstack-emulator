@@ -212,7 +212,9 @@ def run_pre_release_checks() -> None:
     run_command(["uv", "run", "ruff", "check", "."])
 
     print("Python: mypy ...")
-    run_command(["uv", "run", "mypy", "emulator", "--ignore-missing-imports"])
+    # Matches the CI gate exactly. --ignore-missing-imports would make this
+    # pre-release check weaker than the pipeline it is meant to predict.
+    run_command(["uv", "run", "mypy", "emulator"])
 
     print("Helm: lint chart ...")
     run_command(["helm", "lint", str(CHART_YAML.parent)])

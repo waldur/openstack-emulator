@@ -57,7 +57,8 @@ Before every commit, run these commands in order (the CI "Run linters" and
 
 1. **Format with ruff**: `uv run ruff format .` (CI enforces `ruff format --check .`)
 2. **Lint with ruff**: `uv run ruff check .`
-3. **Type-check with mypy**: `uv run mypy emulator --ignore-missing-imports`
+3. **Type-check with mypy**: `uv run mypy emulator` (exactly what CI runs — do
+   not add `--ignore-missing-imports`, which is more permissive than the gate)
 4. **Run tests**: `uv run pytest`
 
 All four checks must pass before committing. Fix any errors before proceeding.
@@ -66,13 +67,14 @@ All four checks must pass before committing. Fix any errors before proceeding.
 > ruff-format-clean; running `black` reformats unrelated files and diverges
 > from CI. Use `ruff format` only.
 
-> **ruff is pinned** (`ruff==` in the `dev` extras). CI reinstalls the extras on
-> every run, so an unpinned formatter drifts from whatever a contributor has
-> locally and the difference only surfaces as a red pipeline. Run `uv sync
-> --extra dev` if your local version disagrees. Bumping the pin is a deliberate
-> change: reformat in the same commit. Note that ruff also formats Python code
-> blocks inside markdown, so a placeholder like `db.reset_<service>()` in a
-> `python` fence is treated as a comparison chain and rewritten.
+> **ruff and mypy are pinned** (`==` in the `dev` extras). CI reinstalls the
+> extras on every run, so an unpinned linter drifts from whatever a contributor
+> has locally and the difference only surfaces as a red pipeline. Run `uv sync
+> --extra dev` if your local versions disagree. Bumping a pin is a deliberate
+> change: fix whatever the new version reports in the same commit. Note that
+> ruff also formats Python code blocks inside markdown, so a placeholder like
+> `db.reset_<service>()` in a `python` fence is treated as a comparison chain
+> and rewritten.
 
 **DO NOT commit code that fails any of these checks. This is mandatory.**
 

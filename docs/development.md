@@ -54,7 +54,7 @@ Common issues to avoid:
 ### 3. Mypy Type Checker
 
 ```bash
-uv run mypy emulator --ignore-missing-imports
+uv run mypy emulator
 ```
 
 ### 4. Tests

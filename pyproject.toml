@@ -37,11 +37,11 @@ dev = [
     "pytest-cov>=4.0.0",
     "httpx>=0.25.0",
     # Pinned, not floated. CI installs these extras fresh on every run, so an
-    # unpinned formatter silently diverges from whatever a contributor has in
-    # their environment, and the difference only shows up as a red pipeline.
-    # Bump deliberately, and reformat in the same commit.
+    # unpinned linter silently diverges from whatever a contributor has in their
+    # environment, and the difference only shows up as a red pipeline. Bump
+    # deliberately, and fix whatever the new version reports in the same commit.
     "ruff==0.16.1",
-    "mypy>=1.0.0",
+    "mypy==2.3.0",
     "openstacksdk>=4.7.1",
 ]
 
