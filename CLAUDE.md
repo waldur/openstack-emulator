@@ -66,6 +66,14 @@ All four checks must pass before committing. Fix any errors before proceeding.
 > ruff-format-clean; running `black` reformats unrelated files and diverges
 > from CI. Use `ruff format` only.
 
+> **ruff is pinned** (`ruff==` in the `dev` extras). CI reinstalls the extras on
+> every run, so an unpinned formatter drifts from whatever a contributor has
+> locally and the difference only surfaces as a red pipeline. Run `uv sync
+> --extra dev` if your local version disagrees. Bumping the pin is a deliberate
+> change: reformat in the same commit. Note that ruff also formats Python code
+> blocks inside markdown, so a placeholder like `db.reset_<service>()` in a
+> `python` fence is treated as a comparison chain and rewritten.
+
 **DO NOT commit code that fails any of these checks. This is mandatory.**
 
 ## Tenant Isolation Requirements
