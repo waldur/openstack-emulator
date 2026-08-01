@@ -154,77 +154,105 @@ async def create_resource(request: ResourceRequest):
     pass
 ```
 
-### 4. Create Standalone App (`emulator/api/app_<service>.py`)
+### 4. Register the App (`emulator/api/unified_app.py`)
+
+There are no per-service app modules. Every service is built by the same factory
+and mounted in one place — `create_service_app()` wires CORS, debug logging, the
+scenario middleware, OpenStack response headers, the access log, the OpenStack
+exception handlers, the router and a `/health` endpoint, in that order.
+
+Add the router import, an entry in `create_all_service_apps()`, the port in
+`SERVICE_PORTS`, and a line in the startup banner in `run_all_services_async()`:
 
 ```python
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from emulator.api.<service> import router
+from emulator.api.<service> import router as <service>_router
 
-app = FastAPI(
-    title="OpenStack <Service> Emulator",
-    description="A lightweight OpenStack <Service> API emulator",
-    version="0.1.0",
-)
+# in create_all_service_apps()
+"<service>": create_service_app(
+    "<service>",
+    <service>_router,
+    "<microversion>",
+    "A lightweight OpenStack <Service> API emulator",
+),
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(router)
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "service": "<service>"}
-```
-
-### 5. Register Service (`emulator/__init__.py`)
-
-```python
+# module level
 SERVICE_PORTS = {
     # ... existing services
-    "<service>": <port>,  # Use standard OpenStack port
-}
-
-SERVICE_APPS = {
-    # ... existing services
-    "<service>": "emulator.api.app_<service>:app",
+    "<service>": <port>,  # Use the standard OpenStack port
 }
 ```
 
-### 6. Update Service Catalog (`emulator/core/database.py`)
+Routers carry their own full paths (`@router.get("/v1/...")`); no prefix is
+applied at mount time.
 
-Add the service to `_generate_service_catalog()`.
+### 5. Register the CLI Choice (`emulator/__init__.py`)
 
-### 7. Add Tests (`tests/test_<service>.py`)
+`--service` validates against a hardcoded `choices=[...]` list. Add the service
+there and to the `help` string, or `--service=<service>` is rejected.
+
+### 6. Update the Service Catalog and Registry (`emulator/core/database.py`)
+
+Two separate places, both needed:
+
+- `_generate_service_catalog()` — the catalog embedded in issued tokens. Add a
+  `<service>_url` alongside the others and an entry with `type`, `name` and the
+  three interfaces. Interpolate `project_id` into the URL if the service expects
+  it in the path (Cinder and Swift do).
+- `_init_default_services()` — the Keystone `/v3/services` registry, plus its
+  `_service_ids` mapping.
+
+### 7. Register Persisted Collections (`emulator/core/persistence.py`)
+
+Any new `Database` attribute must appear in `PERSISTED`, `PERSISTED_SCALARS` or
+`NOT_PERSISTED`. `tests/test_persistence.py::TestRegistryCoverage` fails
+otherwise, naming the unclassified attribute.
+
+```python
+PERSISTED = (
+    # ...
+    _c("_<service>_things", Thing),
+)
+```
+
+### 8. Add Tests
+
+Unit tests drive the app in-process through `TestClient`
+(`tests/test_<service>.py`, plus `tests/test_<service>_extensions.py` for
+extension endpoints):
 
 ```python
 import pytest
 from fastapi.testclient import TestClient
-from emulator.api.app_<service> import app
+
+from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 
-client = TestClient(app)
+
+@pytest.fixture
+def client():
+    return TestClient(create_all_service_apps()["<service>"])
+
 
 @pytest.fixture(autouse=True)
-def reset_database():
-    db.reset()
+def reset_db():
+    db.reset_<service>()
     yield
-
-def test_list_resources():
-    response = client.get("/v2/resources")
-    assert response.status_code == 200
-
-def test_create_resource():
-    response = client.post("/v2/resources", json={"name": "test"})
-    assert response.status_code == 201
 ```
 
-### 8. Update Documentation
+SDK tests run real uvicorn servers and drive openstacksdk
+(`tests/sdk/test_sdk_<service>.py`). Add a `<service>_endpoint_override=` line to
+the `openstack_connection` fixture in `tests/sdk/conftest.py`, and a
+`db.reset_<service>()` call to the `reset_database` fixture.
+
+### 9. Update Packaging and Tooling
+
+- `emulator/api/status_ui.py` — the `SERVICES` dashboard mapping
+- `charts/openstack-emulator/templates/{deployment,service}.yaml` — container and
+  service ports, plus the helm-unittest suites under `charts/*/tests/`
+- `scripts/check-api-compliance.sh` — the spec export curl, the `services`
+  string and the reference-spec `case`
+
+### 10. Update Documentation
 
 - Add API examples to `docs/api-examples.md`
 - Update `docs/usage.md` if needed

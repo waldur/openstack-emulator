@@ -22,21 +22,23 @@ openstack-emulator --service=glance     # Port 9292
 openstack-emulator --service=neutron    # Port 9696
 openstack-emulator --service=octavia    # Port 9876
 openstack-emulator --service=placement  # Port 8778
+openstack-emulator --service=swift      # Port 8080
 openstack-emulator --service=status     # Port 10000 (Web UI)
 openstack-emulator --service=scenarios  # Port 8999
 ```
 
 ### Using uvicorn Directly
 
+There are no per-service app modules to point uvicorn at; the apps are built by
+`create_all_service_apps()` and keyed by service name. Use a factory:
+
 ```bash
-uvicorn emulator.api.app_keystone:app --host 0.0.0.0 --port 5000
-uvicorn emulator.api.app_nova:app --host 0.0.0.0 --port 8774
-uvicorn emulator.api.app_cinder:app --host 0.0.0.0 --port 8776
-uvicorn emulator.api.app_glance:app --host 0.0.0.0 --port 9292
-uvicorn emulator.api.app_neutron:app --host 0.0.0.0 --port 9696
-uvicorn emulator.api.app_octavia:app --host 0.0.0.0 --port 9876
-uvicorn emulator.api.app_status:app --host 0.0.0.0 --port 10000
+uvicorn --factory --host 0.0.0.0 --port 5000 \
+  'emulator.api.unified_app:create_all_service_apps()["keystone"]'
 ```
+
+In practice `openstack-emulator --service=<name>` is the supported way to run a
+single service, since it also applies `--port-offset`, presets and persistence.
 
 ## Service Ports
 

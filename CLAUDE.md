@@ -144,6 +144,7 @@ For detailed tenant isolation documentation, see [docs/architecture/tenant-isola
 | Neutron | 9696 |
 | Octavia | 9876 |
 | Placement | 8778 |
+| Swift | 8080 |
 
 For full port list and development instructions, see [docs/development.md](docs/development.md).
 

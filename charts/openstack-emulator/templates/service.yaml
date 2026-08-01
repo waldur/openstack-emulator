@@ -25,6 +25,10 @@ spec:
       port: 8776
       targetPort: cinder
       protocol: TCP
+    - name: swift
+      port: 8080
+      targetPort: swift
+      protocol: TCP
     - name: placement
       port: 8778
       targetPort: placement

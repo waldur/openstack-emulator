@@ -40,7 +40,7 @@ persistence:
 service:
   type: ClusterIP
   annotations: {}
-  # All 9 emulator ports are always exposed on the Service. The emulator
+  # All 10 emulator ports are always exposed on the Service. The emulator
   # binds all of them from a single process; individual disable is not supported.
 
 # Ingress is off by default. The emulator ships hardcoded admin credentials

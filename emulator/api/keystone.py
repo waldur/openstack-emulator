@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -22,6 +22,7 @@ class AuthIdentity(BaseModel):
     methods: list[str]
     password: dict[str, Any] | None = None
     token: dict[str, str] | None = None
+    application_credential: dict[str, Any] | None = None
 
 
 class AuthScope(BaseModel):
@@ -69,6 +70,7 @@ class ProjectCreate(BaseModel):
     enabled: bool = True
     parent_id: str | None = None
     is_domain: bool = False
+    tags: list[str] = Field(default_factory=list)
 
 
 class ProjectUpdate(BaseModel):
@@ -78,6 +80,13 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     domain_id: str | None = None
+    tags: list[str] | None = None
+
+
+class ProjectTagsUpdate(BaseModel):
+    """Replace the full tag list of a project."""
+
+    tags: list[str] = Field(default_factory=list)
 
 
 class UserCreate(BaseModel):
@@ -270,8 +279,45 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
 
     user_name = "admin"
     domain_id = "default"
+    # Set when the method identifies an exact user (token rescoping, application
+    # credentials); takes precedence over the name lookup in create_token.
+    resolved_user_id: str | None = None
+    # Application credentials carry their own immutable scope.
+    forced_project_id: str | None = None
+    forced_roles: list[dict[str, str]] | None = None
+    federation_context: dict[str, Any] = {}
 
-    if "password" in auth_methods and body.auth.identity.password:
+    if "application_credential" in auth_methods and body.auth.identity.application_credential:
+        logger.debug("Using application credential authentication")
+        app_cred_data = body.auth.identity.application_credential
+        secret = app_cred_data.get("secret")
+        cred = None
+        if app_cred_data.get("id"):
+            cred = db.find_application_credential(cred_id=app_cred_data["id"])
+        elif app_cred_data.get("name"):
+            user_ref = app_cred_data.get("user") or {}
+            owner_id = user_ref.get("id")
+            if not owner_id and user_ref.get("name"):
+                owner = db.get_user_by_name(user_ref["name"], user_ref.get("domain", {}).get("id"))
+                owner_id = owner.id if owner else None
+            cred = db.find_application_credential(name=app_cred_data["name"], user_id=owner_id)
+        if cred is None or not secret or cred.secret != secret:
+            raise HTTPException(status_code=401, detail="Invalid application credential")
+        if cred.expires_at and cred.expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail="Application credential has expired")
+
+        resolved_user_id = cred.user_id
+        owner_user = db.get_user(cred.user_id)
+        if owner_user:
+            user_name = owner_user.name
+            domain_id = owner_user.domain_id
+        forced_project_id = cred.project_id
+        # The credential's own role list is authoritative; it is a subset of what
+        # the owning user holds, so it must not be widened by the default-role
+        # fallback in create_token.
+        forced_roles = cred.roles or []
+
+    elif "password" in auth_methods and body.auth.identity.password:
         # Password-based authentication
         logger.debug("Using password authentication")
         logger.debug("Auth identity password: %s", body.auth.identity.password)
@@ -297,6 +343,18 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
             logger.debug("Existing token is valid, using its user info")
             user_name = existing_token.user_name
             domain_id = existing_token.domain_id
+            # Carry the exact user across the rescope. Federated authentication
+            # relies on this: the unscoped token names a user that may not be
+            # resolvable by name alone, and its provenance must survive so the
+            # scoped token is still recognisably federated.
+            resolved_user_id = existing_token.user_id
+            if existing_token.is_federated:
+                federation_context = {
+                    "is_federated": True,
+                    "idp_id": existing_token.idp_id,
+                    "protocol_id": existing_token.protocol_id,
+                    "groups": list(existing_token.groups),
+                }
         else:
             logger.debug("Existing token is invalid, using defaults")
             # For emulator purposes, we'll still allow token creation even with invalid existing token
@@ -310,7 +368,13 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     # project id) or by name; honor whichever is provided.
     project_name = "admin"
     project_id = None
-    if body.auth.scope and body.auth.scope.project:
+    if forced_project_id:
+        # An application credential is bound to the project it was created in;
+        # the request may not rescope it.
+        project_id = forced_project_id
+        forced_project = db.get_project(forced_project_id)
+        project_name = forced_project.name if forced_project else ""
+    elif body.auth.scope and body.auth.scope.project:
         project_scope = body.auth.scope.project
         project_id = project_scope.get("id")
         # Never invent the name "admin" for an id-scoped request. A token whose
@@ -335,6 +399,13 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         base_url=base_url,
         domain_id=domain_id,
         project_id=project_id,
+        user_id=resolved_user_id,
+        methods=auth_methods,
+        roles=forced_roles,
+        # An application credential confers exactly the roles recorded on it, so
+        # the "no assignments means admin" convenience must not apply.
+        grant_default_admin_role=forced_roles is None,
+        **federation_context,
     )
 
     # Set token in header
@@ -486,11 +557,27 @@ async def list_projects(
     enabled: bool | None = None,
     name: str | None = None,
     parent_id: str | None = None,
+    tags: str | None = Query(None),
+    tags_any: str | None = Query(None, alias="tags-any"),
+    not_tags: str | None = Query(None, alias="not-tags"),
+    not_tags_any: str | None = Query(None, alias="not-tags-any"),
 ) -> dict[str, Any]:
     """List projects."""
     validate_token_header(x_auth_token)
+
+    def _split(value: str | None) -> list[str] | None:
+        # The Identity API passes tag filters as a single comma-separated value.
+        return [tag for tag in value.split(",") if tag] if value else None
+
     projects = db.list_projects(
-        domain_id=domain_id, enabled=enabled, name=name, parent_id=parent_id
+        domain_id=domain_id,
+        enabled=enabled,
+        name=name,
+        parent_id=parent_id,
+        tags=_split(tags),
+        tags_any=_split(tags_any),
+        not_tags=_split(not_tags),
+        not_tags_any=_split(not_tags_any),
     )
     return {
         "projects": [p.to_dict() for p in projects],
@@ -516,6 +603,7 @@ async def create_project(
         enabled=project_data.enabled,
         parent_id=project_data.parent_id,
         is_domain=project_data.is_domain,
+        tags=project_data.tags,
     )
     return {"project": project.to_dict()}
 
@@ -551,6 +639,7 @@ async def update_project(
         description=project_data.description,
         enabled=project_data.enabled,
         domain_id=project_data.domain_id,
+        tags=project_data.tags,
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -566,6 +655,124 @@ async def delete_project(
     validate_token_header(x_auth_token)
     if not db.delete_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    return Response(status_code=204)
+
+
+# Project tag endpoints
+# Constraints from keystone.resource.schema: a tag may not contain "," or "/"
+# (the API-WG tag guideline), is 1..255 characters, and a project carries at
+# most 80 unique tags. The comma rule matters here because the list filters are
+# comma-separated.
+_MAX_TAG_LENGTH = 255
+_MAX_TAGS_PER_PROJECT = 80
+
+
+def validate_project_tag(value: str) -> None:
+    """Reject a tag Keystone's schema would not accept."""
+    if not 1 <= len(value) <= _MAX_TAG_LENGTH:
+        raise HTTPException(status_code=400, detail="Tag must be 1 to 255 characters long")
+    if "," in value or "/" in value:
+        raise HTTPException(status_code=400, detail="Tag may not contain ',' or '/'")
+
+
+def validate_project_tags(tags: list[str]) -> None:
+    """Reject a tag list Keystone's schema would not accept."""
+    if len(tags) > _MAX_TAGS_PER_PROJECT:
+        raise HTTPException(status_code=400, detail="A project may carry at most 80 tags")
+    for tag in tags:
+        validate_project_tag(tag)
+
+
+@router.get("/v3/projects/{project_id}/tags")
+async def list_project_tags(
+    project_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """List the tags of a project."""
+    validate_token_header(x_auth_token)
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"tags": project.tags}
+
+
+@router.put("/v3/projects/{project_id}/tags")
+async def replace_project_tags(
+    project_id: str,
+    body: ProjectTagsUpdate,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Replace the full tag list of a project."""
+    validate_token_header(x_auth_token)
+    validate_project_tags(body.tags)
+    project = db.update_project(project_id, tags=body.tags)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"tags": project.tags}
+
+
+@router.delete("/v3/projects/{project_id}/tags")
+async def delete_project_tags(
+    project_id: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Remove every tag from a project."""
+    validate_token_header(x_auth_token)
+    project = db.update_project(project_id, tags=[])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return Response(status_code=204)
+
+
+@router.put("/v3/projects/{project_id}/tags/{value}", status_code=201)
+async def add_project_tag(
+    project_id: str,
+    value: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Add a single tag to a project."""
+    validate_token_header(x_auth_token)
+    validate_project_tag(value)
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    validate_project_tags([*project.tags, value])
+    db.add_project_tag(project_id, value)
+    return Response(
+        status_code=201,
+        headers={"Location": f"/v3/projects/{project_id}/tags/{value}"},
+    )
+
+
+@router.head("/v3/projects/{project_id}/tags/{value}")
+@router.get("/v3/projects/{project_id}/tags/{value}")
+async def check_project_tag(
+    project_id: str,
+    value: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Check whether a project carries a tag."""
+    validate_token_header(x_auth_token)
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if value not in project.tags:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return Response(status_code=204)
+
+
+@router.delete("/v3/projects/{project_id}/tags/{value}")
+async def delete_project_tag(
+    project_id: str,
+    value: str,
+    x_auth_token: str = Header(..., alias="X-Auth-Token"),
+) -> Response:
+    """Remove a single tag from a project."""
+    validate_token_header(x_auth_token)
+    if db.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not db.delete_project_tag(project_id, value):
+        raise HTTPException(status_code=404, detail="Tag not found")
     return Response(status_code=204)
 
 

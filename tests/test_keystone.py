@@ -150,6 +150,7 @@ class TestTokens:
             "network",
             "load-balancer",
             "placement",
+            "object-store",
         }
         assert expected == service_types
 

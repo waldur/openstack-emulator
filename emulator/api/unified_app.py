@@ -19,6 +19,7 @@ from emulator.api.octavia import router as octavia_router
 from emulator.api.placement import router as placement_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.api.status_ui import router as status_router
+from emulator.api.swift import router as swift_router
 from emulator.core.exceptions import add_openstack_exception_handlers
 from emulator.core.headers import add_openstack_headers_middleware
 from emulator.core.logging_middleware import (
@@ -163,6 +164,12 @@ def create_all_service_apps() -> Dict[str, FastAPI]:
             "1.0",
             "A lightweight OpenStack Placement (Resource Provider) API emulator",
         ),
+        "swift": create_service_app(
+            "swift",
+            swift_router,
+            "1.0",
+            "A lightweight OpenStack Swift (Object Storage) API emulator",
+        ),
         "status": create_service_app(
             "status",
             status_router,
@@ -189,6 +196,7 @@ SERVICE_PORTS = {
     "neutron": 9696,
     "octavia": 9876,
     "placement": 8778,
+    "swift": 8080,
     "status": 10000,
     "scenarios": 8999,
 }
@@ -239,6 +247,7 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
     print(f"  - Neutron (Network):       http://{host}:{ports['neutron']}")
     print(f"  - Octavia (Load Balancer): http://{host}:{ports['octavia']}")
     print(f"  - Placement (Resource):    http://{host}:{ports['placement']}")
+    print(f"  - Swift (Object Storage):  http://{host}:{ports['swift']}")
     print(f"  - Status (Web UI):         http://{host}:{ports['status']}")
     print(f"  - Scenarios (Failure Sim): http://{host}:{ports['scenarios']}")
     print(f"\nLog level: {log_level}")

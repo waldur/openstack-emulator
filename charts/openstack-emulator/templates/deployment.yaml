@@ -73,6 +73,9 @@ spec:
             - name: cinder
               containerPort: 8776
               protocol: TCP
+            - name: swift
+              containerPort: 8080
+              protocol: TCP
             - name: placement
               containerPort: 8778
               protocol: TCP

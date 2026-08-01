@@ -98,13 +98,16 @@ def main() -> None:
             "glance",
             "neutron",
             "octavia",
+            "placement",
+            "swift",
             "status",
             "scenarios",
             "all",
         ],
         default="all",
         help="Service to run: keystone (5000), nova (8774), cinder (8776), "
-        "glance (9292), neutron (9696), octavia (9876), status (10000), scenarios (8999), or all (default: all)",
+        "glance (9292), neutron (9696), octavia (9876), placement (8778), swift (8080), "
+        "status (10000), scenarios (8999), or all (default: all)",
     )
     parser.add_argument(
         "--port-offset",

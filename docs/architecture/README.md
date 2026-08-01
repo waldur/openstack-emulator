@@ -45,6 +45,7 @@ The OpenStack Emulator is a lightweight implementation of OpenStack APIs designe
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load balancer service |
 | Placement | 8778 | Resource provider / capacity tracking service |
+| Swift | 8080 | Object storage service |
 
 ### Management Services
 

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 
@@ -519,28 +519,54 @@ class Token:
     issued_at: datetime = field(default_factory=datetime.utcnow)
     expires_at: datetime | None = None
     catalog: list[dict[str, Any]] = field(default_factory=list)
+    methods: list[str] = field(default_factory=lambda: ["password"])
+    # Authorization verdict resolved once at issue time. A token is privileged
+    # when it is scoped to the cloud "admin" project or when its user holds a
+    # real "admin" role assignment there. Kept as a field rather than recomputed
+    # per request so that the default-role fallback in create_token (which hands
+    # out an "admin" role to users with no assignments at all, for the benefit of
+    # simple test setups) can never be mistaken for genuine privilege. Defaults
+    # to False: tokens built directly rather than through create_token fall back
+    # to the project-name check in validate_token_simple.
+    is_admin: bool = False
+    # Unscoped tokens carry no project and no catalog. Federated authentication
+    # always issues one first; the client then rescopes it.
+    unscoped: bool = False
+    # Federation provenance, populated only for tokens minted by the
+    # OS-FEDERATION auth endpoint.
+    is_federated: bool = False
+    idp_id: str = ""
+    protocol_id: str = ""
+    groups: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""
-        return {
-            "token": {
-                "methods": ["password"],
-                "user": {
-                    "id": self.user_id,
-                    "name": self.user_name,
-                    "domain": {"id": self.domain_id, "name": self.domain_name},
-                },
-                "project": {
-                    "id": self.project_id,
-                    "name": self.project_name,
-                    "domain": {"id": self.domain_id, "name": self.domain_name},
-                },
-                "roles": self.roles,
-                "issued_at": format_datetime_utc(self.issued_at),
-                "expires_at": (format_datetime_utc(self.expires_at) if self.expires_at else None),
-                "catalog": self.catalog,
-            }
+        user: dict[str, Any] = {
+            "id": self.user_id,
+            "name": self.user_name,
+            "domain": {"id": self.domain_id, "name": self.domain_name},
         }
+        if self.is_federated:
+            user["OS-FEDERATION"] = {
+                "identity_provider": {"id": self.idp_id},
+                "protocol": {"id": self.protocol_id},
+                "groups": [{"id": group_id} for group_id in self.groups],
+            }
+        body: dict[str, Any] = {
+            "methods": self.methods,
+            "user": user,
+            "roles": self.roles,
+            "issued_at": format_datetime_utc(self.issued_at),
+            "expires_at": (format_datetime_utc(self.expires_at) if self.expires_at else None),
+        }
+        if not self.unscoped:
+            body["project"] = {
+                "id": self.project_id,
+                "name": self.project_name,
+                "domain": {"id": self.domain_id, "name": self.domain_name},
+            }
+            body["catalog"] = self.catalog
+        return {"token": body}
 
 
 # Keystone Identity Models
@@ -1452,6 +1478,10 @@ class NovaQuota:
             "server_group_members": self.server_group_members,
         }
 
+    def limits(self) -> dict[str, int]:
+        """Every quota limit as a flat mapping, without the ``id`` key."""
+        return {key: value for key, value in self.to_dict().items() if key != "id"}
+
 
 @dataclass
 class NeutronQuota:
@@ -1529,10 +1559,19 @@ class CinderQuota:
     backups: int = 10
     backup_gigabytes: int = 1000
     groups: int = 10
+    # Per-volume-type limits, keyed by the native Cinder quota name
+    # ``<metric>_<volume type name>`` (e.g. "gigabytes_ssd", "volumes_ssd",
+    # "snapshots_ssd"). Cinder derives one such key per metric for every volume
+    # type that has its own quotas, so the set is open-ended and cannot be
+    # modelled as fixed fields.
+    per_type: dict[str, int] = field(default_factory=dict)
+
+    #: Metrics that Cinder tracks per volume type.
+    PER_TYPE_METRICS: ClassVar[tuple[str, ...]] = ("gigabytes", "volumes", "snapshots")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to API response format."""
-        return {
+        result: dict[str, Any] = {
             "id": self.project_id,
             "volumes": self.volumes,
             "snapshots": self.snapshots,
@@ -1542,6 +1581,12 @@ class CinderQuota:
             "backup_gigabytes": self.backup_gigabytes,
             "groups": self.groups,
         }
+        result.update(self.per_type)
+        return result
+
+    def limits(self) -> dict[str, int]:
+        """Every quota limit as a flat mapping, without the ``id`` key."""
+        return {key: value for key, value in self.to_dict().items() if key != "id"}
 
 
 # Neutron RBAC Policy Models
@@ -3073,4 +3118,87 @@ class ResourceProvider:
                     "href": f"/resource_providers/{self.uuid}/allocations",
                 },
             ],
+        }
+
+
+# Swift Object Storage Models
+
+
+@dataclass
+class SwiftAccount:
+    """Represents a Swift account, the top level of the storage hierarchy.
+
+    The account name is the ``AUTH_<project id>`` segment of the storage URL
+    that Keystone publishes in the service catalog.
+    """
+
+    name: str = ""
+    project_id: str = ""
+    #: User metadata, keyed without the ``X-Account-Meta-`` prefix, lowercased.
+    metadata: dict[str, str] = field(default_factory=dict)
+    #: System metadata. Quotas live here: ``quota-bytes`` and ``quota-count``.
+    #: Swift translates the legacy ``X-Account-Meta-Quota-Bytes`` header into
+    #: this namespace, and only resellers may write it.
+    sysmeta: dict[str, str] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def quota(self, quota_type: str) -> int:
+        """Return a quota limit, or -1 when unset (Swift's "no limit")."""
+        raw = self.sysmeta.get(quota_type, self.metadata.get(quota_type))
+        if raw is None or raw == "":
+            return -1
+        try:
+            return int(raw)
+        except ValueError:
+            return -1
+
+
+@dataclass
+class SwiftContainer:
+    """Represents a Swift container."""
+
+    name: str = ""
+    account: str = ""
+    #: User metadata, keyed without the ``X-Container-Meta-`` prefix.
+    metadata: dict[str, str] = field(default_factory=dict)
+    read_acl: str = ""
+    write_acl: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self, object_count: int = 0, bytes_used: int = 0) -> dict[str, Any]:
+        """Convert to the JSON account-listing format."""
+        return {
+            "name": self.name,
+            "count": object_count,
+            "bytes": bytes_used,
+            "last_modified": format_datetime_utc(self.created_at),
+        }
+
+
+@dataclass
+class SwiftObject:
+    """Represents a Swift object.
+
+    Content is held base64-encoded so that it survives the JSON persistence
+    layer, which only serializes the scalar types the dataclasses declare.
+    """
+
+    name: str = ""
+    container: str = ""
+    account: str = ""
+    content_type: str = "application/octet-stream"
+    size: int = 0
+    etag: str = ""
+    content_b64: str = ""
+    metadata: dict[str, str] = field(default_factory=dict)
+    last_modified: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the JSON container-listing format."""
+        return {
+            "name": self.name,
+            "hash": self.etag,
+            "bytes": self.size,
+            "content_type": self.content_type,
+            "last_modified": format_datetime_utc(self.last_modified),
         }

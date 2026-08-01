@@ -110,6 +110,9 @@ from emulator.core.models import (
     Snapshot,
     SnapshotStatus,
     Subnet,
+    SwiftAccount,
+    SwiftContainer,
+    SwiftObject,
     TaskStatus,
     TaskType,
     Token,
@@ -192,6 +195,17 @@ class Database:
         self._nova_quotas: dict[str, NovaQuota] = {}
         self._neutron_quotas: dict[str, NeutronQuota] = {}
         self._cinder_quotas: dict[str, CinderQuota] = {}
+        # Quota classes hold the limits new projects inherit, keyed by class name
+        # ("default" is the only one most deployments ever use).
+        self._cinder_quota_classes: dict[str, CinderQuota] = {}
+        self._nova_quota_classes: dict[str, NovaQuota] = {}
+
+        # Storage dictionaries - Swift object storage. Containers and objects
+        # are keyed by their full path so a name is only unique within its
+        # parent, as in Swift.
+        self._swift_accounts: dict[str, SwiftAccount] = {}
+        self._swift_containers: dict[str, SwiftContainer] = {}
+        self._swift_objects: dict[str, SwiftObject] = {}
 
         # Storage dictionaries - RBAC Policies
         self._rbac_policies: dict[str, RbacPolicy] = {}
@@ -485,12 +499,23 @@ class Database:
         )
         self._services[volume_service.id] = volume_service
 
+        # Object Storage service (Swift)
+        object_store_service = Service(
+            id=str(uuid4()),
+            name="swift",
+            type="object-store",
+            description="OpenStack Object Storage Service",
+            enabled=True,
+        )
+        self._services[object_store_service.id] = object_store_service
+
         # Store service IDs for catalog generation
         self._service_ids = {
             "identity": identity_service.id,
             "compute": compute_service.id,
             "image": image_service.id,
             "volumev3": volume_service.id,
+            "object-store": object_store_service.id,
         }
 
     def _init_default_volume_types(self) -> None:
@@ -543,11 +568,45 @@ class Database:
         base_url: str = "http://localhost:8774",
         domain_id: str = "default",
         project_id: str | None = None,
+        user_id: str | None = None,
+        methods: list[str] | None = None,
+        unscoped: bool = False,
+        grant_default_admin_role: bool = True,
+        is_federated: bool = False,
+        idp_id: str = "",
+        protocol_id: str = "",
+        groups: list[str] | None = None,
+        roles: list[dict[str, str]] | None = None,
     ) -> Token:
-        """Create a new authentication token."""
+        """Create a new authentication token.
+
+        Args:
+            user_name: Name of the authenticating user.
+            project_name: Name of the project to scope to.
+            base_url: Request base URL, used to build the service catalog.
+            domain_id: Domain the user (and project) belong to.
+            project_id: Project id to scope to; takes precedence over the name.
+            user_id: User id to scope to; takes precedence over the name.
+            methods: Authentication methods recorded on the token.
+            unscoped: Issue a token with no project and no catalog.
+            grant_default_admin_role: When the user holds no role assignment on
+                the project, fall back to an "admin" role. Convenient for simple
+                test setups, but federated authentication must pass ``False`` so
+                that a user only ever gets the roles actually assigned to them.
+            is_federated: Mark the token as produced by OS-FEDERATION.
+            idp_id: Identity provider that authenticated the user.
+            protocol_id: Federation protocol used.
+            groups: Federated group ids mapped for this user.
+            roles: Authoritative role list, overriding what the user holds on the
+                project. Used by application credentials, whose role list is a
+                deliberately narrowed subset.
+        """
         with self._lock:
-            # Find user by name and domain
-            user = self.get_user_by_name(user_name, domain_id)
+            # Find user by id when given (federated rescoping knows the exact
+            # user), otherwise by name and domain.
+            user = self._users.get(user_id) if user_id else None
+            if not user:
+                user = self.get_user_by_name(user_name, domain_id)
             if not user:
                 # Create a temporary user record for testing
                 user = User(
@@ -561,11 +620,13 @@ class Database:
             # back to a name lookup, which would wrongly attribute the token to
             # the admin project); otherwise resolve by name.
             project = None
-            if project_id:
+            if unscoped:
+                project = None
+            elif project_id:
                 project = self.get_project(project_id)
             else:
                 project = self.get_project_by_name(project_name, domain_id)
-            if not project:
+            if not project and not unscoped:
                 # Synthesize a project, preserving the requested id if any so the
                 # token stays consistent with the scope the client asked for.
                 # An unnamed scope gets a name derived from the id rather than
@@ -577,11 +638,19 @@ class Database:
                     domain_id=domain_id,
                 )
 
-            # Get user's roles on this project
-            roles = self.get_user_roles_on_project(user.id, project.id)
-            if not roles:
+            # Roles the user genuinely holds on this project. Keep these apart
+            # from the fallback below: only real assignments confer privilege.
+            explicit_roles = self.get_user_roles_on_project(user.id, project.id) if project else []
+            if roles is not None:
+                explicit_roles = list(roles)
+            token_roles = list(explicit_roles)
+            if not token_roles and grant_default_admin_role and not unscoped:
                 # Default to admin role for testing
-                roles = [{"id": self._admin_role_id, "name": "admin"}]
+                token_roles = [{"id": self._admin_role_id, "name": "admin"}]
+
+            is_admin = (project.name or "").lower() == "admin" if project else False
+            if any(role["name"].lower() == "admin" for role in explicit_roles):
+                is_admin = True
 
             # Get domain info
             domain = self._domains.get(domain_id, self._default_domain)
@@ -590,14 +659,23 @@ class Database:
                 id=str(uuid4()),
                 user_id=user.id,
                 user_name=user.name,
-                project_id=project.id,
-                project_name=project.name,
+                project_id=project.id if project else "",
+                project_name=project.name if project else "",
                 domain_id=domain.id,
                 domain_name=domain.name,
-                roles=roles,
+                roles=token_roles,
                 issued_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                catalog=self._generate_service_catalog(base_url, project.id),
+                catalog=(
+                    [] if project is None else self._generate_service_catalog(base_url, project.id)
+                ),
+                methods=methods or ["password"],
+                is_admin=is_admin,
+                unscoped=unscoped,
+                is_federated=is_federated,
+                idp_id=idp_id,
+                protocol_id=protocol_id,
+                groups=list(groups or []),
             )
             logger.info("Storing token in database: %s for user %s", token.id, user.name)
             self._tokens[token.id] = token
@@ -667,6 +745,7 @@ class Database:
         neutron_url = f"{scheme}://{host}:9696"
         octavia_url = f"{scheme}://{host}:9876"
         placement_url = f"{scheme}://{host}:8778"
+        swift_url = f"{scheme}://{host}:8080"
 
         return [
             {
@@ -813,6 +892,31 @@ class Database:
                         "region": "RegionOne",
                         "interface": "admin",
                         "url": f"{placement_url}",
+                    },
+                ],
+            },
+            {
+                "type": "object-store",
+                "name": "swift",
+                # The account segment is part of the endpoint, so a client that
+                # follows the catalog addresses its own AUTH_<project> account
+                # and nothing else — the same reason a Swift quota can only be
+                # set on the account the storage URL points at.
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
                     },
                 ],
             },
@@ -2053,6 +2157,7 @@ class Database:
         parent_id: str | None = None,
         is_domain: bool = False,
         project_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> Project:
         """Create a new project."""
         with self._lock:
@@ -2065,6 +2170,7 @@ class Database:
                 parent_id=parent_id,
                 enabled=enabled,
                 is_domain=is_domain,
+                tags=list(tags or []),
             )
             self._projects[pid] = project
             if self.auto_save:
@@ -2090,8 +2196,17 @@ class Database:
         enabled: bool | None = None,
         name: str | None = None,
         parent_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_any: list[str] | None = None,
+        not_tags: list[str] | None = None,
+        not_tags_any: list[str] | None = None,
     ) -> list[Project]:
-        """List projects with optional filtering."""
+        """List projects with optional filtering.
+
+        The four tag filters follow the Identity API: ``tags`` matches projects
+        carrying *all* of the given tags, ``tags_any`` at least one, and the
+        ``not_`` variants are their complements.
+        """
         with self._lock:
             projects = list(self._projects.values())
             if domain_id:
@@ -2102,6 +2217,18 @@ class Database:
                 projects = [p for p in projects if name in p.name]
             if parent_id:
                 projects = [p for p in projects if p.parent_id == parent_id]
+            if tags:
+                wanted = set(tags)
+                projects = [p for p in projects if wanted.issubset(set(p.tags))]
+            if tags_any:
+                wanted = set(tags_any)
+                projects = [p for p in projects if wanted & set(p.tags)]
+            if not_tags:
+                unwanted = set(not_tags)
+                projects = [p for p in projects if not unwanted.issubset(set(p.tags))]
+            if not_tags_any:
+                unwanted = set(not_tags_any)
+                projects = [p for p in projects if not (unwanted & set(p.tags))]
             return projects
 
     def update_project(
@@ -2111,6 +2238,7 @@ class Database:
         description: str | None = None,
         enabled: bool | None = None,
         domain_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> Project | None:
         """Update a project."""
         with self._lock:
@@ -2124,9 +2252,34 @@ class Database:
                     project.enabled = enabled
                 if domain_id is not None:
                     project.domain_id = domain_id
+                if tags is not None:
+                    project.tags = list(dict.fromkeys(tags))
                 if self.auto_save:
                     self.save()
             return project
+
+    def add_project_tag(self, project_id: str, tag: str) -> Project | None:
+        """Add a single tag to a project, ignoring duplicates."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None:
+                return None
+            if tag not in project.tags:
+                project.tags.append(tag)
+                if self.auto_save:
+                    self.save()
+            return project
+
+    def delete_project_tag(self, project_id: str, tag: str) -> bool:
+        """Remove a single tag from a project. Returns False when absent."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or tag not in project.tags:
+                return False
+            project.tags.remove(tag)
+            if self.auto_save:
+                self.save()
+            return True
 
     def delete_project(self, project_id: str) -> bool:
         """Delete a project."""
@@ -2967,6 +3120,8 @@ class Database:
             self._snapshots.clear()
             self._volume_types.clear()
             self._qos_specs.clear()
+            self._cinder_quotas.clear()
+            self._cinder_quota_classes.clear()
             self._init_default_volume_types()
 
     # Volume operations
@@ -3060,12 +3215,18 @@ class Database:
         marker: str | None = None,
         all_tenants: bool = False,
     ) -> list[Volume]:
-        """List volumes with optional filtering."""
+        """List volumes with optional filtering.
+
+        ``project_id`` is the resolved scope: the caller decides whether the
+        request may cross a project boundary and passes None for "every
+        project". ``all_tenants`` is kept only so existing callers keep working;
+        it widens the scope but never narrows it.
+        """
         with self._lock:
             volumes = list(self._volumes.values())
 
             # Apply filters
-            if project_id and not all_tenants:
+            if project_id:
                 volumes = [v for v in volumes if v.project_id == project_id]
             if status:
                 volumes = [v for v in volumes if v.status.value == status]
@@ -5600,6 +5761,24 @@ class Database:
                 return True
             return False
 
+    def get_nova_quota_class(self, class_name: str = "default") -> NovaQuota:
+        """Get a Nova quota class, creating it from the defaults if unseen."""
+        with self._lock:
+            if class_name not in self._nova_quota_classes:
+                self._nova_quota_classes[class_name] = NovaQuota(project_id=class_name)
+            return self._nova_quota_classes[class_name]
+
+    def update_nova_quota_class(self, class_name: str, limits: dict[str, int]) -> NovaQuota:
+        """Update a Nova quota class from a flat mapping of limits."""
+        with self._lock:
+            quota = self.get_nova_quota_class(class_name)
+            for key, value in limits.items():
+                if hasattr(quota, key) and key != "project_id":
+                    setattr(quota, key, value)
+            if self.auto_save:
+                self.save()
+            return quota
+
     def get_nova_quota_usage(self, project_id: str) -> dict[str, int]:
         """Get current Nova quota usage for a project."""
         with self._lock:
@@ -5722,8 +5901,15 @@ class Database:
         backups: int | None = None,
         backup_gigabytes: int | None = None,
         groups: int | None = None,
+        per_type: dict[str, int] | None = None,
     ) -> CinderQuota:
-        """Update Cinder quotas for a project."""
+        """Update Cinder quotas for a project.
+
+        Args:
+            per_type: ``<metric>_<volume type>`` limits to merge in. Keys absent
+                from the mapping are left untouched, matching how a Cinder quota
+                update only carries the keys being changed.
+        """
         with self._lock:
             quota = self.get_cinder_quota(project_id)
             if volumes is not None:
@@ -5740,6 +5926,28 @@ class Database:
                 quota.backup_gigabytes = backup_gigabytes
             if groups is not None:
                 quota.groups = groups
+            if per_type:
+                quota.per_type.update(per_type)
+            return quota
+
+    def get_cinder_quota_class(self, class_name: str = "default") -> CinderQuota:
+        """Get a Cinder quota class, creating it from the defaults if unseen."""
+        with self._lock:
+            if class_name not in self._cinder_quota_classes:
+                self._cinder_quota_classes[class_name] = CinderQuota(project_id=class_name)
+            return self._cinder_quota_classes[class_name]
+
+    def update_cinder_quota_class(self, class_name: str, limits: dict[str, int]) -> CinderQuota:
+        """Update a Cinder quota class from a flat mapping of limits."""
+        with self._lock:
+            quota = self.get_cinder_quota_class(class_name)
+            for key, value in limits.items():
+                if hasattr(quota, key) and key != "project_id":
+                    setattr(quota, key, value)
+                else:
+                    quota.per_type[key] = value
+            if self.auto_save:
+                self.save()
             return quota
 
     def delete_cinder_quota(self, project_id: str) -> bool:
@@ -5751,13 +5959,18 @@ class Database:
             return False
 
     def get_cinder_quota_usage(self, project_id: str) -> dict[str, int]:
-        """Get current Cinder quota usage for a project."""
+        """Get current Cinder quota usage for a project.
+
+        Includes the ``<metric>_<volume type>`` keys alongside the totals, so a
+        quota set requested with ``usage=true`` can report per-volume-type
+        consumption the same way Cinder does.
+        """
         with self._lock:
             volumes = [v for v in self._volumes.values() if v.project_id == project_id]
             snapshots = [s for s in self._snapshots.values() if s.project_id == project_id]
             total_gigabytes = sum(v.size for v in volumes)
 
-            return {
+            usage = {
                 "volumes": len(volumes),
                 "snapshots": len(snapshots),
                 "gigabytes": total_gigabytes,
@@ -5765,6 +5978,211 @@ class Database:
                 "backup_gigabytes": 0,
                 "groups": 0,
             }
+
+            volumes_by_id = {v.id: v for v in volumes}
+            for vtype in self._volume_types.values():
+                typed = [v for v in volumes if v.volume_type == vtype.name]
+                typed_snapshots = [
+                    s
+                    for s in snapshots
+                    if volumes_by_id.get(s.volume_id) is not None
+                    and volumes_by_id[s.volume_id].volume_type == vtype.name
+                ]
+                usage[f"volumes_{vtype.name}"] = len(typed)
+                usage[f"gigabytes_{vtype.name}"] = sum(v.size for v in typed)
+                usage[f"snapshots_{vtype.name}"] = len(typed_snapshots)
+
+            return usage
+
+    # ==================== Swift Object Storage Operations ====================
+
+    @staticmethod
+    def _container_key(account: str, container: str) -> str:
+        return f"{account}/{container}"
+
+    @staticmethod
+    def _object_key(account: str, container: str, name: str) -> str:
+        return f"{account}/{container}/{name}"
+
+    def get_swift_account(self, account: str, create: bool = True) -> SwiftAccount | None:
+        """Get a Swift account, optionally creating it on first reference.
+
+        Swift auto-creates an account the first time an authenticated request
+        touches it, so ``create`` defaults to True.
+        """
+        with self._lock:
+            existing = self._swift_accounts.get(account)
+            if existing is not None:
+                return existing
+            if not create:
+                return None
+            project_id = account[len("AUTH_") :] if account.startswith("AUTH_") else account
+            record = SwiftAccount(name=account, project_id=project_id)
+            self._swift_accounts[account] = record
+            if self.auto_save:
+                self.save()
+            return record
+
+    def update_swift_account(
+        self,
+        account: str,
+        metadata: dict[str, str] | None = None,
+        sysmeta: dict[str, str] | None = None,
+    ) -> SwiftAccount:
+        """Merge metadata into a Swift account.
+
+        An empty value removes the key, matching how Swift treats a metadata
+        header sent with an empty body.
+        """
+        with self._lock:
+            record = self.get_swift_account(account)
+            assert record is not None  # noqa: S101 - create=True never returns None
+            for source, target in ((metadata, record.metadata), (sysmeta, record.sysmeta)):
+                for key, value in (source or {}).items():
+                    if value == "":
+                        target.pop(key, None)
+                    else:
+                        target[key] = value
+            if self.auto_save:
+                self.save()
+            return record
+
+    def list_swift_containers(self, account: str) -> list[SwiftContainer]:
+        """List an account's containers, ordered by name as Swift does."""
+        with self._lock:
+            containers = [c for c in self._swift_containers.values() if c.account == account]
+            containers.sort(key=lambda c: c.name)
+            return containers
+
+    def get_swift_container(self, account: str, container: str) -> SwiftContainer | None:
+        """Get a container by account and name."""
+        with self._lock:
+            return self._swift_containers.get(self._container_key(account, container))
+
+    def create_swift_container(
+        self, account: str, container: str, metadata: dict[str, str] | None = None
+    ) -> tuple[SwiftContainer, bool]:
+        """Create a container, or merge metadata into an existing one.
+
+        Returns the container and whether it was newly created, so the caller
+        can answer 201 versus 202 the way Swift does.
+        """
+        with self._lock:
+            self.get_swift_account(account)
+            key = self._container_key(account, container)
+            existing = self._swift_containers.get(key)
+            if existing is not None:
+                existing.metadata.update(metadata or {})
+                if self.auto_save:
+                    self.save()
+                return existing, False
+            record = SwiftContainer(name=container, account=account, metadata=dict(metadata or {}))
+            self._swift_containers[key] = record
+            if self.auto_save:
+                self.save()
+            return record, True
+
+    def delete_swift_container(self, account: str, container: str) -> bool:
+        """Delete an empty container. Returns False when it does not exist."""
+        with self._lock:
+            key = self._container_key(account, container)
+            if key not in self._swift_containers:
+                return False
+            del self._swift_containers[key]
+            if self.auto_save:
+                self.save()
+            return True
+
+    def list_swift_objects(
+        self, account: str, container: str, prefix: str | None = None
+    ) -> list[SwiftObject]:
+        """List a container's objects, ordered by name as Swift does."""
+        with self._lock:
+            objects = [
+                o
+                for o in self._swift_objects.values()
+                if o.account == account and o.container == container
+            ]
+            if prefix:
+                objects = [o for o in objects if o.name.startswith(prefix)]
+            objects.sort(key=lambda o: o.name)
+            return objects
+
+    def get_swift_object(self, account: str, container: str, name: str) -> SwiftObject | None:
+        """Get an object by account, container and name."""
+        with self._lock:
+            return self._swift_objects.get(self._object_key(account, container, name))
+
+    def put_swift_object(
+        self,
+        account: str,
+        container: str,
+        name: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+        metadata: dict[str, str] | None = None,
+    ) -> SwiftObject:
+        """Store an object, replacing any existing one at the same path."""
+        import base64
+        import hashlib
+
+        with self._lock:
+            record = SwiftObject(
+                name=name,
+                container=container,
+                account=account,
+                content_type=content_type,
+                size=len(content),
+                etag=hashlib.md5(content, usedforsecurity=False).hexdigest(),
+                content_b64=base64.b64encode(content).decode("ascii"),
+                metadata=dict(metadata or {}),
+            )
+            self._swift_objects[self._object_key(account, container, name)] = record
+            if self.auto_save:
+                self.save()
+            return record
+
+    def delete_swift_object(self, account: str, container: str, name: str) -> bool:
+        """Delete an object. Returns False when it does not exist."""
+        with self._lock:
+            key = self._object_key(account, container, name)
+            if key not in self._swift_objects:
+                return False
+            del self._swift_objects[key]
+            if self.auto_save:
+                self.save()
+            return True
+
+    def get_swift_account_usage(self, account: str) -> dict[str, int]:
+        """Total container count, object count and bytes stored in an account."""
+        with self._lock:
+            containers = [c for c in self._swift_containers.values() if c.account == account]
+            objects = [o for o in self._swift_objects.values() if o.account == account]
+            return {
+                "container_count": len(containers),
+                "object_count": len(objects),
+                "bytes_used": sum(o.size for o in objects),
+            }
+
+    def get_swift_container_usage(self, account: str, container: str) -> dict[str, int]:
+        """Object count and bytes stored in a container."""
+        with self._lock:
+            objects = [
+                o
+                for o in self._swift_objects.values()
+                if o.account == account and o.container == container
+            ]
+            return {
+                "object_count": len(objects),
+                "bytes_used": sum(o.size for o in objects),
+            }
+
+    def reset_swift(self) -> None:
+        """Reset all Swift data."""
+        with self._lock:
+            self._swift_accounts.clear()
+            self._swift_containers.clear()
+            self._swift_objects.clear()
 
     # ==================== RBAC Policy Operations ====================
 
@@ -8848,6 +9266,27 @@ class Database:
         with self._lock:
             key = f"{user_id}:{cred_id}"
             return self._application_credentials.get(key)
+
+    def find_application_credential(
+        self, cred_id: str | None = None, name: str | None = None, user_id: str | None = None
+    ) -> ApplicationCredential | None:
+        """Find an application credential by id, or by name within a user.
+
+        Authentication addresses a credential by id alone (the id is globally
+        unique) or by name plus the owning user, so neither lookup can go
+        through :meth:`get_application_credential`, which needs both parts of
+        the storage key.
+        """
+        with self._lock:
+            for cred in self._application_credentials.values():
+                if cred_id is not None and cred.id != cred_id:
+                    continue
+                if name is not None and cred.name != name:
+                    continue
+                if user_id is not None and cred.user_id != user_id:
+                    continue
+                return cred
+            return None
 
     def delete_application_credential(self, user_id: str, cred_id: str) -> bool:
         """Delete an application credential."""

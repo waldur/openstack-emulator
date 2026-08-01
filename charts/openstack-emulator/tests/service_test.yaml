@@ -17,7 +17,7 @@ tests:
           path: spec.type
           value: NodePort
 
-  - it: exposes all nine ports by name with matching targetPort symbol
+  - it: exposes all ten ports by name with matching targetPort symbol
     asserts:
       - contains:
           path: spec.ports
@@ -28,6 +28,9 @@ tests:
       - contains:
           path: spec.ports
           content: { name: cinder, port: 8776, targetPort: cinder, protocol: TCP }
+      - contains:
+          path: spec.ports
+          content: { name: swift, port: 8080, targetPort: swift, protocol: TCP }
       - contains:
           path: spec.ports
           content: { name: placement, port: 8778, targetPort: placement, protocol: TCP }

@@ -13,6 +13,7 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load Balancer service |
 | Placement | 8778 | Resource Provider service |
+| Swift | 8080 | Object Storage service |
 | Status UI | 10000 | Web dashboard |
 | Scenarios | 8999 | Failure injection API |
 

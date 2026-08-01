@@ -38,6 +38,8 @@ SERVICES: dict[str, ServiceInfo] = {
     "glance": {"port": 9292, "name": "Image"},
     "neutron": {"port": 9696, "name": "Networking"},
     "octavia": {"port": 9876, "name": "Load Balancer"},
+    "placement": {"port": 8778, "name": "Placement"},
+    "swift": {"port": 8080, "name": "Object Storage"},
     "scenarios": {"port": 8999, "name": "Scenarios"},
 }
 
