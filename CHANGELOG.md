@@ -42,6 +42,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   rather than a fixed list
 
 ### Fixed
+- Booting a server now binds the ports it was asked for. Nova stamps each
+  allocated port with `device_id` (the server uuid) and `device_owner`
+  (`compute:<availability zone>`); the emulator only synthesised an `addresses`
+  map, so `ports(device_id=<server>)` and `os-interface` were both empty and a
+  client following an instance's ports found nothing. A port named in the
+  request is bound, a network named in the request has a port created and bound
+  (and deleted with the server, while a pre-existing port is only unbound), and
+  an unusable request is rejected instead of ignored
+- Subnets get a default allocation pool derived from their CIDR, and a port
+  asking for a subnet without naming an address gets one allocated. Ports
+  previously came back with an empty `ip_address`
 - Preset users are created in their project's domain rather than always in the
   default one
 - `--service=placement` is accepted by the CLI

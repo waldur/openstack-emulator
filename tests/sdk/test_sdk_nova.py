@@ -406,3 +406,85 @@ class TestNovaServerActions:
         # The emulator returns a stub message
         assert isinstance(output, dict)
         assert "output" in output
+
+
+class TestSDKServerPortBinding:
+    """Booting a server binds its port, as Nova does.
+
+    This is the contract a client relies on to find an instance's ports:
+    ``allocate_for_instance`` stamps ``device_id`` with the server uuid and
+    ``device_owner`` with ``compute:<availability zone>``, so the port turns up
+    under a ``device_id`` filter and under ``os-interface``.
+    """
+
+    def _network(self, conn, cidr="192.168.77.0/24"):
+        net = conn.network.create_network(name="bind-net")
+        conn.network.create_subnet(name="bind-sub", network_id=net.id, ip_version=4, cidr=cidr)
+        return net
+
+    def test_boot_with_a_port_binds_it(self, openstack_connection: Connection) -> None:
+        net = self._network(openstack_connection)
+        port = openstack_connection.network.create_port(network_id=net.id)
+        image = next(iter(openstack_connection.image.images()))
+        flavor = openstack_connection.compute.find_flavor("m1.small")
+
+        server = openstack_connection.compute.create_server(
+            name="bound-vm",
+            flavor_id=flavor.id,
+            image_id=image.id,
+            networks=[{"port": port.id}],
+        )
+
+        refetched = openstack_connection.network.get_port(port.id)
+        assert refetched.device_id == server.id
+        assert refetched.device_owner == "compute:nova"
+
+    def test_the_port_is_discoverable_the_way_nova_finds_it(
+        self, openstack_connection: Connection
+    ) -> None:
+        net = self._network(openstack_connection, cidr="192.168.78.0/24")
+        port = openstack_connection.network.create_port(network_id=net.id)
+        image = next(iter(openstack_connection.image.images()))
+        flavor = openstack_connection.compute.find_flavor("m1.small")
+
+        server = openstack_connection.compute.create_server(
+            name="findable-vm",
+            flavor_id=flavor.id,
+            image_id=image.id,
+            networks=[{"port": port.id}],
+        )
+
+        by_device = list(openstack_connection.network.ports(device_id=server.id))
+        assert [p.id for p in by_device] == [port.id]
+
+        interfaces = list(openstack_connection.compute.server_interfaces(server.id))
+        assert [i.port_id for i in interfaces] == [port.id]
+
+    def test_boot_with_a_network_creates_and_binds_a_port(
+        self, openstack_connection: Connection
+    ) -> None:
+        net = self._network(openstack_connection, cidr="192.168.79.0/24")
+        image = next(iter(openstack_connection.image.images()))
+        flavor = openstack_connection.compute.find_flavor("m1.small")
+
+        server = openstack_connection.compute.create_server(
+            name="auto-port-vm",
+            flavor_id=flavor.id,
+            image_id=image.id,
+            networks=[{"uuid": net.id}],
+        )
+
+        by_device = list(openstack_connection.network.ports(device_id=server.id))
+        assert len(by_device) == 1
+        assert by_device[0].network_id == net.id
+
+    def test_a_port_carries_an_allocated_address(self, openstack_connection: Connection) -> None:
+        """A port on a subnet gets an IP, so addresses are real rather than blank."""
+        net = self._network(openstack_connection, cidr="192.168.80.0/24")
+
+        port = openstack_connection.network.create_port(network_id=net.id)
+
+        assert port.fixed_ips
+        assert port.fixed_ips[0]["ip_address"].startswith("192.168.80.")
+        # The gateway is not handed out.
+        assert port.fixed_ips[0]["ip_address"] != "192.168.80.1"

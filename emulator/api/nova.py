@@ -11,6 +11,7 @@ from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     PortInUseError,
+    PortNotFoundError,
 )
 from emulator.core.models import Server
 from emulator.core.simple_auth import TokenInfo, validate_token_simple
@@ -318,19 +319,24 @@ async def create_server(
     if req.networks:
         networks = [{"uuid": n.uuid, "port": n.port, "fixed_ip": n.fixed_ip} for n in req.networks]
 
-    server = db.create_server(
-        name=req.name,
-        flavor_id=req.flavorRef,
-        image_id=req.imageRef or "",
-        tenant_id=token.project_id,
-        user_id=token.user_id,
-        key_name=req.key_name,
-        metadata=req.metadata,
-        security_groups=req.security_groups,
-        availability_zone=req.availability_zone or "nova",
-        networks=networks,
-        config_drive=req.config_drive,
-    )
+    try:
+        server = db.create_server(
+            name=req.name,
+            flavor_id=req.flavorRef,
+            image_id=req.imageRef or "",
+            tenant_id=token.project_id,
+            user_id=token.user_id,
+            key_name=req.key_name,
+            metadata=req.metadata,
+            security_groups=req.security_groups,
+            availability_zone=req.availability_zone or "nova",
+            networks=networks,
+            config_drive=req.config_drive,
+        )
+    except PortNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PortInUseError as exc:
+        raise HTTPException(status_code=400, detail=f"Port {exc.port_id} is still in use.") from exc
 
     # Return response with admin password
     response_data = server.to_dict(detailed=False)

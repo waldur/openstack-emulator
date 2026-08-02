@@ -21,6 +21,14 @@ class PortInUseError(Exception):
         super().__init__(f"Port {port_id} is still in use.")
 
 
+class PortNotFoundError(Exception):
+    """A server was booted against a port or network that does not exist."""
+
+    def __init__(self, resource_id: str) -> None:
+        self.resource_id = resource_id
+        super().__init__(f"Port or network {resource_id} could not be found.")
+
+
 class InvalidFixedIPError(Exception):
     """A fixed IP does not belong to any subnet of the target network."""
 

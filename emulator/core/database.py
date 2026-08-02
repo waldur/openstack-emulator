@@ -16,6 +16,7 @@ from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     PortInUseError,
+    PortNotFoundError,
     ScopeUnauthorizedError,
 )
 from emulator.core.models import (
@@ -1010,9 +1011,15 @@ class Database:
                 progress=0,
             )
 
-            # Simulate network assignment
+            # Bind the requested networks/ports for real. Nova allocates a port
+            # per network request and stamps it with the instance, so anything
+            # that follows a server's ports by device_id depends on this having
+            # happened; synthesising addresses alone left every such lookup
+            # empty. Done before the server is registered so a bad request
+            # leaves nothing behind.
             if networks:
-                server.addresses = self._generate_addresses(networks)
+                interfaces = self._bind_server_networks(server_id, server, networks)
+                server.addresses = self._addresses_from_interfaces(interfaces)
             else:
                 # Default network
                 server.addresses = {
@@ -1045,6 +1052,84 @@ class Database:
             server.progress = 100
             server.launched_at = datetime.now(timezone.utc)
             server.updated = datetime.now(timezone.utc)
+
+    def _bind_server_networks(
+        self, server_id: str, server: Server, networks: list[dict[str, Any]]
+    ) -> list[ServerNetworkInterface]:
+        """Allocate and bind a port for each network request on a server.
+
+        Mirrors Nova's allocate_for_instance: a request naming a ``port`` binds
+        that existing port, and a request naming a network ``uuid`` has Nova
+        create the port first (and own it, so it is deleted rather than unbound
+        when the interface goes away). Either way the port ends up carrying
+        ``device_id`` and ``device_owner``, which is what makes
+        ``list_ports(device_id=<server>)`` and ``os-interface`` agree with
+        reality.
+
+        Raises:
+            PortNotFoundError: A requested port or network does not exist.
+            PortInUseError: A requested port is already bound to a device.
+        """
+        interfaces: list[ServerNetworkInterface] = []
+        for request in networks:
+            port_id = request.get("port")
+            network_id = request.get("uuid")
+
+            if port_id:
+                port = self._ports.get(port_id)
+                if port is None:
+                    raise PortNotFoundError(port_id)
+                nova_created = False
+            elif network_id:
+                if network_id not in self._networks:
+                    raise PortNotFoundError(network_id)
+                fixed_ips = (
+                    [{"ip_address": request["fixed_ip"]}] if request.get("fixed_ip") else None
+                )
+                port = self.create_port(
+                    network_id=network_id,
+                    project_id=server.tenant_id,
+                    fixed_ips=fixed_ips,
+                    validate_fixed_ips=bool(fixed_ips),
+                )
+                if port is None:
+                    raise PortNotFoundError(network_id)
+                nova_created = True
+            else:
+                continue
+
+            interfaces.append(
+                self.attach_interface_to_server(
+                    server_id,
+                    port,
+                    nova_created=nova_created,
+                    availability_zone=server.availability_zone,
+                )
+            )
+        return interfaces
+
+    def _addresses_from_interfaces(
+        self, interfaces: list[ServerNetworkInterface]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Build the server ``addresses`` map from its bound ports.
+
+        Keyed by network name, as Nova does, rather than by network id.
+        """
+        addresses: dict[str, list[dict[str, Any]]] = {}
+        for interface in interfaces:
+            network = self._networks.get(interface.net_id)
+            key = network.name if network else interface.net_id
+            entries = addresses.setdefault(key, [])
+            for fixed_ip in interface.fixed_ips:
+                entries.append(
+                    {
+                        "addr": fixed_ip.get("ip_address", ""),
+                        "version": 4,
+                        "OS-EXT-IPS:type": "fixed",
+                        "OS-EXT-IPS-MAC:mac_addr": interface.mac_addr,
+                    }
+                )
+        return addresses
 
     def _generate_addresses(
         self, networks: list[dict[str, Any]]
@@ -4594,6 +4679,19 @@ class Database:
                 parts = cidr.split("/")[0].split(".")
                 gateway_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.1"
 
+            # Neutron always gives a subnet an allocation pool, derived from the
+            # CIDR minus the network address and the gateway, so ports created
+            # on it get an address. Without one nothing here ever allocated, and
+            # every port came back with an empty ip_address.
+            if not pools:
+                network_obj = ipaddress.ip_network(cidr, strict=False)
+                hosts = list(network_obj.hosts())
+                if hosts:
+                    first = hosts[0]
+                    if str(first) == gateway_ip and len(hosts) > 1:
+                        first = hosts[1]
+                    pools = [AllocationPool(start=str(first), end=str(hosts[-1]))]
+
             subnet = Subnet(
                 id=str(uuid4()),
                 name=name,
@@ -4780,6 +4878,14 @@ class Database:
                             raise FixedIPAlreadyInUseError(ip_address, network_id)
                         if not subnet_id:
                             subnet_id = subnet.id
+                    if not ip_address and subnet_id:
+                        # Asking for a subnet without naming an address is a
+                        # request for Neutron to pick one; it does not mean "no
+                        # address". This is the shape clients use when they want
+                        # a port on a particular subnet.
+                        subnet = self._subnets.get(subnet_id)
+                        if subnet is not None:
+                            ip_address = self._allocate_ip_from_subnet(subnet) or ""
                     port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip_address))
             else:
                 # Auto-allocate from first subnet
@@ -7896,7 +8002,11 @@ class Database:
     # Server Network Interfaces
 
     def attach_interface_to_server(
-        self, server_id: str, port: Port, nova_created: bool = False
+        self,
+        server_id: str,
+        port: Port,
+        nova_created: bool = False,
+        availability_zone: str = "nova",
     ) -> ServerNetworkInterface:
         """Attach an existing Neutron port to a server.
 
@@ -7918,7 +8028,10 @@ class Database:
                 self._server_network_interfaces[server_id] = []
 
             port.device_id = server_id
-            port.device_owner = "compute:nova"
+            # Nova stamps the zone, not a fixed string:
+            # port_req_body = {'port': {'device_id': instance.uuid,
+            #                           'device_owner': 'compute:%s' % zone}}
+            port.device_owner = f"compute:{availability_zone}"
             port.updated_at = datetime.utcnow()
 
             interface = ServerNetworkInterface(
