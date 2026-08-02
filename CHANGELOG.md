@@ -4,6 +4,65 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Swift object storage service on port 8080, including the account_quotas
+  behaviour: reseller-only quota writes, readable by anyone, and 413 on an
+  upload that would exceed the limit
+- Embedded OpenID Provider on port 5556 issuing RS256 tokens, and Keystone
+  OS-FEDERATION support: protocols, the bearer-token auth endpoint, an attribute
+  mapping engine, project and domain discovery, and service providers
+- CloudKitty rating service on port 8889 with v2 summary and dataframes derived
+  from the emulated servers and volumes
+- Keystone project tags, the /tags sub-resource, and tag-based project filters
+- Per-volume-type Cinder quotas, quota classes for Cinder and Nova, and the
+  application_credential authentication method
+- A waldur-site-agent preset covering a managed domain, per-volume-type quotas,
+  object storage and a working federated login
+
+### Changed
+- **Breaking.** Scoping a token now requires a real role assignment, as in
+  Keystone: `TokenModel.mint` runs `_validate_project_scope`, which rejects a
+  project-scoped token that would carry no roles. The emulator previously
+  issued one and invented an `admin` role. A client scoping to a project it was
+  never granted now gets 401 instead of a usable token. Grant the role the way
+  an operator would (`openstack role add --project P --user U member`), or use
+  the `grant_scope` helper in `tests/conftest.py`
+- **Breaking.** An unrecognised user name no longer resolves to the seeded
+  admin's identity. It used to inherit the admin's role assignments, so any
+  name at all could scope wherever the admin could. Unknown names now get a
+  stable identity of their own, derived from the name, holding no assignments
+- Resolve token privilege from a real admin role assignment or the admin
+  project instead of inferring it from the project name, so the default-role
+  fallback for users with no assignments no longer confers access
+- Nova and Cinder now require all_tenants to list across projects, matching the
+  upstream services: a project_id filter alone never crosses a boundary
+- Nova and Cinder detailed quota sets derive their keys from the quota model
+  rather than a fixed list
+
+### Fixed
+- Booting a server now binds the ports it was asked for. Nova stamps each
+  allocated port with `device_id` (the server uuid) and `device_owner`
+  (`compute:<availability zone>`); the emulator only synthesised an `addresses`
+  map, so `ports(device_id=<server>)` and `os-interface` were both empty and a
+  client following an instance's ports found nothing. A port named in the
+  request is bound, a network named in the request has a port created and bound
+  (and deleted with the server, while a pre-existing port is only unbound), and
+  an unusable request is rejected instead of ignored
+- Subnets get a default allocation pool derived from their CIDR, and a port
+  asking for a subnet without naming an address gets one allocated. Ports
+  previously came back with an empty `ip_address`
+- Neutron, Glance and Octavia answer a rejected token with 401 instead of
+  falling back to the literal project `admin` as a filter value. On a by-id
+  lookup that fallback surfaced an expired token as `404 Port not found`, which
+  a client takes at face value; keystonemiddleware returns 401 and clients
+  re-authenticate and retry on it. A token-less request keeps its development
+  fallback
+- Preset users are created in their project's domain rather than always in the
+  default one
+- `--service=placement` is accepted by the CLI
+
 ## [0.3.0] - 2026-07-31
 
 ### Added

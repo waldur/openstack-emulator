@@ -6,7 +6,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.simple_auth import validate_token_simple
+from emulator.core.models import CinderQuota
+from emulator.core.simple_auth import TokenInfo, validate_token_simple
 
 router = APIRouter(tags=["block-storage"])
 
@@ -172,7 +173,7 @@ class ExtraSpecsBody(BaseModel):
 
 
 # Helper function to validate tokens
-def get_token_or_raise(auth_token: str | None) -> Any:
+def get_token_or_raise(auth_token: str | None) -> TokenInfo:
     """Validate token using shared database."""
     return validate_token_simple(auth_token, "Cinder")
 
@@ -229,9 +230,32 @@ async def list_extensions(
 
 
 # Volume endpoints
+def _resolve_volume_scope(
+    request: Request, token: TokenInfo, path_project_id: str, all_tenants: bool
+) -> str | None:
+    """Resolve which project a volume listing should be filtered to.
+
+    Returns the project id to filter on, or None for "every project".
+
+    Unlike Nova, Cinder does not infer ``all_tenants`` from a ``project_id``
+    filter: without ``all_tenants`` the caller's own project is forced, so a
+    ``project_id`` filter on its own never crosses a project boundary. That is
+    reproduced faithfully — a client that passes only ``project_id`` (as the
+    openstacksdk ``block_storage.volumes(project_id=...)`` call does) really does
+    get its own volumes back from a real Cinder, and hiding that here would hide
+    a bug in the client.
+    """
+    if not (all_tenants and token.is_admin):
+        return path_project_id
+    # The account segment of the URL shares the name, so only the query-string
+    # occurrence is a filter over all projects.
+    return request.query_params.get("project_id")
+
+
 @router.get("/v3/{project_id}/volumes")
 async def list_volumes(
     project_id: str,
+    request: Request,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     status: str | None = Query(None),
     name: str | None = Query(None),
@@ -240,9 +264,9 @@ async def list_volumes(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (summary)."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)
     volumes = db.list_volumes(
-        project_id=project_id if not all_tenants else None,
+        project_id=_resolve_volume_scope(request, token, project_id, all_tenants),
         status=status,
         name=name,
         limit=limit,
@@ -255,6 +279,7 @@ async def list_volumes(
 @router.get("/v3/{project_id}/volumes/detail")
 async def list_volumes_detail(
     project_id: str,
+    request: Request,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     status: str | None = Query(None),
     name: str | None = Query(None),
@@ -263,9 +288,9 @@ async def list_volumes_detail(
     all_tenants: bool = Query(False),
 ) -> dict[str, Any]:
     """List volumes (detailed)."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    token = get_token_or_raise(x_auth_token)
     volumes = db.list_volumes(
-        project_id=project_id if not all_tenants else None,
+        project_id=_resolve_volume_scope(request, token, project_id, all_tenants),
         status=status,
         name=name,
         limit=limit,
@@ -982,52 +1007,38 @@ async def get_quota_set(
     """Get volume quota set for a tenant."""
     get_token_or_raise(x_auth_token)
 
-    quota = db.get_cinder_quota(tenant_id)
+    limits = db.get_cinder_quota_limits(tenant_id)
 
     if usage:
         quota_usage = db.get_cinder_quota_usage(tenant_id)
-        return {
-            "quota_set": {
-                "id": tenant_id,
-                "volumes": {
-                    "limit": quota.volumes,
-                    "in_use": quota_usage.get("volumes", 0),
-                    "reserved": 0,
-                },
-                "snapshots": {
-                    "limit": quota.snapshots,
-                    "in_use": quota_usage.get("snapshots", 0),
-                    "reserved": 0,
-                },
-                "gigabytes": {
-                    "limit": quota.gigabytes,
-                    "in_use": quota_usage.get("gigabytes", 0),
-                    "reserved": 0,
-                },
-                "per_volume_gigabytes": {
-                    "limit": quota.per_volume_gigabytes,
-                    "in_use": 0,
-                    "reserved": 0,
-                },
-                "backups": {
-                    "limit": quota.backups,
-                    "in_use": quota_usage.get("backups", 0),
-                    "reserved": 0,
-                },
-                "backup_gigabytes": {
-                    "limit": quota.backup_gigabytes,
-                    "in_use": quota_usage.get("backup_gigabytes", 0),
-                    "reserved": 0,
-                },
-                "groups": {
-                    "limit": quota.groups,
-                    "in_use": quota_usage.get("groups", 0),
-                    "reserved": 0,
-                },
-            }
+        # Derived from the quota's own key set rather than a fixed list, so
+        # per-volume-type limits are reported without further wiring.
+        detail = {
+            key: {"limit": limit, "in_use": quota_usage.get(key, 0), "reserved": 0}
+            for key, limit in limits.items()
         }
+        return {"quota_set": {"id": tenant_id, **detail}}
 
-    return {"quota_set": quota.to_dict()}
+    return {"quota_set": {"id": tenant_id, **limits}}
+
+
+# Keys a quota set may echo back without them being limits. Same list as
+# cinder.quota.NON_QUOTA_KEYS — note it does NOT include "project_id" or
+# "force", both of which a real Cinder rejects as bad keys.
+NON_QUOTA_KEYS = frozenset({"tenant_id", "id"})
+
+
+def _split_per_type_key(key: str) -> tuple[str, str] | None:
+    """Split a ``<metric>_<volume type>`` quota key, or return None.
+
+    Volume type names may themselves contain underscores, so the metric prefix
+    is matched rather than the key split on the last separator.
+    """
+    for metric in CinderQuota.PER_TYPE_METRICS:
+        prefix = f"{metric}_"
+        if key.startswith(prefix) and len(key) > len(prefix):
+            return metric, key[len(prefix) :]
+    return None
 
 
 @router.put("/v3/{project_id}/os-quota-sets/{tenant_id}")
@@ -1037,11 +1048,48 @@ async def update_quota_set(
     request: Request,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update volume quota set for a tenant."""
+    """Update volume quota set for a tenant.
+
+    Besides the project-wide totals, Cinder accepts a ``<metric>_<volume type>``
+    key for every volume type that has its own quotas. Those are open-ended, so
+    they are validated against the known volume types rather than a fixed list:
+    a key naming a type that does not exist is a 400, as in Cinder, which keeps a
+    mistyped quota name from being silently dropped.
+    """
     get_token_or_raise(x_auth_token)
 
     body = await request.json()
     quota_data = body.get("quota_set", {})
+
+    known_totals = {
+        "volumes",
+        "snapshots",
+        "gigabytes",
+        "per_volume_gigabytes",
+        "backups",
+        "backup_gigabytes",
+        "groups",
+    }
+    volume_type_names = {vtype.name for vtype in db.list_volume_types()}
+
+    per_type: dict[str, int] = {}
+    bad_keys: list[str] = []
+    for key, value in quota_data.items():
+        if key in known_totals or key in NON_QUOTA_KEYS:
+            continue
+        parsed = _split_per_type_key(key)
+        if parsed is None or parsed[1] not in volume_type_names:
+            bad_keys.append(key)
+            continue
+        per_type[key] = value
+
+    if bad_keys:
+        # Same wording and all-keys-at-once behaviour as Cinder's
+        # _validate_quota_set format checker.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bad key(s) in quota set: {', '.join(bad_keys)}",
+        )
 
     quota = db.update_cinder_quota(
         project_id=tenant_id,
@@ -1052,6 +1100,7 @@ async def update_quota_set(
         backups=quota_data.get("backups"),
         backup_gigabytes=quota_data.get("backup_gigabytes"),
         groups=quota_data.get("groups"),
+        per_type=per_type,
     )
 
     return {"quota_set": quota.to_dict()}
@@ -1080,10 +1129,41 @@ async def get_quota_set_defaults(
     get_token_or_raise(x_auth_token)
 
     # Return default quota values
-    from emulator.core.models import CinderQuota
-
     default_quota = CinderQuota(project_id=tenant_id)
     return {"quota_set": default_quota.to_dict()}
+
+
+@router.get("/v3/{project_id}/os-quota-class-sets/{quota_class_name}")
+async def get_quota_class_set(
+    project_id: str,
+    quota_class_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get the limits a quota class hands to new projects."""
+    get_token_or_raise(x_auth_token)
+
+    quota = db.get_cinder_quota_class(quota_class_name)
+    return {"quota_class_set": {**quota.limits(), "id": quota_class_name}}
+
+
+@router.put("/v3/{project_id}/os-quota-class-sets/{quota_class_name}")
+async def update_quota_class_set(
+    project_id: str,
+    quota_class_name: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update the limits a quota class hands to new projects."""
+    get_token_or_raise(x_auth_token)
+
+    body = await request.json()
+    limits = {
+        key: value
+        for key, value in body.get("quota_class_set", {}).items()
+        if key not in {"id", "project_id"}
+    }
+    quota = db.update_cinder_quota_class(quota_class_name, limits)
+    return {"quota_class_set": {**quota.limits(), "id": quota_class_name}}
 
 
 # Volume Transfers

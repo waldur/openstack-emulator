@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import grant_scope
 
 # Create Neutron app for testing
 service_apps = create_all_service_apps()
@@ -487,6 +488,7 @@ class TestTenantIsolation:
             headers={"X-Auth-Token": auth_token},
         )
 
+        grant_scope(project_name="qos-test-project")
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
             json={
@@ -610,7 +612,7 @@ class TestTenantProjectScoping:
 
     def _tenant(self, name):
         """Create a project and a token scoped to it; return (project_id, token)."""
-        proj = db.create_project(name=name)
+        proj = grant_scope(project_name=name)
         token = db.create_token(project_name=name, project_id=proj.id)
         return proj.id, token.id
 

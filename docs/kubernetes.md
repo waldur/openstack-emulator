@@ -55,7 +55,7 @@ helm install openstack-emulator ./charts/openstack-emulator \
   --set-file customPreset.yaml=./my-preset.yaml
 ```
 
-Built-in preset names: `development`, `production`, `enterprise`, `microservices`, `multi-tier`, `stress-test`, `empty`. See [`emulator/presets/`](../emulator/presets) for the YAML schema (each file starts with `name:` and `description:`, followed by per-service resource lists).
+Built-in preset names: `development`, `production`, `enterprise`, `microservices`, `multi-tier`, `stress-test`, `waldur-site-agent`, `empty`. `waldur-site-agent` additionally seeds federated identity — see [federation.md](federation.md). See [`emulator/presets/`](../emulator/presets) for the YAML schema (each file starts with `name:` and `description:`, followed by per-service resource lists).
 
 ## Step 2 — Smoke-test the emulator from your laptop
 

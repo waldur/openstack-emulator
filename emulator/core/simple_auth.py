@@ -51,13 +51,19 @@ def validate_token_simple(auth_token: str | None, service_name: str = "unknown")
 
     logger.debug("%s: Token validation succeeded", service_name)
 
-    # A token scoped to the cloud "admin" project is privileged: it may
-    # read/modify resources in any project (addressed by id) and its list
-    # results span all projects, mirroring how Waldur operates on tenants from
-    # its admin session (external gateway, port security, enumerating a tenant's
-    # resources). Tenant sessions are scoped to their own project and stay
-    # isolated. How each endpoint applies this lives in the neutron API layer.
-    is_admin = (token.project_name or "").lower() == "admin"
+    # A privileged token may read/modify resources in any project (addressed by
+    # id) and its list results span all projects, mirroring how Waldur operates
+    # on tenants from its admin session (external gateway, port security,
+    # enumerating a tenant's resources). Tenant sessions are scoped to their own
+    # project and stay isolated. How each endpoint applies this lives in the
+    # neutron API layer.
+    #
+    # The verdict is resolved when the token is issued (scoped to the cloud
+    # "admin" project, or holding a real "admin" role assignment there) so that
+    # the default-role fallback for users with no assignments cannot be mistaken
+    # for privilege. The project-name check is kept as a fallback for Token
+    # objects built directly by tests rather than through create_token.
+    is_admin = getattr(token, "is_admin", False) or (token.project_name or "").lower() == "admin"
 
     # Return a structured object with commonly needed fields
     return TokenInfo(

@@ -13,6 +13,9 @@ A lightweight OpenStack API emulator for testing purposes. This emulator provide
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load Balancer service |
 | Placement | 8778 | Resource Provider service |
+| Swift | 8080 | Object Storage service |
+| OIDC | 5556 | Embedded OpenID Provider |
+| CloudKitty | 8889 | Rating service |
 | Status UI | 10000 | Web dashboard |
 | Scenarios | 8999 | Failure injection API |
 
@@ -87,6 +90,7 @@ Once running, access Swagger UI at:
 - [Usage Guide](docs/usage.md) - Detailed usage instructions
 - [Kubernetes Deployment Guide](docs/kubernetes.md) - Helm chart install + cross-namespace use + Ingress/Gateway API
 - [API Examples](docs/api-examples.md) - curl and SDK examples
+- [Federated identity (OIDC)](docs/federation.md) - Keystone federation and the embedded OpenID Provider
 - [Scenario Injection](docs/scenarios.md) - Failure testing guide
 - [Architecture](docs/architecture/) - System design documentation
   - [Overview](docs/architecture/README.md) - Architecture overview

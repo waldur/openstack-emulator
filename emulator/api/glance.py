@@ -69,14 +69,15 @@ class ImageMemberUpdateRequest(BaseModel):
 
 # Helper functions
 def _get_project_id(token: str | None) -> str:
-    """Extract project ID from token."""
+    """Extract project ID from token.
+
+    A rejected token propagates the 401 so clients re-authenticate, rather than
+    degrading into a project filter that reads as a missing resource.
+    """
     if not token:
         return "admin"
-    try:
-        token_data = validate_token_simple(token, "Glance")
-        return token_data.project_id
-    except HTTPException:
-        return "admin"  # Fallback for development
+    token_data = validate_token_simple(token, "Glance")
+    return token_data.project_id
 
 
 def _parse_visibility(visibility: str | None) -> ImageVisibility | None:

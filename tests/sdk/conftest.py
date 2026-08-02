@@ -113,6 +113,8 @@ def reset_database() -> Generator[None, None, None]:
     db.reset_glance()
     db.reset_neutron()
     db.reset_octavia()
+    db.reset_swift()
+    db.reset_oidc()
     # Clear Nova data (no reset method available)
     db._servers.clear()
     db._keypairs.clear()
@@ -176,6 +178,11 @@ def openstack_connection(emulator_servers: EmulatorServers) -> Generator[Connect
         block_storage_endpoint_override=emulator_servers.get_url("cinder") + f"/v3/{project_id}",
         load_balancer_endpoint_override=emulator_servers.get_url("octavia"),
         placement_endpoint_override=emulator_servers.get_url("placement"),
+        # Swift addresses the account through the endpoint itself, which is what
+        # confines a client to its own AUTH_<project> account.
+        object_store_endpoint_override=(
+            emulator_servers.get_url("swift") + f"/v1/AUTH_{project_id}"
+        ),
     )
 
     yield conn

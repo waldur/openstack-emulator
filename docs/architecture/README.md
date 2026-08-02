@@ -18,9 +18,15 @@ The OpenStack Emulator is a lightweight implementation of OpenStack APIs designe
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
 │         │                │                │                │                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   Neutron   │  │   Octavia   │  │   Status    │  │  Scenarios  │        │
-│  │   (9696)    │  │   (9876)    │  │  (10000)    │  │   (8999)    │        │
-│  │  Network    │  │  Load Bal.  │  │   Web UI    │  │  Injection  │        │
+│  │   Neutron   │  │   Octavia   │  │  Placement  │  │    Swift    │        │
+│  │   (9696)    │  │   (9876)    │  │   (8778)    │  │   (8080)    │        │
+│  │  Network    │  │  Load Bal.  │  │  Capacity   │  │   Object    │        │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
+│         │                │                │                │                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ CloudKitty  │  │    OIDC     │  │   Status    │  │  Scenarios  │        │
+│  │   (8889)    │  │   (5556)    │  │  (10000)    │  │   (8999)    │        │
+│  │   Rating    │  │  OpenID P.  │  │   Web UI    │  │  Injection  │        │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
 │         │                │                │                │                │
 │         └────────────────┴────────────────┴────────────────┘                │
@@ -45,6 +51,9 @@ The OpenStack Emulator is a lightweight implementation of OpenStack APIs designe
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load balancer service |
 | Placement | 8778 | Resource provider / capacity tracking service |
+| Swift | 8080 | Object storage service |
+| OIDC | 5556 | Embedded OpenID Provider, for federation tests |
+| CloudKitty | 8889 | Rating service |
 
 ### Management Services
 

@@ -79,12 +79,16 @@ curl -s http://localhost:8776/openapi.json > "$PROJECT_ROOT/specs/emulator/cinde
 curl -s http://localhost:9292/openapi.json > "$PROJECT_ROOT/specs/emulator/glance.json"
 curl -s http://localhost:9696/openapi.json > "$PROJECT_ROOT/specs/emulator/neutron.json"
 curl -s http://localhost:9876/openapi.json > "$PROJECT_ROOT/specs/emulator/octavia.json"
+curl -s http://localhost:8080/openapi.json > "$PROJECT_ROOT/specs/emulator/swift.json"
+curl -s http://localhost:8889/openapi.json > "$PROJECT_ROOT/specs/emulator/cloudkitty.json"
 
 # Run comparisons
 echo "Running API comparisons..."
 
 # Define service mappings using a more portable approach
-services="keystone nova cinder glance neutron octavia"
+# CloudKitty is deliberately absent: the reference spec collection has no
+# rating/ service, so there is nothing to compare its export against.
+services="keystone nova cinder glance neutron octavia swift"
 for service in $services; do
     case $service in
         keystone) reference_file="identity/v3.14.yaml" ;;
@@ -93,6 +97,7 @@ for service in $services; do
         glance) reference_file="image/v2.16.yaml" ;;
         neutron) reference_file="network/v2.27.yaml" ;;
         octavia) reference_file="load-balancer/v2.27.yaml" ;;
+        swift) reference_file="object-store/v1.yaml" ;;
         *) continue ;;
     esac
     

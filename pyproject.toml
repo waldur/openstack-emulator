@@ -23,6 +23,12 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "httpx>=0.25.0",
     "pyyaml>=6.0.0",
+    # The embedded OpenID Provider signs RS256 tokens, and Keystone federation
+    # validates bearer tokens issued by external providers against their JWKS.
+    "pyjwt[crypto]>=2.8.0",
+    # The OAuth 2 token endpoint takes form-encoded bodies, which FastAPI parses
+    # through python-multipart.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -30,8 +36,12 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "httpx>=0.25.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
+    # Pinned, not floated. CI installs these extras fresh on every run, so an
+    # unpinned linter silently diverges from whatever a contributor has in their
+    # environment, and the difference only shows up as a red pipeline. Bump
+    # deliberately, and fix whatever the new version reports in the same commit.
+    "ruff==0.16.1",
+    "mypy==2.3.0",
     "openstacksdk>=4.7.1",
 ]
 

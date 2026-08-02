@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 from emulator.core.exceptions import PortInUseError
+from tests.conftest import grant_scope
 
 # Create Nova app for testing
 service_apps = create_all_service_apps()
@@ -287,6 +288,8 @@ class TestInterfaceAttachPortOwnership:
             headers={"X-Auth-Token": admin_token},
         )
         project_id = project_response.json()["project"]["id"]
+        # Scoping needs a real assignment, as it does against a real Keystone.
+        grant_scope(project_id=project_id)
         token_response = keystone_client.post(
             "/v3/auth/tokens",
             json={
@@ -769,6 +772,7 @@ class TestTenantIsolation:
         )
 
         # Get token scoped to the other project
+        grant_scope(project_name="other-project")
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
             json={
@@ -830,6 +834,7 @@ class TestTenantIsolation:
         )
 
         # Get token scoped to the other project
+        grant_scope(project_name="interface-test-project")
         other_token_response = keystone_client.post(
             "/v3/auth/tokens",
             json={

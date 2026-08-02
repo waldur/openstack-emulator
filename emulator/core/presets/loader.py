@@ -79,6 +79,8 @@ class PresetLoader:
             "load_balancers": {},
             "listeners": {},
             "pools": {},
+            "groups": {},
+            "volume_types": {},
         }
 
     def list_available_presets(self) -> list[dict[str, str]]:
@@ -217,6 +219,12 @@ class PresetLoader:
 
             # 6. Octavia resources (load balancers, listeners, pools)
             self._apply_octavia(config.octavia, result)
+
+            # 7. Swift accounts and containers
+            self._apply_swift(config.swift, result)
+
+            # 8. Federation wiring and the embedded OpenID Provider
+            self._apply_federation(config.federation, result)
 
         except Exception as e:
             result.success = False
@@ -396,17 +404,65 @@ class PresetLoader:
         """Apply Keystone resources."""
         count = 0
 
+        for domain_name in config.domains:
+            if self.db.get_domain_by_name(domain_name) is None:
+                self.db.create_domain(name=domain_name)
+                count += 1
+
+        for role_name in config.roles:
+            if self.db.get_role_by_name(role_name) is None:
+                self.db.create_role(name=role_name)
+                count += 1
+
         for project_cfg in config.projects:
             project = self._create_project(project_cfg, result)
             if project:
                 count += 1
                 # Create users for this project
                 for user_cfg in project_cfg.users:
-                    user = self._create_user(user_cfg, project.id, result)
+                    user = self._create_user(
+                        user_cfg, project.id, result, domain_id=project.domain_id
+                    )
                     if user:
                         count += 1
 
+        # Groups come last: their role assignments reference projects created
+        # above, and their members reference users created with them.
+        for group_cfg in config.groups:
+            if self._create_group(group_cfg, result):
+                count += 1
+
         result.resources_created["keystone"] = count
+
+    def _create_group(self, cfg: Any, result: PresetResult) -> Any | None:
+        """Create a group, its memberships and its role assignments."""
+        if cfg.name in self._resource_map["groups"]:
+            return self.db.get_group(self._resource_map["groups"][cfg.name])
+
+        try:
+            domain = self.db.get_domain_by_name(cfg.domain)
+            domain_id = domain.id if domain else cfg.domain
+            group = self.db.create_group(
+                name=cfg.name, domain_id=domain_id, description=cfg.description
+            )
+            self._resource_map["groups"][cfg.name] = group.id
+
+            for user_name in cfg.users:
+                user = self.db.get_user_by_name(user_name, domain_id)
+                if user is not None:
+                    self.db.add_user_to_group(user.id, group.id)
+
+            for assignment in cfg.role_assignments:
+                project = self.db.get_project_by_name(assignment.get("project", ""), domain_id)
+                role = self.db.get_role_by_name(assignment.get("role", ""))
+                if project is not None and role is not None:
+                    self.db.assign_role_to_group_on_project(role.id, group.id, project.id)
+
+            logger.info(f"Created group: {cfg.name} ({group.id})")
+            return group
+        except Exception as e:
+            result.errors.append(f"Failed to create group '{cfg.name}': {e}")
+            return None
 
     def _create_project(self, cfg: ProjectConfig, result: PresetResult) -> Any | None:
         """Create a project from config."""
@@ -416,10 +472,12 @@ class PresetLoader:
             return self.db.get_project(self._resource_map["projects"][cfg.name])
 
         try:
+            domain = self.db.get_domain_by_name(cfg.domain)
             project = self.db.create_project(
                 name=cfg.name,
-                domain_id=cfg.domain,
+                domain_id=domain.id if domain else cfg.domain,
                 description=cfg.description,
+                tags=cfg.tags,
             )
             self._resource_map["projects"][cfg.name] = project.id
             logger.info(f"Created project: {cfg.name} ({project.id})")
@@ -428,8 +486,20 @@ class PresetLoader:
             result.errors.append(f"Failed to create project '{cfg.name}': {e}")
             return None
 
-    def _create_user(self, cfg: Any, project_id: str, result: PresetResult) -> Any | None:
-        """Create a user from config."""
+    def _create_user(
+        self,
+        cfg: Any,
+        project_id: str,
+        result: PresetResult,
+        domain_id: str = "default",
+    ) -> Any | None:
+        """Create a user from config.
+
+        The user is placed in its project's domain rather than the default one:
+        a user and the project it holds a role on have to be reachable from the
+        same domain, and a federated mapping that names a domain resolves the
+        account there.
+        """
         # Skip if already exists
         if cfg.name in self._resource_map["users"]:
             logger.debug(f"User '{cfg.name}' already exists, skipping")
@@ -439,6 +509,7 @@ class PresetLoader:
             user = self.db.create_user(
                 name=cfg.name,
                 password=cfg.password,
+                domain_id=domain_id,
                 email=cfg.email or f"{cfg.name}@example.com",
                 default_project_id=project_id,
             )
@@ -816,6 +887,19 @@ class PresetLoader:
         """Apply Cinder resources."""
         count = 0
 
+        # Volume types come first: per-volume-type quota keys are validated
+        # against them, and volumes may reference them by name.
+        for vtype_cfg in config.volume_types:
+            if self.db.get_volume_type_by_name(vtype_cfg.name) is None:
+                vtype = self.db.create_volume_type(
+                    name=vtype_cfg.name,
+                    description=vtype_cfg.description,
+                    is_public=vtype_cfg.is_public,
+                    extra_specs=vtype_cfg.extra_specs,
+                )
+                self._resource_map["volume_types"][vtype_cfg.name] = vtype.id
+                count += 1
+
         # Create volumes
         for volume_cfg in config.volumes:
             volume = self._create_volume(volume_cfg, result)
@@ -894,6 +978,85 @@ class PresetLoader:
         except Exception as e:
             result.errors.append(f"Failed to create snapshot '{cfg.name}': {e}")
             return None
+
+    def _apply_swift(self, config: Any, result: PresetResult) -> None:
+        """Apply Swift accounts, their quotas, and containers."""
+        count = 0
+
+        for account_cfg in config.accounts:
+            project_id = self._resource_map["projects"].get(account_cfg.project)
+            if project_id is None:
+                result.errors.append(
+                    f"Swift account references unknown project '{account_cfg.project}'"
+                )
+                continue
+            sysmeta = {}
+            if account_cfg.quota_bytes is not None:
+                sysmeta["quota-bytes"] = str(account_cfg.quota_bytes)
+            if account_cfg.quota_count is not None:
+                sysmeta["quota-count"] = str(account_cfg.quota_count)
+            self.db.update_swift_account(
+                f"AUTH_{project_id}", metadata=account_cfg.metadata, sysmeta=sysmeta
+            )
+            count += 1
+
+        for container_cfg in config.containers:
+            project_id = self._resource_map["projects"].get(container_cfg.project or "")
+            if project_id is None:
+                result.errors.append(
+                    f"Swift container references unknown project '{container_cfg.project}'"
+                )
+                continue
+            self.db.create_swift_container(f"AUTH_{project_id}", container_cfg.name)
+            count += 1
+
+        result.resources_created["swift"] = count
+
+    def _apply_federation(self, config: Any, result: PresetResult) -> None:
+        """Apply federation wiring and seed the embedded OpenID Provider."""
+        count = 0
+
+        for idp_cfg in config.identity_providers:
+            domain = self.db.get_domain_by_name(idp_cfg.domain)
+            self.db.create_identity_provider(
+                idp_id=idp_cfg.id,
+                description=idp_cfg.description,
+                enabled=idp_cfg.enabled,
+                remote_ids=idp_cfg.remote_ids,
+                domain_id=domain.id if domain else idp_cfg.domain,
+            )
+            count += 1
+
+        for mapping_cfg in config.mappings:
+            self.db.create_federation_mapping(mapping_id=mapping_cfg.id, rules=mapping_cfg.rules)
+            count += 1
+
+        for protocol_cfg in config.protocols:
+            self.db.create_federation_protocol(
+                protocol_cfg.identity_provider, protocol_cfg.id, protocol_cfg.mapping
+            )
+            count += 1
+
+        for client_cfg in config.oidc_clients:
+            self.db.create_oidc_client(
+                client_id=client_cfg.client_id,
+                client_secret=client_cfg.client_secret,
+                redirect_uris=client_cfg.redirect_uris,
+            )
+            count += 1
+
+        for user_cfg in config.oidc_users:
+            self.db.create_oidc_user(
+                username=user_cfg.username,
+                password=user_cfg.password,
+                email=user_cfg.email,
+                name=user_cfg.name,
+                groups=user_cfg.groups,
+                claims=user_cfg.claims,
+            )
+            count += 1
+
+        result.resources_created["federation"] = count
 
     def _apply_octavia(self, config: OctaviaConfig, result: PresetResult) -> None:
         """Apply Octavia resources."""

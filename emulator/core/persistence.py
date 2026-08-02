@@ -60,6 +60,8 @@ from emulator.core.models import (
     NeutronQuota,
     NovaQuota,
     OctaviaQuota,
+    OidcClient,
+    OidcUser,
     PolicyDocument,
     Pool,
     PoolMember,
@@ -83,8 +85,12 @@ from emulator.core.models import (
     ServerVolumeAttachment,
     Service,
     ServiceProfile,
+    ServiceProvider,
     Snapshot,
     Subnet,
+    SwiftAccount,
+    SwiftContainer,
+    SwiftObject,
     Trunk,
     User,
     Volume,
@@ -240,6 +246,7 @@ PERSISTED: tuple[Collection, ...] = (
     _c("_keypairs", Keypair),
     _c("_server_groups", ServerGroup),
     _c("_nova_quotas", NovaQuota),
+    _c("_nova_quota_classes", NovaQuota),
     _c("_server_volume_attachments", ServerVolumeAttachment, Shape.DICT_OF_LIST),
     _c("_server_network_interfaces", ServerNetworkInterface, Shape.DICT_OF_LIST),
     _c("_server_consoles", ServerConsole, Shape.DICT_OF_LIST),
@@ -262,6 +269,7 @@ PERSISTED: tuple[Collection, ...] = (
     _c("_identity_providers", IdentityProvider),
     _c("_federation_protocols", FederationProtocol),
     _c("_federation_mappings", FederationMapping),
+    _c("_service_providers", ServiceProvider),
     _c("_registered_limits", RegisteredLimit),
     # Cinder
     _c("_volumes", Volume),
@@ -269,6 +277,15 @@ PERSISTED: tuple[Collection, ...] = (
     _c("_volume_types", VolumeType),
     _c("_qos_specs", QosSpec),
     _c("_cinder_quotas", CinderQuota),
+    _c("_cinder_quota_classes", CinderQuota),
+    # OpenID Provider. Authorization codes are session state and deliberately
+    # transient, like tokens.
+    _c("_oidc_clients", OidcClient),
+    _c("_oidc_users", OidcUser),
+    # Swift
+    _c("_swift_accounts", SwiftAccount),
+    _c("_swift_containers", SwiftContainer),
+    _c("_swift_objects", SwiftObject),
     _c("_volume_transfers", VolumeTransfer),
     _c("_volume_backups", VolumeBackup),
     _c("_consistency_groups", ConsistencyGroup),
@@ -325,13 +342,13 @@ PERSISTED_SCALARS: tuple[str, ...] = (
     "_default_project_name",
     "_default_user_id",
     "_default_user_name",
-    "_admin_role_id",
 )
 
 #: Deliberately not written, with the reason. The coverage test requires every
 #: ``Database`` attribute to appear here or in ``PERSISTED``/``PERSISTED_SCALARS``,
 #: so a new collection cannot be added without making this choice.
 NOT_PERSISTED: dict[str, str] = {
+    "_oidc_codes": "short-lived authorization codes; session state",
     "_lock": "threading primitive",
     "_load_degraded": "bookkeeping for the current process",
     "_backup_done": "bookkeeping for the current process",

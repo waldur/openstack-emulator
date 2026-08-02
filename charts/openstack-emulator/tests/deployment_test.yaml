@@ -152,7 +152,7 @@ tests:
             path: /health
             port: keystone
 
-  - it: declares all nine emulator ports with stable names
+  - it: declares all twelve emulator ports with stable names
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -163,6 +163,15 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].ports
           content: { name: cinder, containerPort: 8776, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: swift, containerPort: 8080, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: oidc, containerPort: 5556, protocol: TCP }
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: { name: cloudkitty, containerPort: 8889, protocol: TCP }
       - contains:
           path: spec.template.spec.containers[0].ports
           content: { name: placement, containerPort: 8778, protocol: TCP }

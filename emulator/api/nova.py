@@ -11,6 +11,7 @@ from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     PortInUseError,
+    PortNotFoundError,
 )
 from emulator.core.models import Server
 from emulator.core.simple_auth import TokenInfo, validate_token_simple
@@ -185,6 +186,49 @@ async def get_version_v21(request: Request) -> dict[str, Any]:
 
 
 # Server endpoints
+_FALSE_VALUES = {"0", "f", "false", "off", "n", "no"}
+
+
+def _is_true(value: str | None) -> bool:
+    """Interpret a boolean query parameter the way Nova does.
+
+    A bare ``?all_tenants`` (no value) means True; an explicit falsy spelling
+    means False.
+    """
+    if value is None:
+        return False
+    if value == "":
+        return True
+    return value.strip().lower() not in _FALSE_VALUES
+
+
+def _resolve_server_scope(request: Request, token: TokenInfo) -> str | None:
+    """Resolve which project a server listing should be filtered to.
+
+    Returns the project id to filter on, or None for "every project".
+
+    Mirrors ``ServersController._get_servers`` in Nova: ``all_tenants`` is the
+    only thing that widens the scope. Without it Nova drops any ``tenant_id``
+    filter outright and forces ``project_id`` to the caller's own project, so a
+    ``project_id``/``tenant_id`` filter on its own never crosses a project
+    boundary — including for an admin. Reproduced faithfully, because the
+    openstacksdk ``compute.servers(project_id=...)`` call sends exactly that
+    filter without ``all_tenants`` and really does get the caller's own servers
+    back from a real Nova; being permissive here would hide the bug rather than
+    surface it.
+
+    ``all_tenants`` itself is admin-only (Nova guards it with a policy check),
+    hence the 403 rather than a silent narrowing.
+    """
+    params = request.query_params
+    if not _is_true(params.get("all_tenants")):
+        return token.project_id
+    if not token.is_admin:
+        raise HTTPException(status_code=403, detail="Policy doesn't allow to be performed.")
+    # ``tenant_id`` is Nova's deprecated alias for ``project_id``.
+    return params.get("project_id") or params.get("tenant_id")
+
+
 @router.get("/v2.1/servers")
 async def list_servers(
     request: Request,
@@ -199,8 +243,7 @@ async def list_servers(
     """List servers (basic info)."""
     token = get_token_or_raise(x_auth_token)
 
-    all_tenants = request.query_params.get("all_tenants")
-    tenant_id = None if (token.is_admin and all_tenants) else token.project_id
+    tenant_id = _resolve_server_scope(request, token)
 
     servers = db.list_servers(
         tenant_id=tenant_id,
@@ -232,8 +275,7 @@ async def list_servers_detail(
     """List servers (detailed info)."""
     token = get_token_or_raise(x_auth_token)
 
-    all_tenants = request.query_params.get("all_tenants")
-    tenant_id = None if (token.is_admin and all_tenants) else token.project_id
+    tenant_id = _resolve_server_scope(request, token)
 
     servers = db.list_servers(
         tenant_id=tenant_id,
@@ -277,19 +319,24 @@ async def create_server(
     if req.networks:
         networks = [{"uuid": n.uuid, "port": n.port, "fixed_ip": n.fixed_ip} for n in req.networks]
 
-    server = db.create_server(
-        name=req.name,
-        flavor_id=req.flavorRef,
-        image_id=req.imageRef or "",
-        tenant_id=token.project_id,
-        user_id=token.user_id,
-        key_name=req.key_name,
-        metadata=req.metadata,
-        security_groups=req.security_groups,
-        availability_zone=req.availability_zone or "nova",
-        networks=networks,
-        config_drive=req.config_drive,
-    )
+    try:
+        server = db.create_server(
+            name=req.name,
+            flavor_id=req.flavorRef,
+            image_id=req.imageRef or "",
+            tenant_id=token.project_id,
+            user_id=token.user_id,
+            key_name=req.key_name,
+            metadata=req.metadata,
+            security_groups=req.security_groups,
+            availability_zone=req.availability_zone or "nova",
+            networks=networks,
+            config_drive=req.config_drive,
+        )
+    except PortNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PortInUseError as exc:
+        raise HTTPException(status_code=400, detail=f"Port {exc.port_id} is still in use.") from exc
 
     # Return response with admin password
     response_data = server.to_dict(detailed=False)
@@ -1088,45 +1135,46 @@ async def get_quota_set_detail(
     quota = db.get_nova_quota(tenant_id)
     usage = db.get_nova_quota_usage(tenant_id)
 
-    detail = {
-        "id": tenant_id,
-        "instances": {
-            "limit": quota.instances,
-            "in_use": usage.get("instances", 0),
-            "reserved": 0,
-        },
-        "cores": {"limit": quota.cores, "in_use": usage.get("cores", 0), "reserved": 0},
-        "ram": {"limit": quota.ram, "in_use": usage.get("ram", 0), "reserved": 0},
-        "metadata_items": {"limit": quota.metadata_items, "in_use": 0, "reserved": 0},
-        "injected_files": {"limit": quota.injected_files, "in_use": 0, "reserved": 0},
-        "injected_file_content_bytes": {
-            "limit": quota.injected_file_content_bytes,
-            "in_use": 0,
-            "reserved": 0,
-        },
-        "injected_file_path_bytes": {
-            "limit": quota.injected_file_path_bytes,
-            "in_use": 0,
-            "reserved": 0,
-        },
-        "key_pairs": {
-            "limit": quota.key_pairs,
-            "in_use": usage.get("key_pairs", 0),
-            "reserved": 0,
-        },
-        "server_groups": {
-            "limit": quota.server_groups,
-            "in_use": usage.get("server_groups", 0),
-            "reserved": 0,
-        },
-        "server_group_members": {
-            "limit": quota.server_group_members,
-            "in_use": 0,
-            "reserved": 0,
-        },
+    # Derived from the quota's own key set rather than a fixed list, so a limit
+    # added to NovaQuota shows up here without further wiring. Metrics Nova does
+    # not meter (injected files, metadata items) report zero usage.
+    detail: dict[str, Any] = {
+        key: {"limit": limit, "in_use": usage.get(key, 0), "reserved": 0}
+        for key, limit in quota.limits().items()
     }
 
-    return {"quota_set": detail}
+    return {"quota_set": {"id": tenant_id, **detail}}
+
+
+@router.get("/v2.1/os-quota-class-sets/{quota_class_name}")
+async def get_quota_class_set(
+    quota_class_name: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get the compute limits a quota class hands to new projects."""
+    get_token_or_raise(x_auth_token)
+
+    quota = db.get_nova_quota_class(quota_class_name)
+    return {"quota_class_set": {**quota.limits(), "id": quota_class_name}}
+
+
+@router.put("/v2.1/os-quota-class-sets/{quota_class_name}")
+async def update_quota_class_set(
+    quota_class_name: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Update the compute limits a quota class hands to new projects."""
+    get_token_or_raise(x_auth_token)
+
+    body = await request.json()
+    limits = {
+        key: value
+        for key, value in body.get("quota_class_set", {}).items()
+        if key not in {"id", "project_id"}
+    }
+    quota = db.update_nova_quota_class(quota_class_name, limits)
+    return {"quota_class_set": {**quota.limits(), "id": quota_class_name}}
 
 
 @router.put("/v2.1/os-quota-sets/{tenant_id}")

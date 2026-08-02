@@ -9,13 +9,15 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from emulator.core import persistence
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     PortInUseError,
+    PortNotFoundError,
+    ScopeUnauthorizedError,
 )
 from emulator.core.models import (
     AllocationPool,
@@ -75,6 +77,9 @@ from emulator.core.models import (
     NovaExtension,
     NovaQuota,
     OctaviaQuota,
+    OidcAuthorizationCode,
+    OidcClient,
+    OidcUser,
     PolicyDocument,
     Pool,
     PoolLBAlgorithm,
@@ -107,9 +112,13 @@ from emulator.core.models import (
     ServerVolumeAttachment,
     Service,
     ServiceProfile,
+    ServiceProvider,
     Snapshot,
     SnapshotStatus,
     Subnet,
+    SwiftAccount,
+    SwiftContainer,
+    SwiftObject,
     TaskStatus,
     TaskType,
     Token,
@@ -192,6 +201,24 @@ class Database:
         self._nova_quotas: dict[str, NovaQuota] = {}
         self._neutron_quotas: dict[str, NeutronQuota] = {}
         self._cinder_quotas: dict[str, CinderQuota] = {}
+        # Quota classes hold the limits new projects inherit, keyed by class name
+        # ("default" is the only one most deployments ever use).
+        self._cinder_quota_classes: dict[str, CinderQuota] = {}
+        self._nova_quota_classes: dict[str, NovaQuota] = {}
+
+        self._service_providers: dict[str, ServiceProvider] = {}
+
+        # Storage dictionaries - embedded OpenID Provider
+        self._oidc_clients: dict[str, OidcClient] = {}
+        self._oidc_users: dict[str, OidcUser] = {}
+        self._oidc_codes: dict[str, OidcAuthorizationCode] = {}
+
+        # Storage dictionaries - Swift object storage. Containers and objects
+        # are keyed by their full path so a name is only unique within its
+        # parent, as in Swift.
+        self._swift_accounts: dict[str, SwiftAccount] = {}
+        self._swift_containers: dict[str, SwiftContainer] = {}
+        self._swift_objects: dict[str, SwiftObject] = {}
 
         # Storage dictionaries - RBAC Policies
         self._rbac_policies: dict[str, RbacPolicy] = {}
@@ -422,7 +449,6 @@ class Database:
         self._roles[member_underscore_role.id] = member_underscore_role
         self._roles[reader_role.id] = reader_role
         self._roles[manager_role.id] = manager_role
-        self._admin_role_id = admin_role.id
 
         # Assign admin role to admin user on admin project
         self._role_assignments.append(
@@ -485,12 +511,34 @@ class Database:
         )
         self._services[volume_service.id] = volume_service
 
+        # Object Storage service (Swift)
+        object_store_service = Service(
+            id=str(uuid4()),
+            name="swift",
+            type="object-store",
+            description="OpenStack Object Storage Service",
+            enabled=True,
+        )
+        self._services[object_store_service.id] = object_store_service
+
+        # Rating service (CloudKitty)
+        rating_service = Service(
+            id=str(uuid4()),
+            name="cloudkitty",
+            type="rating",
+            description="OpenStack Rating Service",
+            enabled=True,
+        )
+        self._services[rating_service.id] = rating_service
+
         # Store service IDs for catalog generation
         self._service_ids = {
             "identity": identity_service.id,
             "compute": compute_service.id,
             "image": image_service.id,
             "volumev3": volume_service.id,
+            "object-store": object_store_service.id,
+            "rating": rating_service.id,
         }
 
     def _init_default_volume_types(self) -> None:
@@ -543,15 +591,50 @@ class Database:
         base_url: str = "http://localhost:8774",
         domain_id: str = "default",
         project_id: str | None = None,
+        user_id: str | None = None,
+        methods: list[str] | None = None,
+        unscoped: bool = False,
+        is_federated: bool = False,
+        idp_id: str = "",
+        protocol_id: str = "",
+        groups: list[str] | None = None,
+        roles: list[dict[str, str]] | None = None,
     ) -> Token:
-        """Create a new authentication token."""
+        """Create a new authentication token.
+
+        Args:
+            user_name: Name of the authenticating user.
+            project_name: Name of the project to scope to.
+            base_url: Request base URL, used to build the service catalog.
+            domain_id: Domain the user (and project) belong to.
+            project_id: Project id to scope to; takes precedence over the name.
+            user_id: User id to scope to; takes precedence over the name.
+            methods: Authentication methods recorded on the token.
+            unscoped: Issue a token with no project and no catalog.
+            is_federated: Mark the token as produced by OS-FEDERATION.
+            idp_id: Identity provider that authenticated the user.
+            protocol_id: Federation protocol used.
+            groups: Federated group ids mapped for this user.
+            roles: Authoritative role list, overriding what the user holds on the
+                project. Used by application credentials, whose role list is a
+                deliberately narrowed subset.
+        """
         with self._lock:
-            # Find user by name and domain
-            user = self.get_user_by_name(user_name, domain_id)
+            # Find user by id when given (federated rescoping knows the exact
+            # user), otherwise by name and domain.
+            user = self._users.get(user_id) if user_id else None
             if not user:
-                # Create a temporary user record for testing
+                user = self.get_user_by_name(user_name, domain_id)
+            if not user:
+                # A name nobody registered still authenticates — the emulator
+                # cannot check passwords — but it must not become somebody else.
+                # This used to hand back _default_user_id, which is the seeded
+                # admin's id, so any unrecognised name inherited the admin's
+                # role assignments and could scope anywhere they could. The
+                # identity is now derived from the name, so it is stable across
+                # calls and holds no assignments until something grants one.
                 user = User(
-                    id=self._default_user_id,
+                    id=str(uuid5(NAMESPACE_DNS, f"{domain_id}:{user_name}")),
                     name=user_name,
                     domain_id=domain_id,
                 )
@@ -561,11 +644,13 @@ class Database:
             # back to a name lookup, which would wrongly attribute the token to
             # the admin project); otherwise resolve by name.
             project = None
-            if project_id:
+            if unscoped:
+                project = None
+            elif project_id:
                 project = self.get_project(project_id)
             else:
                 project = self.get_project_by_name(project_name, domain_id)
-            if not project:
+            if not project and not unscoped:
                 # Synthesize a project, preserving the requested id if any so the
                 # token stays consistent with the scope the client asked for.
                 # An unnamed scope gets a name derived from the id rather than
@@ -577,11 +662,24 @@ class Database:
                     domain_id=domain_id,
                 )
 
-            # Get user's roles on this project
-            roles = self.get_user_roles_on_project(user.id, project.id)
-            if not roles:
-                # Default to admin role for testing
-                roles = [{"id": self._admin_role_id, "name": "admin"}]
+            # Roles the user genuinely holds on this project. Keep these apart
+            # from the fallback below: only real assignments confer privilege.
+            explicit_roles = self.get_user_roles_on_project(user.id, project.id) if project else []
+            if roles is not None:
+                explicit_roles = list(roles)
+            token_roles = list(explicit_roles)
+            if not token_roles and not unscoped:
+                # Keystone will not mint a scoped token that would carry no
+                # roles: TokenModel.mint calls _validate_project_scope, which
+                # raises Unauthorized. Reproduced so that a client scoping to a
+                # project it was never granted fails here the way it would fail
+                # against a real cloud, instead of quietly receiving a usable
+                # token.
+                raise ScopeUnauthorizedError(user.id, project.id if project else "")
+
+            is_admin = (project.name or "").lower() == "admin" if project else False
+            if any(role["name"].lower() == "admin" for role in explicit_roles):
+                is_admin = True
 
             # Get domain info
             domain = self._domains.get(domain_id, self._default_domain)
@@ -590,14 +688,23 @@ class Database:
                 id=str(uuid4()),
                 user_id=user.id,
                 user_name=user.name,
-                project_id=project.id,
-                project_name=project.name,
+                project_id=project.id if project else "",
+                project_name=project.name if project else "",
                 domain_id=domain.id,
                 domain_name=domain.name,
-                roles=roles,
+                roles=token_roles,
                 issued_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                catalog=self._generate_service_catalog(base_url, project.id),
+                catalog=(
+                    [] if project is None else self._generate_service_catalog(base_url, project.id)
+                ),
+                methods=methods or ["password"],
+                is_admin=is_admin,
+                unscoped=unscoped,
+                is_federated=is_federated,
+                idp_id=idp_id,
+                protocol_id=protocol_id,
+                groups=list(groups or []),
             )
             logger.info("Storing token in database: %s for user %s", token.id, user.name)
             self._tokens[token.id] = token
@@ -667,6 +774,8 @@ class Database:
         neutron_url = f"{scheme}://{host}:9696"
         octavia_url = f"{scheme}://{host}:9876"
         placement_url = f"{scheme}://{host}:8778"
+        swift_url = f"{scheme}://{host}:8080"
+        rating_url = f"{scheme}://{host}:8889"
 
         return [
             {
@@ -816,6 +925,52 @@ class Database:
                     },
                 ],
             },
+            {
+                "type": "rating",
+                "name": "cloudkitty",
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{rating_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{rating_url}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{rating_url}",
+                    },
+                ],
+            },
+            {
+                "type": "object-store",
+                "name": "swift",
+                # The account segment is part of the endpoint, so a client that
+                # follows the catalog addresses its own AUTH_<project> account
+                # and nothing else — the same reason a Swift quota can only be
+                # set on the account the storage URL points at.
+                "endpoints": [
+                    {
+                        "region": "RegionOne",
+                        "interface": "public",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "internal",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
+                    },
+                    {
+                        "region": "RegionOne",
+                        "interface": "admin",
+                        "url": f"{swift_url}/v1/AUTH_{project_id}",
+                    },
+                ],
+            },
         ]
 
     # Server operations
@@ -856,9 +1011,15 @@ class Database:
                 progress=0,
             )
 
-            # Simulate network assignment
+            # Bind the requested networks/ports for real. Nova allocates a port
+            # per network request and stamps it with the instance, so anything
+            # that follows a server's ports by device_id depends on this having
+            # happened; synthesising addresses alone left every such lookup
+            # empty. Done before the server is registered so a bad request
+            # leaves nothing behind.
             if networks:
-                server.addresses = self._generate_addresses(networks)
+                interfaces = self._bind_server_networks(server_id, server, networks)
+                server.addresses = self._addresses_from_interfaces(interfaces)
             else:
                 # Default network
                 server.addresses = {
@@ -891,6 +1052,84 @@ class Database:
             server.progress = 100
             server.launched_at = datetime.now(timezone.utc)
             server.updated = datetime.now(timezone.utc)
+
+    def _bind_server_networks(
+        self, server_id: str, server: Server, networks: list[dict[str, Any]]
+    ) -> list[ServerNetworkInterface]:
+        """Allocate and bind a port for each network request on a server.
+
+        Mirrors Nova's allocate_for_instance: a request naming a ``port`` binds
+        that existing port, and a request naming a network ``uuid`` has Nova
+        create the port first (and own it, so it is deleted rather than unbound
+        when the interface goes away). Either way the port ends up carrying
+        ``device_id`` and ``device_owner``, which is what makes
+        ``list_ports(device_id=<server>)`` and ``os-interface`` agree with
+        reality.
+
+        Raises:
+            PortNotFoundError: A requested port or network does not exist.
+            PortInUseError: A requested port is already bound to a device.
+        """
+        interfaces: list[ServerNetworkInterface] = []
+        for request in networks:
+            port_id = request.get("port")
+            network_id = request.get("uuid")
+
+            if port_id:
+                port = self._ports.get(port_id)
+                if port is None:
+                    raise PortNotFoundError(port_id)
+                nova_created = False
+            elif network_id:
+                if network_id not in self._networks:
+                    raise PortNotFoundError(network_id)
+                fixed_ips = (
+                    [{"ip_address": request["fixed_ip"]}] if request.get("fixed_ip") else None
+                )
+                port = self.create_port(
+                    network_id=network_id,
+                    project_id=server.tenant_id,
+                    fixed_ips=fixed_ips,
+                    validate_fixed_ips=bool(fixed_ips),
+                )
+                if port is None:
+                    raise PortNotFoundError(network_id)
+                nova_created = True
+            else:
+                continue
+
+            interfaces.append(
+                self.attach_interface_to_server(
+                    server_id,
+                    port,
+                    nova_created=nova_created,
+                    availability_zone=server.availability_zone,
+                )
+            )
+        return interfaces
+
+    def _addresses_from_interfaces(
+        self, interfaces: list[ServerNetworkInterface]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Build the server ``addresses`` map from its bound ports.
+
+        Keyed by network name, as Nova does, rather than by network id.
+        """
+        addresses: dict[str, list[dict[str, Any]]] = {}
+        for interface in interfaces:
+            network = self._networks.get(interface.net_id)
+            key = network.name if network else interface.net_id
+            entries = addresses.setdefault(key, [])
+            for fixed_ip in interface.fixed_ips:
+                entries.append(
+                    {
+                        "addr": fixed_ip.get("ip_address", ""),
+                        "version": 4,
+                        "OS-EXT-IPS:type": "fixed",
+                        "OS-EXT-IPS-MAC:mac_addr": interface.mac_addr,
+                    }
+                )
+        return addresses
 
     def _generate_addresses(
         self, networks: list[dict[str, Any]]
@@ -2053,6 +2292,7 @@ class Database:
         parent_id: str | None = None,
         is_domain: bool = False,
         project_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> Project:
         """Create a new project."""
         with self._lock:
@@ -2065,6 +2305,7 @@ class Database:
                 parent_id=parent_id,
                 enabled=enabled,
                 is_domain=is_domain,
+                tags=list(tags or []),
             )
             self._projects[pid] = project
             if self.auto_save:
@@ -2090,8 +2331,17 @@ class Database:
         enabled: bool | None = None,
         name: str | None = None,
         parent_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_any: list[str] | None = None,
+        not_tags: list[str] | None = None,
+        not_tags_any: list[str] | None = None,
     ) -> list[Project]:
-        """List projects with optional filtering."""
+        """List projects with optional filtering.
+
+        The four tag filters follow the Identity API: ``tags`` matches projects
+        carrying *all* of the given tags, ``tags_any`` at least one, and the
+        ``not_`` variants are their complements.
+        """
         with self._lock:
             projects = list(self._projects.values())
             if domain_id:
@@ -2102,6 +2352,18 @@ class Database:
                 projects = [p for p in projects if name in p.name]
             if parent_id:
                 projects = [p for p in projects if p.parent_id == parent_id]
+            if tags:
+                wanted = set(tags)
+                projects = [p for p in projects if wanted.issubset(set(p.tags))]
+            if tags_any:
+                wanted = set(tags_any)
+                projects = [p for p in projects if wanted & set(p.tags)]
+            if not_tags:
+                unwanted = set(not_tags)
+                projects = [p for p in projects if not unwanted.issubset(set(p.tags))]
+            if not_tags_any:
+                unwanted = set(not_tags_any)
+                projects = [p for p in projects if not (unwanted & set(p.tags))]
             return projects
 
     def update_project(
@@ -2111,6 +2373,7 @@ class Database:
         description: str | None = None,
         enabled: bool | None = None,
         domain_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> Project | None:
         """Update a project."""
         with self._lock:
@@ -2124,9 +2387,34 @@ class Database:
                     project.enabled = enabled
                 if domain_id is not None:
                     project.domain_id = domain_id
+                if tags is not None:
+                    project.tags = list(dict.fromkeys(tags))
                 if self.auto_save:
                     self.save()
             return project
+
+    def add_project_tag(self, project_id: str, tag: str) -> Project | None:
+        """Add a single tag to a project, ignoring duplicates."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None:
+                return None
+            if tag not in project.tags:
+                project.tags.append(tag)
+                if self.auto_save:
+                    self.save()
+            return project
+
+    def delete_project_tag(self, project_id: str, tag: str) -> bool:
+        """Remove a single tag from a project. Returns False when absent."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or tag not in project.tags:
+                return False
+            project.tags.remove(tag)
+            if self.auto_save:
+                self.save()
+            return True
 
     def delete_project(self, project_id: str) -> bool:
         """Delete a project."""
@@ -2967,6 +3255,8 @@ class Database:
             self._snapshots.clear()
             self._volume_types.clear()
             self._qos_specs.clear()
+            self._cinder_quotas.clear()
+            self._cinder_quota_classes.clear()
             self._init_default_volume_types()
 
     # Volume operations
@@ -3060,12 +3350,18 @@ class Database:
         marker: str | None = None,
         all_tenants: bool = False,
     ) -> list[Volume]:
-        """List volumes with optional filtering."""
+        """List volumes with optional filtering.
+
+        ``project_id`` is the resolved scope: the caller decides whether the
+        request may cross a project boundary and passes None for "every
+        project". ``all_tenants`` is kept only so existing callers keep working;
+        it widens the scope but never narrows it.
+        """
         with self._lock:
             volumes = list(self._volumes.values())
 
             # Apply filters
-            if project_id and not all_tenants:
+            if project_id:
                 volumes = [v for v in volumes if v.project_id == project_id]
             if status:
                 volumes = [v for v in volumes if v.status.value == status]
@@ -4383,6 +4679,19 @@ class Database:
                 parts = cidr.split("/")[0].split(".")
                 gateway_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.1"
 
+            # Neutron always gives a subnet an allocation pool, derived from the
+            # CIDR minus the network address and the gateway, so ports created
+            # on it get an address. Without one nothing here ever allocated, and
+            # every port came back with an empty ip_address.
+            if not pools:
+                network_obj = ipaddress.ip_network(cidr, strict=False)
+                hosts = list(network_obj.hosts())
+                if hosts:
+                    first = hosts[0]
+                    if str(first) == gateway_ip and len(hosts) > 1:
+                        first = hosts[1]
+                    pools = [AllocationPool(start=str(first), end=str(hosts[-1]))]
+
             subnet = Subnet(
                 id=str(uuid4()),
                 name=name,
@@ -4569,6 +4878,14 @@ class Database:
                             raise FixedIPAlreadyInUseError(ip_address, network_id)
                         if not subnet_id:
                             subnet_id = subnet.id
+                    if not ip_address and subnet_id:
+                        # Asking for a subnet without naming an address is a
+                        # request for Neutron to pick one; it does not mean "no
+                        # address". This is the shape clients use when they want
+                        # a port on a particular subnet.
+                        subnet = self._subnets.get(subnet_id)
+                        if subnet is not None:
+                            ip_address = self._allocate_ip_from_subnet(subnet) or ""
                     port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip_address))
             else:
                 # Auto-allocate from first subnet
@@ -5600,6 +5917,24 @@ class Database:
                 return True
             return False
 
+    def get_nova_quota_class(self, class_name: str = "default") -> NovaQuota:
+        """Get a Nova quota class, creating it from the defaults if unseen."""
+        with self._lock:
+            if class_name not in self._nova_quota_classes:
+                self._nova_quota_classes[class_name] = NovaQuota(project_id=class_name)
+            return self._nova_quota_classes[class_name]
+
+    def update_nova_quota_class(self, class_name: str, limits: dict[str, int]) -> NovaQuota:
+        """Update a Nova quota class from a flat mapping of limits."""
+        with self._lock:
+            quota = self.get_nova_quota_class(class_name)
+            for key, value in limits.items():
+                if hasattr(quota, key) and key != "project_id":
+                    setattr(quota, key, value)
+            if self.auto_save:
+                self.save()
+            return quota
+
     def get_nova_quota_usage(self, project_id: str) -> dict[str, int]:
         """Get current Nova quota usage for a project."""
         with self._lock:
@@ -5722,8 +6057,15 @@ class Database:
         backups: int | None = None,
         backup_gigabytes: int | None = None,
         groups: int | None = None,
+        per_type: dict[str, int] | None = None,
     ) -> CinderQuota:
-        """Update Cinder quotas for a project."""
+        """Update Cinder quotas for a project.
+
+        Args:
+            per_type: ``<metric>_<volume type>`` limits to merge in. Keys absent
+                from the mapping are left untouched, matching how a Cinder quota
+                update only carries the keys being changed.
+        """
         with self._lock:
             quota = self.get_cinder_quota(project_id)
             if volumes is not None:
@@ -5740,6 +6082,47 @@ class Database:
                 quota.backup_gigabytes = backup_gigabytes
             if groups is not None:
                 quota.groups = groups
+            if per_type:
+                quota.per_type.update(per_type)
+            return quota
+
+    def get_cinder_quota_limits(self, project_id: str) -> dict[str, int]:
+        """Every Cinder quota limit for a project, including per-volume-type keys.
+
+        Cinder derives one quota resource per metric for every volume type that
+        exists, so those keys are always present in a quota set even when they
+        were never set explicitly; they fall back to the corresponding global
+        default. Reproduced here so a client reading a quota set sees the same
+        key set it would from a real Cinder.
+        """
+        with self._lock:
+            quota = self.get_cinder_quota(project_id)
+            limits = quota.limits()
+            for vtype in self._volume_types.values():
+                for metric in CinderQuota.PER_TYPE_METRICS:
+                    key = f"{metric}_{vtype.name}"
+                    if key not in limits:
+                        limits[key] = getattr(quota, metric)
+            return limits
+
+    def get_cinder_quota_class(self, class_name: str = "default") -> CinderQuota:
+        """Get a Cinder quota class, creating it from the defaults if unseen."""
+        with self._lock:
+            if class_name not in self._cinder_quota_classes:
+                self._cinder_quota_classes[class_name] = CinderQuota(project_id=class_name)
+            return self._cinder_quota_classes[class_name]
+
+    def update_cinder_quota_class(self, class_name: str, limits: dict[str, int]) -> CinderQuota:
+        """Update a Cinder quota class from a flat mapping of limits."""
+        with self._lock:
+            quota = self.get_cinder_quota_class(class_name)
+            for key, value in limits.items():
+                if hasattr(quota, key) and key != "project_id":
+                    setattr(quota, key, value)
+                else:
+                    quota.per_type[key] = value
+            if self.auto_save:
+                self.save()
             return quota
 
     def delete_cinder_quota(self, project_id: str) -> bool:
@@ -5751,13 +6134,18 @@ class Database:
             return False
 
     def get_cinder_quota_usage(self, project_id: str) -> dict[str, int]:
-        """Get current Cinder quota usage for a project."""
+        """Get current Cinder quota usage for a project.
+
+        Includes the ``<metric>_<volume type>`` keys alongside the totals, so a
+        quota set requested with ``usage=true`` can report per-volume-type
+        consumption the same way Cinder does.
+        """
         with self._lock:
             volumes = [v for v in self._volumes.values() if v.project_id == project_id]
             snapshots = [s for s in self._snapshots.values() if s.project_id == project_id]
             total_gigabytes = sum(v.size for v in volumes)
 
-            return {
+            usage = {
                 "volumes": len(volumes),
                 "snapshots": len(snapshots),
                 "gigabytes": total_gigabytes,
@@ -5765,6 +6153,348 @@ class Database:
                 "backup_gigabytes": 0,
                 "groups": 0,
             }
+
+            volumes_by_id = {v.id: v for v in volumes}
+            for vtype in self._volume_types.values():
+                typed = [v for v in volumes if v.volume_type == vtype.name]
+                typed_snapshots = [
+                    s
+                    for s in snapshots
+                    if volumes_by_id.get(s.volume_id) is not None
+                    and volumes_by_id[s.volume_id].volume_type == vtype.name
+                ]
+                usage[f"volumes_{vtype.name}"] = len(typed)
+                usage[f"gigabytes_{vtype.name}"] = sum(v.size for v in typed)
+                usage[f"snapshots_{vtype.name}"] = len(typed_snapshots)
+
+            return usage
+
+    # ==================== OpenID Provider Operations ====================
+
+    def create_oidc_client(
+        self,
+        client_id: str,
+        client_secret: str = "",
+        redirect_uris: list[str] | None = None,
+        grant_types: list[str] | None = None,
+    ) -> OidcClient:
+        """Register a relying party with the embedded OpenID Provider."""
+        with self._lock:
+            client = OidcClient(
+                client_id=client_id,
+                client_secret=client_secret,
+                redirect_uris=list(redirect_uris or []),
+                **({"grant_types": list(grant_types)} if grant_types else {}),
+            )
+            self._oidc_clients[client_id] = client
+            if self.auto_save:
+                self.save()
+            return client
+
+    def get_oidc_client(self, client_id: str) -> OidcClient | None:
+        """Get a registered relying party."""
+        with self._lock:
+            return self._oidc_clients.get(client_id)
+
+    def create_oidc_user(
+        self,
+        username: str,
+        password: str = "",
+        email: str = "",
+        name: str = "",
+        groups: list[str] | None = None,
+        claims: dict[str, str] | None = None,
+        subject: str | None = None,
+    ) -> OidcUser:
+        """Create an end user the OpenID Provider can authenticate."""
+        with self._lock:
+            user = OidcUser(
+                username=username,
+                password=password,
+                email=email,
+                name=name,
+                groups=list(groups or []),
+                claims=dict(claims or {}),
+                **({"subject": subject} if subject else {}),
+            )
+            self._oidc_users[username] = user
+            if self.auto_save:
+                self.save()
+            return user
+
+    def get_oidc_user(self, username: str) -> OidcUser | None:
+        """Get an OpenID Provider end user by username."""
+        with self._lock:
+            return self._oidc_users.get(username)
+
+    def list_oidc_clients(self) -> list[OidcClient]:
+        """List registered relying parties."""
+        with self._lock:
+            return sorted(self._oidc_clients.values(), key=lambda c: c.client_id)
+
+    def list_oidc_users(self) -> list[OidcUser]:
+        """List the end users the OpenID Provider can authenticate."""
+        with self._lock:
+            return sorted(self._oidc_users.values(), key=lambda u: u.username)
+
+    def list_all_federation_protocols(self) -> list[FederationProtocol]:
+        """List protocols across every identity provider."""
+        with self._lock:
+            return sorted(
+                self._federation_protocols.values(),
+                key=lambda p: (p.identity_provider_id, p.id),
+            )
+
+    def get_oidc_user_by_subject(self, subject: str) -> OidcUser | None:
+        """Get an OpenID Provider end user by its stable subject identifier."""
+        with self._lock:
+            for user in self._oidc_users.values():
+                if user.subject == subject:
+                    return user
+            return None
+
+    def create_oidc_code(
+        self, client_id: str, username: str, redirect_uri: str, scope: str
+    ) -> OidcAuthorizationCode:
+        """Issue a short-lived authorization code."""
+        with self._lock:
+            record = OidcAuthorizationCode(
+                client_id=client_id,
+                username=username,
+                redirect_uri=redirect_uri,
+                scope=scope,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            self._oidc_codes[record.code] = record
+            return record
+
+    def consume_oidc_code(self, code: str) -> OidcAuthorizationCode | None:
+        """Redeem an authorization code. Codes are single use, as in OAuth 2."""
+        with self._lock:
+            record = self._oidc_codes.pop(code, None)
+            if record is None:
+                return None
+            if record.expires_at and record.expires_at <= datetime.now(timezone.utc):
+                return None
+            return record
+
+    def reset_oidc(self) -> None:
+        """Reset all OpenID Provider data."""
+        with self._lock:
+            self._oidc_clients.clear()
+            self._oidc_users.clear()
+            self._oidc_codes.clear()
+
+    # ==================== Swift Object Storage Operations ====================
+
+    @staticmethod
+    def _container_key(account: str, container: str) -> str:
+        return f"{account}/{container}"
+
+    @staticmethod
+    def _object_key(account: str, container: str, name: str) -> str:
+        return f"{account}/{container}/{name}"
+
+    def get_swift_account(self, account: str, create: bool = True) -> SwiftAccount | None:
+        """Get a Swift account, optionally creating it on first reference.
+
+        Swift auto-creates an account the first time an authenticated request
+        touches it, so ``create`` defaults to True.
+        """
+        with self._lock:
+            existing = self._swift_accounts.get(account)
+            if existing is not None:
+                return existing
+            if not create:
+                return None
+            project_id = account[len("AUTH_") :] if account.startswith("AUTH_") else account
+            record = SwiftAccount(name=account, project_id=project_id)
+            self._swift_accounts[account] = record
+            if self.auto_save:
+                self.save()
+            return record
+
+    def update_swift_account(
+        self,
+        account: str,
+        metadata: dict[str, str] | None = None,
+        sysmeta: dict[str, str] | None = None,
+    ) -> SwiftAccount:
+        """Merge metadata into a Swift account.
+
+        An empty value removes the key, matching how Swift treats a metadata
+        header sent with an empty body.
+        """
+        with self._lock:
+            record = self.get_swift_account(account)
+            assert record is not None  # noqa: S101 - create=True never returns None
+            for source, target in ((metadata, record.metadata), (sysmeta, record.sysmeta)):
+                for key, value in (source or {}).items():
+                    if value == "":
+                        target.pop(key, None)
+                    else:
+                        target[key] = value
+            if self.auto_save:
+                self.save()
+            return record
+
+    def list_swift_accounts(self) -> list[SwiftAccount]:
+        """List every Swift account the emulator has seen."""
+        with self._lock:
+            return sorted(self._swift_accounts.values(), key=lambda a: a.name)
+
+    def list_swift_containers(self, account: str | None = None) -> list[SwiftContainer]:
+        """List containers, ordered by name as Swift does.
+
+        With no account, lists across every account — which the API layer never
+        does, but the status dashboard needs to show the whole cloud.
+        """
+        with self._lock:
+            containers = [
+                c
+                for c in self._swift_containers.values()
+                if account is None or c.account == account
+            ]
+            containers.sort(key=lambda c: (c.account, c.name))
+            return containers
+
+    def get_swift_container(self, account: str, container: str) -> SwiftContainer | None:
+        """Get a container by account and name."""
+        with self._lock:
+            return self._swift_containers.get(self._container_key(account, container))
+
+    def create_swift_container(
+        self, account: str, container: str, metadata: dict[str, str] | None = None
+    ) -> tuple[SwiftContainer, bool]:
+        """Create a container, or merge metadata into an existing one.
+
+        Returns the container and whether it was newly created, so the caller
+        can answer 201 versus 202 the way Swift does.
+        """
+        with self._lock:
+            self.get_swift_account(account)
+            key = self._container_key(account, container)
+            existing = self._swift_containers.get(key)
+            if existing is not None:
+                existing.metadata.update(metadata or {})
+                if self.auto_save:
+                    self.save()
+                return existing, False
+            record = SwiftContainer(name=container, account=account, metadata=dict(metadata or {}))
+            self._swift_containers[key] = record
+            if self.auto_save:
+                self.save()
+            return record, True
+
+    def delete_swift_container(self, account: str, container: str) -> bool:
+        """Delete an empty container. Returns False when it does not exist."""
+        with self._lock:
+            key = self._container_key(account, container)
+            if key not in self._swift_containers:
+                return False
+            del self._swift_containers[key]
+            if self.auto_save:
+                self.save()
+            return True
+
+    def list_swift_objects(
+        self,
+        account: str | None = None,
+        container: str | None = None,
+        prefix: str | None = None,
+    ) -> list[SwiftObject]:
+        """List objects, ordered by name as Swift does.
+
+        With no account or container, lists across the whole cloud, which the
+        API layer never does but the status dashboard needs.
+        """
+        with self._lock:
+            objects = [
+                o
+                for o in self._swift_objects.values()
+                if (account is None or o.account == account)
+                and (container is None or o.container == container)
+            ]
+            if prefix:
+                objects = [o for o in objects if o.name.startswith(prefix)]
+            objects.sort(key=lambda o: o.name)
+            return objects
+
+    def get_swift_object(self, account: str, container: str, name: str) -> SwiftObject | None:
+        """Get an object by account, container and name."""
+        with self._lock:
+            return self._swift_objects.get(self._object_key(account, container, name))
+
+    def put_swift_object(
+        self,
+        account: str,
+        container: str,
+        name: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+        metadata: dict[str, str] | None = None,
+    ) -> SwiftObject:
+        """Store an object, replacing any existing one at the same path."""
+        import base64
+        import hashlib
+
+        with self._lock:
+            record = SwiftObject(
+                name=name,
+                container=container,
+                account=account,
+                content_type=content_type,
+                size=len(content),
+                etag=hashlib.md5(content, usedforsecurity=False).hexdigest(),
+                content_b64=base64.b64encode(content).decode("ascii"),
+                metadata=dict(metadata or {}),
+            )
+            self._swift_objects[self._object_key(account, container, name)] = record
+            if self.auto_save:
+                self.save()
+            return record
+
+    def delete_swift_object(self, account: str, container: str, name: str) -> bool:
+        """Delete an object. Returns False when it does not exist."""
+        with self._lock:
+            key = self._object_key(account, container, name)
+            if key not in self._swift_objects:
+                return False
+            del self._swift_objects[key]
+            if self.auto_save:
+                self.save()
+            return True
+
+    def get_swift_account_usage(self, account: str) -> dict[str, int]:
+        """Total container count, object count and bytes stored in an account."""
+        with self._lock:
+            containers = [c for c in self._swift_containers.values() if c.account == account]
+            objects = [o for o in self._swift_objects.values() if o.account == account]
+            return {
+                "container_count": len(containers),
+                "object_count": len(objects),
+                "bytes_used": sum(o.size for o in objects),
+            }
+
+    def get_swift_container_usage(self, account: str, container: str) -> dict[str, int]:
+        """Object count and bytes stored in a container."""
+        with self._lock:
+            objects = [
+                o
+                for o in self._swift_objects.values()
+                if o.account == account and o.container == container
+            ]
+            return {
+                "object_count": len(objects),
+                "bytes_used": sum(o.size for o in objects),
+            }
+
+    def reset_swift(self) -> None:
+        """Reset all Swift data."""
+        with self._lock:
+            self._swift_accounts.clear()
+            self._swift_containers.clear()
+            self._swift_objects.clear()
 
     # ==================== RBAC Policy Operations ====================
 
@@ -7272,7 +8002,11 @@ class Database:
     # Server Network Interfaces
 
     def attach_interface_to_server(
-        self, server_id: str, port: Port, nova_created: bool = False
+        self,
+        server_id: str,
+        port: Port,
+        nova_created: bool = False,
+        availability_zone: str = "nova",
     ) -> ServerNetworkInterface:
         """Attach an existing Neutron port to a server.
 
@@ -7294,7 +8028,10 @@ class Database:
                 self._server_network_interfaces[server_id] = []
 
             port.device_id = server_id
-            port.device_owner = "compute:nova"
+            # Nova stamps the zone, not a fixed string:
+            # port_req_body = {'port': {'device_id': instance.uuid,
+            #                           'device_owner': 'compute:%s' % zone}}
+            port.device_owner = f"compute:{availability_zone}"
             port.updated_at = datetime.utcnow()
 
             interface = ServerNetworkInterface(
@@ -8849,6 +9586,27 @@ class Database:
             key = f"{user_id}:{cred_id}"
             return self._application_credentials.get(key)
 
+    def find_application_credential(
+        self, cred_id: str | None = None, name: str | None = None, user_id: str | None = None
+    ) -> ApplicationCredential | None:
+        """Find an application credential by id, or by name within a user.
+
+        Authentication addresses a credential by id alone (the id is globally
+        unique) or by name plus the owning user, so neither lookup can go
+        through :meth:`get_application_credential`, which needs both parts of
+        the storage key.
+        """
+        with self._lock:
+            for cred in self._application_credentials.values():
+                if cred_id is not None and cred.id != cred_id:
+                    continue
+                if name is not None and cred.name != name:
+                    continue
+                if user_id is not None and cred.user_id != user_id:
+                    continue
+                return cred
+            return None
+
     def delete_application_credential(self, user_id: str, cred_id: str) -> bool:
         """Delete an application credential."""
         with self._lock:
@@ -9012,6 +9770,50 @@ class Database:
             key = f"{idp_id}:{protocol_id}"
             if key in self._federation_protocols:
                 del self._federation_protocols[key]
+                return True
+            return False
+
+    def create_service_provider(
+        self,
+        sp_id: str,
+        auth_url: str = "",
+        sp_url: str = "",
+        description: str = "",
+        enabled: bool = True,
+        relay_state_prefix: str = "ss:mem:",
+    ) -> ServiceProvider:
+        """Register a service provider."""
+        with self._lock:
+            provider = ServiceProvider(
+                id=sp_id,
+                auth_url=auth_url,
+                sp_url=sp_url,
+                description=description,
+                enabled=enabled,
+                relay_state_prefix=relay_state_prefix,
+            )
+            self._service_providers[sp_id] = provider
+            if self.auto_save:
+                self.save()
+            return provider
+
+    def list_service_providers(self) -> list[ServiceProvider]:
+        """List registered service providers."""
+        with self._lock:
+            return list(self._service_providers.values())
+
+    def get_service_provider(self, sp_id: str) -> ServiceProvider | None:
+        """Get a registered service provider."""
+        with self._lock:
+            return self._service_providers.get(sp_id)
+
+    def delete_service_provider(self, sp_id: str) -> bool:
+        """Remove a registered service provider."""
+        with self._lock:
+            if sp_id in self._service_providers:
+                del self._service_providers[sp_id]
+                if self.auto_save:
+                    self.save()
                 return True
             return False
 
