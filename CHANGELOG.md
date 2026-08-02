@@ -4,6 +4,12 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.1] - 2026-08-02
+
+### Fixed
+- Honour domain identifiers given by name when scoping authentication and identity resources
+- Match Neutron's RBAC rules for shared networks
+
 ## [0.4.0] - 2026-08-02
 
 ### Added
