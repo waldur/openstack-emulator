@@ -475,6 +475,28 @@ class FloatingIP:
     tags: list[str]
 ```
 
+### RbacPolicy
+
+Shares a Neutron object (usually a network) with another project. See
+[Tenant Isolation → Network Sharing](./tenant-isolation.md#network-sharing) for
+the rules the emulator enforces around shared networks.
+
+```python
+@dataclass
+class RbacPolicy:
+    id: str
+    object_type: str = "network"  # network, qos_policy, security_group, …
+    object_id: str = ""
+    target_project: str = ""  # '*' for all projects, or a project_id
+    project_id: str = ""  # owner of the shared object
+    action: str = "access_as_shared"  # or access_as_external
+    created_at: datetime
+    updated_at: datetime
+```
+
+`to_dict()` emits both `target_tenant`/`tenant_id` and
+`target_project`/`project_id`, since the Neutron API still uses the legacy keys.
+
 ## Load Balancer Models (Octavia)
 
 ### LoadBalancer
@@ -590,6 +612,152 @@ class HealthMonitor:
     operating_status: LoadBalancerOperatingStatus
     created_at: datetime
     updated_at: datetime
+```
+
+## Capacity Models (Placement)
+
+### ResourceProvider
+
+A resource provider, typically a hypervisor. Inventories, usages and
+allocation candidates are computed from these totals, the reserved amounts and
+the allocation ratios.
+
+```python
+@dataclass
+class ResourceProvider:
+    uuid: str
+    name: str = ""
+    generation: int = 0
+    parent_provider_uuid: str | None = None
+    root_provider_uuid: str | None = None
+    total_vcpus: int = 32
+    total_memory_mb: int = 65536
+    total_disk_gb: int = 1000
+    reserved_vcpus: int = 0
+    reserved_memory_mb: int = 512
+    reserved_disk_gb: int = 0
+    allocation_ratio_vcpu: float = 16.0
+    allocation_ratio_memory: float = 1.5
+    allocation_ratio_disk: float = 1.0
+```
+
+CloudKitty has no models of its own — ratings are derived on request from the
+servers and volumes already in the database.
+
+## Object Storage Models (Swift)
+
+Swift's hierarchy is account → container → object. The account name is the
+`AUTH_<project id>` segment of the storage URL published in the service catalog.
+
+```python
+@dataclass
+class SwiftAccount:
+    name: str = ""
+    project_id: str = ""
+    metadata: dict[str, str]  # X-Account-Meta-*, prefix stripped and lowercased
+    sysmeta: dict[str, str]  # quota-bytes / quota-count live here
+    created_at: datetime
+
+
+@dataclass
+class SwiftContainer:
+    name: str = ""
+    account: str = ""
+    metadata: dict[str, str]  # X-Container-Meta-*, prefix stripped
+    read_acl: str = ""
+    write_acl: str = ""
+    created_at: datetime
+
+
+@dataclass
+class SwiftObject:
+    name: str = ""
+    container: str = ""
+    account: str = ""
+    content_type: str = "application/octet-stream"
+    size: int = 0
+    etag: str = ""
+    content_b64: str = ""  # base64 so content survives JSON persistence
+    metadata: dict[str, str]
+    last_modified: datetime
+```
+
+`SwiftAccount.quota(name)` returns the limit or `-1` for Swift's "no limit",
+reading `sysmeta` first and falling back to `metadata` the way Swift translates
+the legacy `X-Account-Meta-Quota-Bytes` header.
+
+## Federation Models (Keystone)
+
+These back the `/v3/OS-FEDERATION` endpoints. A federated login resolves an OIDC
+token to a Keystone identity through an identity provider, a protocol and the
+mapping rules the protocol names — see [Federation](../federation.md).
+
+```python
+@dataclass
+class IdentityProvider:
+    id: str
+    description: str = ""
+    enabled: bool = True
+    remote_ids: list[str]  # issuer identifiers accepted for this IdP
+    domain_id: str = "default"
+
+
+@dataclass
+class FederationProtocol:
+    id: str  # e.g. "openid"
+    mapping_id: str
+    identity_provider_id: str
+
+
+@dataclass
+class FederationMapping:
+    id: str
+    rules: list[dict[str, Any]]  # Keystone mapping rule documents
+
+
+@dataclass
+class ServiceProvider:
+    id: str
+    auth_url: str = ""
+    sp_url: str = ""
+    description: str = ""
+    enabled: bool = True
+    relay_state_prefix: str = "ss:mem:"
+```
+
+## OpenID Provider Models (OIDC)
+
+The embedded provider on port 5556 issues the tokens the federation path
+consumes, so federation can be exercised without an external IdP.
+
+```python
+@dataclass
+class OidcClient:
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uris: list[str]  # empty means any
+    grant_types: list[str]  # password, client_credentials, authorization_code, refresh_token
+
+
+@dataclass
+class OidcUser:
+    username: str = ""
+    password: str = ""
+    subject: str  # UUID, the `sub` claim
+    email: str = ""
+    name: str = ""
+    groups: list[str]
+    claims: dict[str, str]  # extra claims, e.g. eduperson_entitlement
+
+
+@dataclass
+class OidcAuthorizationCode:
+    code: str
+    client_id: str = ""
+    username: str = ""
+    redirect_uri: str = ""
+    scope: str = "openid profile"
+    expires_at: datetime | None = None
 ```
 
 ## Quota Models

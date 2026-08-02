@@ -19,6 +19,9 @@ The Scenario service allows you to simulate various failure conditions to test y
 | `heavy_load` | Heavy load with spikes |
 | `system_stressed` | Severe load with timeouts |
 | `gradual_degradation` | Increasing latency over time |
+| `nova_slow` | Compute service responding slowly |
+| `cinder_slow` | Block storage service responding slowly |
+| `glance_slow` | Image service responding slowly |
 
 ### Service Crash Scenarios
 
@@ -26,6 +29,7 @@ The Scenario service allows you to simulate various failure conditions to test y
 |----------|-------------|
 | `nova_oom_crash` | Nova returns 503 errors |
 | `glance_unavailable` | Glance returns 503 errors |
+| `cascading_failure` | Multiple services failing in cascade (datacenter-wide issues) |
 
 ### Storage Scenarios
 
@@ -39,6 +43,7 @@ The Scenario service allows you to simulate various failure conditions to test y
 | Scenario | Description |
 |----------|-------------|
 | `neutron_network_partition` | Random network failures |
+| `neutron_slow` | Network operations are slow (SDN controller overloaded) |
 
 ### Message Queue Scenarios
 
@@ -52,6 +57,7 @@ The Scenario service allows you to simulate various failure conditions to test y
 | Scenario | Description |
 |----------|-------------|
 | `database_connection_lost` | Database connectivity failure |
+| `database_slow` | Database queries are slow (high load or replication lag) |
 | `quota_exceeded` | Create operations fail |
 | `keystone_overloaded` | Auth rate limiting |
 
