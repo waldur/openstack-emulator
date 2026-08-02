@@ -42,6 +42,35 @@ uvicorn --factory --host 0.0.0.0 --port 5000 \
 In practice `openstack-emulator --service=<name>` is the supported way to run a
 single service, since it also applies `--port-offset`, presets and persistence.
 
+### Command-line options
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--host` | `0.0.0.0` | Address to bind |
+| `--port` | — | Port override, single-service mode only (ignored with `--service=all`) |
+| `--service` | `all` | Which service to run (see the list above) |
+| `--port-offset` | `0` | Shift every default port, e.g. `1000` puts Keystone on 6000 |
+| `--preset` | — | Load a built-in preset by name |
+| `--preset-file` | — | Load a preset from a YAML file |
+| `--list-presets` | — | Print the built-in presets and exit |
+| `--log-level` | `info` | One of `debug`, `info`, `warning`, `error` |
+| `--persist-db` | — | JSON file to restore from at startup and save to |
+| `--auto-save` | off | Write the database on every change instead of on demand |
+
+### Persistence
+
+Without `--persist-db` the database lives only in memory and a restart returns
+the emulator to its seeded defaults. With it, the whole database is written to
+one JSON file and restored at startup:
+
+```bash
+openstack-emulator --persist-db=data/emulator_db.json --auto-save
+```
+
+Serialization is derived from the model dataclasses, so every collection is
+covered — see [Development → Persistence](./development.md#persistence) for how
+it works and what happens to records that fail to load.
+
 ## Service Ports
 
 | Service | Port | Description |
@@ -53,8 +82,15 @@ single service, since it also applies `--port-offset`, presets and persistence.
 | Neutron | 9696 | Networking service |
 | Octavia | 9876 | Load Balancer service |
 | Placement | 8778 | Resource Provider service |
+| Swift | 8080 | Object Storage service |
+| OIDC | 5556 | Embedded OpenID Provider |
+| CloudKitty | 8889 | Rating service |
 | Status UI | 10000 | Web dashboard |
 | Scenarios | 8999 | Failure injection API |
+
+Every port above shifts by `--port-offset N`, so `--port-offset 1000` puts
+Keystone on 6000, Nova on 9774, and so on. The service catalog Keystone hands
+out and the Status UI health checks both follow the offset.
 
 ## API Documentation (Swagger UI)
 
@@ -67,6 +103,9 @@ Each service provides interactive API documentation:
 - Neutron: http://localhost:9696/docs
 - Octavia: http://localhost:9876/docs
 - Placement: http://localhost:8778/docs
+- Swift: http://localhost:8080/docs
+- OIDC: http://localhost:5556/docs
+- CloudKitty: http://localhost:8889/docs
 - Scenarios: http://localhost:8999/docs
 
 ## Status Web UI
@@ -201,6 +240,9 @@ curl http://localhost:9292/health   # Glance
 curl http://localhost:9696/health   # Neutron
 curl http://localhost:9876/health   # Octavia
 curl http://localhost:8778/health   # Placement
+curl http://localhost:8080/health   # Swift
+curl http://localhost:5556/health   # OIDC
+curl http://localhost:8889/health   # CloudKitty
 curl http://localhost:10000/health  # Status UI
 curl http://localhost:8999/health   # Scenarios
 ```
@@ -236,7 +278,7 @@ The emulator initializes with default resources:
 
 ## Seeding sample resources with presets
 
-The emulator ships seven built-in presets that add projects, networks, servers, volumes, and so on at startup. Bundled with the installed package at `emulator/presets/*.yaml`:
+The emulator ships eight built-in presets that add projects, networks, servers, volumes, and so on at startup. Bundled with the installed package at `emulator/presets/*.yaml`:
 
 | Preset | Use case |
 |---|---|
@@ -247,6 +289,7 @@ The emulator ships seven built-in presets that add projects, networks, servers, 
 | `microservices` | Service-mesh + API gateway + observability stack |
 | `multi-tier` | Strict network segmentation across availability zones |
 | `stress-test` | 100+ servers / 50+ volumes for scale tests |
+| `waldur-site-agent` | Waldur-shaped tenant plus federated identity — see [federation.md](./federation.md) |
 
 Load one on startup:
 
@@ -266,5 +309,6 @@ In Kubernetes the same flags are surfaced as the `preset.name` and `customPreset
 ## Related Documentation
 
 - [API Examples](./api-examples.md) - Detailed curl examples
+- [Federated identity (OIDC)](./federation.md) - Keystone federation and the embedded OpenID Provider
 - [Scenario Injection](./scenarios.md) - Failure testing guide
 - [Kubernetes Deployment](./kubernetes.md) - Helm chart install and operator guide

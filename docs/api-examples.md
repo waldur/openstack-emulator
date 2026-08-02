@@ -403,6 +403,31 @@ curl -s -X DELETE "http://localhost:9696/v2.0/networks/{network_id}" \
   -H "X-Auth-Token: $TOKEN"
 ```
 
+### Sharing a network with another project (RBAC)
+
+```bash
+# Share a network with one project
+curl -s -X POST "http://localhost:9696/v2.0/rbac-policies" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"rbac_policy": {"object_type": "network", "object_id": "{network_id}",
+       "target_tenant": "{project_id}", "action": "access_as_shared"}}' | jq
+
+# List the policies on a network. The policy is owned by the network's project,
+# not by the admin session that created it.
+curl -s "http://localhost:9696/v2.0/rbac-policies?object_id={network_id}" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Revoking a share still in use is a 409 until the target project's ports are gone
+curl -s -X DELETE "http://localhost:9696/v2.0/rbac-policies/{policy_id}" \
+  -H "X-Auth-Token: $TOKEN" | jq
+```
+
+The target project may create ports on a network shared this way, but may not
+pin `fixed_ips[].ip_address` on it — that is admin-or-network-owner in Neutron
+and answers `403`. See
+[Tenant Isolation → Network Sharing](./architecture/tenant-isolation.md#network-sharing).
+
 ### Subnets
 
 ```bash

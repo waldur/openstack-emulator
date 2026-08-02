@@ -194,6 +194,20 @@ class RbacPolicy:
     action: str = "access_as_shared"
 ```
 
+An RBAC share does not make the target project an owner, so the emulator
+reproduces two rules real Neutron applies to shared networks (both verified
+against RHOS 17):
+
+- **Pinning an IP requires admin or network ownership.** A tenant may create a
+  port on a network shared to it and let Neutron allocate the address, but
+  passing `fixed_ips[].ip_address` on a network it does not own is answered with
+  `403` (`create_port:fixed_ips:ip_address` is admin-or-network-owner). The same
+  request succeeds on the tenant's own network, or when an admin makes it on the
+  tenant's behalf.
+- **A share in use cannot be revoked.** Deleting an `access_as_shared` policy
+  while the target project still holds ports on the network is answered with
+  `409` until those ports are gone.
+
 ### Image Visibility
 
 Glance images have a visibility model:
@@ -286,9 +300,11 @@ infrastructure operations use the cloud **admin** session):
 - **RBAC ownership.** An RBAC policy is owned by the shared object's project
   (e.g. the network's tenant), not the admin project that created it.
 
-"Admin" here means **scoped to the `admin` project**, not merely holding the
-admin role — the emulator's service user always has the admin role, so
-role-based detection would erase tenant isolation.
+A token counts as "admin" when it is **scoped to the `admin` project** or when
+its user genuinely holds the `admin` role on the scoped project. Only real role
+assignments confer the latter: scoping a token to a project the user was never
+granted a role on fails with `401` rather than minting a usable token, so an
+unknown username can no longer inherit the seeded admin's privileges.
 
 ## Quotas
 
@@ -348,8 +364,8 @@ def test_volume_isolation():
 
 ## Current Limitations
 
-1. **No Policy Enforcement**: The emulator does not implement OpenStack's policy.json rules
-2. **Admin scope, not role**: Cross-project access is granted to tokens scoped to the `admin` project (see [Neutron API-layer project scoping](#neutron-api-layer-project-scoping)), not by evaluating the admin role; outside Neutron, `all_tenants` remains trust-based
+1. **No general policy engine**: The emulator does not evaluate OpenStack's `policy.yaml` rules; individual rules are reproduced by hand where a client depends on them (e.g. Neutron's `create_port:fixed_ips:ip_address`)
+2. **Coarse admin detection**: Cross-project access follows the `admin` project scope or an `admin` role assignment (see [Neutron API-layer project scoping](#neutron-api-layer-project-scoping)); outside Neutron, `all_tenants` remains trust-based
 3. **No Ownership Transfer**: Resources cannot be transferred between projects
 4. **No Hierarchical Projects**: Project hierarchy (parent_id) is stored but not enforced
 

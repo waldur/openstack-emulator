@@ -16,7 +16,21 @@ If your cluster denies cross-namespace traffic by default, allow it explicitly w
 
 ## Step 1 — Install the chart
 
-The chart lives at [`charts/openstack-emulator/`](../charts/openstack-emulator) in this repo. Clone and install from disk:
+The chart is published to GitHub Pages, so the usual install needs no checkout:
+
+```bash
+helm repo add openstack-emulator https://waldur.github.io/openstack-emulator/
+helm repo update
+
+helm install openstack-emulator openstack-emulator/openstack-emulator \
+  --namespace ose --create-namespace \
+  --version 0.4.1 --wait
+```
+
+The chart version equals the emulator release tag, and `appVersion` — the image
+tag the chart deploys — matches it. Omit `--version` to take the newest.
+
+The chart source lives at [`charts/openstack-emulator/`](../charts/openstack-emulator) in this repo; to install an unreleased change, clone and install from disk instead:
 
 ```bash
 git clone https://code.opennodecloud.com/waldur/openstack-emulator.git
@@ -107,6 +121,19 @@ http://openstack-emulator.<emulator-namespace>.svc.cluster.local:5000/v3
 ```
 
 Substitute the namespace you installed into (e.g. `ose`). If your release name differs from the chart name, the Service name becomes `<release>-openstack-emulator` — `kubectl get svc -n <ns>` always shows the real name.
+
+All twelve emulator ports are exposed on that one Service; the emulator binds them from a single process, so individual services cannot be disabled:
+
+| Port | Service | Port | Service |
+|---|---|---|---|
+| 5000 | Keystone | 8080 | Swift |
+| 8774 | Nova | 5556 | OIDC provider |
+| 8776 | Cinder | 8889 | CloudKitty |
+| 9292 | Glance | 8778 | Placement |
+| 9696 | Neutron | 10000 | Status UI |
+| 9876 | Octavia | 8999 | Scenarios |
+
+In practice consumers only need Keystone — clients follow the service catalog, which the emulator builds from the request's `Host` header (see [Service catalog follows the request hostname](#service-catalog-follows-the-request-hostname)).
 
 A consumer Pod sets the standard `OS_*` env block to that URL and uses the hardcoded admin credentials:
 
