@@ -4101,10 +4101,11 @@ async def status_page(
     # Check service health
     service_status = {}
     for service, info in SERVICES.items():
-        is_healthy = await check_service_health(check_host, info["port"])
+        port = info["port"] + db.port_offset
+        is_healthy = await check_service_health(check_host, port)
         service_status[service] = {
             "name": info["name"],
-            "port": info["port"],
+            "port": port,
             "healthy": is_healthy,
         }
 
@@ -4830,10 +4831,11 @@ async def api_status(request: Request) -> dict:
     # Check service health
     services = {}
     for service, info in SERVICES.items():
-        is_healthy = await check_service_health(check_host, info["port"])
+        port = info["port"] + db.port_offset
+        is_healthy = await check_service_health(check_host, port)
         services[service] = {
             "name": info["name"],
-            "port": info["port"],
+            "port": port,
             "healthy": is_healthy,
         }
 
