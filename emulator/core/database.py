@@ -149,6 +149,10 @@ class Database:
         self._lock = threading.RLock()
         self.persist_path = persist_path
         self.auto_save = auto_save
+        # Shift applied to every port in the service catalog, so a catalog built
+        # under --port-offset names the ports the services are actually bound to.
+        # A deployment parameter rather than state: set at startup, never saved.
+        self.port_offset = 0
         # Set when a load could not read everything, so the first save keeps a
         # copy of the original instead of silently replacing it.
         self._load_degraded = False
@@ -751,13 +755,18 @@ class Database:
     ) -> list[dict[str, Any]]:
         """Generate a service catalog for tokens.
 
-        Uses standard OpenStack ports:
+        Uses standard OpenStack ports, shifted by :attr:`port_offset`:
         - Keystone (Identity): 5000
         - Nova (Compute): 8774
         - Cinder (Block Storage): 8776
         - Glance (Image): 9292
         - Neutron (Network): 9696
         - Octavia (Load Balancer): 9876
+
+        The offset matters because clients reach every service through this
+        catalog. Advertising 8774 while Nova listens on 8874 leaves an SDK
+        client dialling a closed port, so ``--port-offset`` has to reach here
+        as well as the listeners.
         """
         from urllib.parse import urlparse
 
@@ -766,16 +775,18 @@ class Database:
         host = parsed.hostname or "localhost"
         scheme = parsed.scheme or "http"
 
-        # Build URLs with standard OpenStack ports
-        keystone_url = f"{scheme}://{host}:5000"
-        nova_url = f"{scheme}://{host}:8774"
-        cinder_url = f"{scheme}://{host}:8776"
-        glance_url = f"{scheme}://{host}:9292"
-        neutron_url = f"{scheme}://{host}:9696"
-        octavia_url = f"{scheme}://{host}:9876"
-        placement_url = f"{scheme}://{host}:8778"
-        swift_url = f"{scheme}://{host}:8080"
-        rating_url = f"{scheme}://{host}:8889"
+        def url_for(port: int) -> str:
+            return f"{scheme}://{host}:{port + self.port_offset}"
+
+        keystone_url = url_for(5000)
+        nova_url = url_for(8774)
+        cinder_url = url_for(8776)
+        glance_url = url_for(9292)
+        neutron_url = url_for(9696)
+        octavia_url = url_for(9876)
+        placement_url = url_for(8778)
+        swift_url = url_for(8080)
+        rating_url = url_for(8889)
 
         return [
             {
