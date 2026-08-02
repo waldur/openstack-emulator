@@ -52,6 +52,7 @@ Run type checkings:
     - pip install -e ".[dev]"
     - pytest --cov=emulator --cov-report=xml --cov-report=term-missing
   artifacts:
+    expire_in: 1 week
     reports:
       coverage_report:
         coverage_format: cobertura
