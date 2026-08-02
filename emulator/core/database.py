@@ -443,13 +443,6 @@ class Database:
         manager_role = Role(id=str(uuid4()), name="manager", description="Manager role")
 
         self._roles[admin_role.id] = admin_role
-        # Nothing reads this today — the default-role fallback that used to was
-        # removed when scoping started requiring a real assignment. It stays
-        # because it belongs to the seeded-defaults set that
-        # test_keystone_defaults_still_point_at_real_objects guards: those ids
-        # were once re-minted on boot while the objects they named were loaded
-        # from disk, leaving them dangling.
-        self._admin_role_id = admin_role.id
         self._roles[member_role.id] = member_role
         self._roles[member_cap_role.id] = member_cap_role
         self._roles[member_underscore_role.id] = member_underscore_role

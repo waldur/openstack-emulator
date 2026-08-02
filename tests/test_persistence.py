@@ -346,7 +346,6 @@ class TestDataLossRegressions(unittest.TestCase):
 
         self.assertIsNotNone(reloaded.get_project(reloaded._default_project_id))
         self.assertIsNotNone(reloaded.get_user(reloaded._default_user_id))
-        self.assertIn(reloaded._admin_role_id, reloaded._roles)
 
     def test_quotas_survive(self):
         self.db.update_nova_quota("p1", cores=42)

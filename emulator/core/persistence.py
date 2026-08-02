@@ -342,7 +342,6 @@ PERSISTED_SCALARS: tuple[str, ...] = (
     "_default_project_name",
     "_default_user_id",
     "_default_user_name",
-    "_admin_role_id",
 )
 
 #: Deliberately not written, with the reason. The coverage test requires every
