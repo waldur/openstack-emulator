@@ -192,3 +192,61 @@ class TestFederatedLoginFailures:
 
         assert response.json()["projects"] == []
         conn.close()
+
+
+class TestExternalIssuerDiscovery:
+    """An external provider's signing keys are discovered, never assumed.
+
+    There is no fixed path for a JWKS. Assuming ``/.well-known/jwks.json`` (an
+    Auth0 convention) matches neither Keycloak, nor navikt/mock-oauth2-server,
+    nor this emulator's own provider, so trusting an external issuer through
+    ``remote_ids`` has to read ``jwks_uri`` out of the discovery document.
+    """
+
+    def test_jwks_uri_comes_from_the_discovery_document(self, emulator_servers):
+        import httpx
+
+        from emulator.api.keystone import discover_jwks_uri
+
+        issuer = emulator_servers.get_url("oidc")
+        advertised = httpx.get(f"{issuer}/.well-known/openid-configuration").json()["jwks_uri"]
+
+        assert discover_jwks_uri(issuer) == advertised
+        assert advertised.endswith("/keys")
+        # The path that used to be hardcoded does not exist here, and would not
+        # exist on Keycloak or mock-oauth2-server either.
+        assert httpx.get(f"{issuer}/.well-known/jwks.json").status_code == 404
+
+    def test_the_discovered_keys_verify_a_real_token(self, emulator_servers, federated_setup):
+        import jwt
+
+        from emulator.api.keystone import discover_jwks_uri
+
+        conn = _connect(emulator_servers)
+        access_token = conn.session.auth._get_access_token(
+            conn.session,
+            {
+                "grant_type": "password",
+                "username": "alice",
+                "password": "pw",
+                "scope": "openid profile",
+            },
+        )
+        conn.close()
+
+        jwks_client = jwt.PyJWKClient(discover_jwks_uri(emulator_servers.get_url("oidc")))
+        signing = jwks_client.get_signing_key_from_jwt(access_token)
+        claims = jwt.decode(
+            access_token, signing.key, algorithms=["RS256"], options={"verify_aud": False}
+        )
+
+        assert claims["email"] == EMAIL
+
+    def test_an_unreachable_issuer_is_a_401(self):
+        from fastapi import HTTPException
+
+        from emulator.api.keystone import discover_jwks_uri
+
+        with pytest.raises(HTTPException) as excinfo:
+            discover_jwks_uri("http://127.0.0.1:1/nowhere")
+        assert excinfo.value.status_code == 401

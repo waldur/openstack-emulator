@@ -504,3 +504,66 @@ class TestServiceProviders:
             ).status_code
             == 204
         )
+
+
+class TestFederatedRescopePrivilege:
+    """A federated token carries only the roles its user was actually granted."""
+
+    def test_rescoping_to_an_unassigned_project_grants_nothing(
+        self, client, oidc_client, federation_setup
+    ):
+        """The default-role convenience must not apply to a federated identity.
+
+        For simple password setups the emulator hands a user with no assignments
+        an "admin" role so the token is usable. Letting that fire on a federated
+        rescope would make the token claim a role nobody granted, which is the
+        opposite of what mapping a federated user onto real assignments is for.
+        """
+        db.create_user(name="alice@example.org", domain_id="default")
+        stranger = db.create_project(name="not-hers", domain_id="default")
+
+        token = _access_token(oidc_client, "alice", "alice@example.org")
+        unscoped = client.post(
+            f"/v3/OS-FEDERATION/identity_providers/{IDP}/protocols/{PROTOCOL}/auth",
+            headers={"Authorization": f"Bearer {token}"},
+        ).headers["X-Subject-Token"]
+
+        response = client.post(
+            "/v3/auth/tokens",
+            json={
+                "auth": {
+                    "identity": {"methods": ["token"], "token": {"id": unscoped}},
+                    "scope": {"project": {"id": stranger.id}},
+                }
+            },
+        )
+
+        assert response.json()["token"]["roles"] == []
+        from emulator.core.simple_auth import validate_token_simple
+
+        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is False
+
+    def test_a_password_token_keeps_the_convenience_fallback(self, client):
+        """The fallback still applies where it always did, so setups keep working."""
+        project = db.create_project(name="plain-tenant", domain_id="default")
+        db.create_user(name="plain", domain_id="default")
+
+        response = client.post(
+            "/v3/auth/tokens",
+            json={
+                "auth": {
+                    "identity": {
+                        "methods": ["password"],
+                        "password": {
+                            "user": {
+                                "name": "plain",
+                                "domain": {"id": "default"},
+                                "password": "pw",
+                            }
+                        },
+                    },
+                    "scope": {"project": {"id": project.id}},
+                }
+            },
+        )
+        assert [r["name"] for r in response.json()["token"]["roles"]] == ["admin"]

@@ -4,6 +4,7 @@ Provides a web interface to view the status of all services and objects
 in the OpenStack emulator, with authentication support and CRUD operations.
 """
 
+import html
 from datetime import datetime, timezone
 from typing import TypedDict
 
@@ -2421,6 +2422,17 @@ def render_volume_types_table(volume_types: list, authenticated: bool) -> str:
     return wrap_table_with_pagination(table_html, "volume-types-table", len(volume_types))
 
 
+def esc(value: object) -> str:
+    """HTML-escape a value for interpolation into a table cell.
+
+    Used by the renderers added alongside the object storage, federation and
+    OpenID Provider views. Names, claim keys and mapping rules are free-form
+    operator input, and dropping them into the page unescaped lets a stray
+    angle bracket break the markup.
+    """
+    return html.escape(str(value), quote=True)
+
+
 def render_swift_containers_table(containers: list, usage_by_key: dict) -> str:
     """Render the object storage containers table HTML.
 
@@ -2436,8 +2448,8 @@ def render_swift_containers_table(containers: list, usage_by_key: dict) -> str:
         usage = usage_by_key.get((container.account, container.name), {})
         rows += f"""
         <tr>
-            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{container.account}">{container.account}</td>
-            <td>{container.name}</td>
+            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{esc(container.account)}">{esc(container.account)}</td>
+            <td>{esc(container.name)}</td>
             <td>{usage.get("object_count", 0)}</td>
             <td>{usage.get("bytes_used", 0)}</td>
         </tr>
@@ -2471,7 +2483,7 @@ def render_swift_accounts_table(accounts: list, usage_by_account: dict) -> str:
         quota_count = account.quota("quota-count")
         rows += f"""
         <tr>
-            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{account.name}">{account.name}</td>
+            <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{esc(account.name)}">{esc(account.name)}</td>
             <td>{usage.get("container_count", 0)}</td>
             <td>{usage.get("object_count", 0)}</td>
             <td>{usage.get("bytes_used", 0)}</td>
@@ -2506,13 +2518,19 @@ def render_identity_providers_table(providers: list, protocols_by_idp: dict) -> 
     rows = ""
     for provider in providers:
         protocols = protocols_by_idp.get(provider.id, [])
-        protocol_text = ", ".join(f"{p.id} &rarr; {p.mapping_id}" for p in protocols) or "&mdash;"
-        remote_ids = ", ".join(provider.remote_ids) if provider.remote_ids else "embedded only"
+        protocol_text = (
+            ", ".join(f"{esc(p.id)} &rarr; {esc(p.mapping_id)}" for p in protocols) or "&mdash;"
+        )
+        remote_ids = (
+            ", ".join(esc(r) for r in provider.remote_ids)
+            if provider.remote_ids
+            else "embedded only"
+        )
         rows += f"""
         <tr>
-            <td>{provider.id}</td>
-            <td>{provider.description or "&mdash;"}</td>
-            <td>{provider.domain_id}</td>
+            <td>{esc(provider.id)}</td>
+            <td>{esc(provider.description) or "&mdash;"}</td>
+            <td>{esc(provider.domain_id)}</td>
             <td>{"Yes" if provider.enabled else "No"}</td>
             <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis;" title="{protocol_text}">{protocol_text}</td>
             <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis;" title="{remote_ids}">{remote_ids}</td>
@@ -2562,10 +2580,10 @@ def render_federation_mappings_table(mappings: list) -> str:
         )
         rows += f"""
         <tr>
-            <td>{mapping.id}</td>
+            <td>{esc(mapping.id)}</td>
             <td>{len(mapping.rules)}</td>
-            <td>{", ".join(claims) or "&mdash;"}</td>
-            <td>{", ".join(user_types) or "&mdash;"}</td>
+            <td>{", ".join(esc(c) for c in claims) or "&mdash;"}</td>
+            <td>{", ".join(esc(t) for t in user_types) or "&mdash;"}</td>
         </tr>
         """
 
@@ -2594,13 +2612,13 @@ def render_oidc_users_table(users: list) -> str:
 
     rows = ""
     for user in users:
-        groups = ", ".join(user.groups) if user.groups else "&mdash;"
-        extra = ", ".join(sorted(user.claims)) if user.claims else "&mdash;"
+        groups = ", ".join(esc(g) for g in user.groups) if user.groups else "&mdash;"
+        extra = ", ".join(esc(c) for c in sorted(user.claims)) if user.claims else "&mdash;"
         rows += f"""
         <tr>
-            <td>{user.username}</td>
-            <td>{user.email or "&mdash;"}</td>
-            <td>{user.name or "&mdash;"}</td>
+            <td>{esc(user.username)}</td>
+            <td>{esc(user.email) or "&mdash;"}</td>
+            <td>{esc(user.name) or "&mdash;"}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="{groups}">{groups}</td>
             <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis;" title="{extra}">{extra}</td>
         </tr>
@@ -2630,12 +2648,14 @@ def render_oidc_clients_table(clients: list) -> str:
 
     rows = ""
     for client in clients:
-        redirects = ", ".join(client.redirect_uris) if client.redirect_uris else "any"
+        redirects = (
+            ", ".join(esc(u) for u in client.redirect_uris) if client.redirect_uris else "any"
+        )
         rows += f"""
         <tr>
-            <td>{client.client_id}</td>
+            <td>{esc(client.client_id)}</td>
             <td>{"confidential" if client.client_secret else "public"}</td>
-            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="{", ".join(client.grant_types)}">{", ".join(client.grant_types)}</td>
+            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="{", ".join(esc(g) for g in client.grant_types)}">{", ".join(esc(g) for g in client.grant_types)}</td>
             <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis;" title="{redirects}">{redirects}</td>
         </tr>
         """

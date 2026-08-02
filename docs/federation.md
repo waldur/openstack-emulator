@@ -141,8 +141,12 @@ curl -X PUT http://localhost:5000/v3/OS-FEDERATION/identity_providers/keycloak \
 ```
 
 A bearer token whose `iss` matches a `remote_id` is validated against that
-issuer's published JWKS (fetched from `<iss>/.well-known/jwks.json`). Tokens
-minted by the embedded provider continue to work alongside it.
+issuer's published JWKS. The key location is read from the issuer's discovery
+document at `<iss>/.well-known/openid-configuration` rather than assumed —
+there is no fixed path, and providers differ (Keycloak publishes at
+`/protocol/openid-connect/certs`, navikt/mock-oauth2-server at `/jwks`, this
+emulator's own provider at `/keys`). Tokens minted by the embedded provider
+continue to work alongside it.
 
 This is how to point the emulator at a mock provider such as
 `ghcr.io/navikt/mock-oauth2-server`, or at a real Keycloak.

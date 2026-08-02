@@ -299,3 +299,28 @@ class TestAccountIsolation:
 
     def test_own_account_is_allowed(self, client, user):
         assert client.head(f"/v1/{ACCOUNT}", headers=user).status_code == 204
+
+
+class TestReadsDoNotMutate:
+    """Looking at an account must not bring it into existence."""
+
+    def test_head_does_not_create_the_account(self, client, reseller):
+        before = len(db.list_swift_accounts())
+
+        response = client.head("/v1/AUTH_never-written-to", headers=reseller)
+
+        assert response.status_code == 204
+        assert response.headers["X-Account-Bytes-Used"] == "0"
+        assert len(db.list_swift_accounts()) == before
+
+    def test_get_does_not_create_the_account(self, client, reseller):
+        before = len(db.list_swift_accounts())
+
+        client.get("/v1/AUTH_also-never-written-to?format=json", headers=reseller)
+
+        assert len(db.list_swift_accounts()) == before
+
+    def test_a_write_does_create_the_account(self, client, reseller):
+        client.post(f"/v1/{ACCOUNT}", headers={**reseller, "X-Account-Quota-Bytes": "42"})
+
+        assert db.get_swift_account(ACCOUNT, create=False) is not None

@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 import jwt
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -404,9 +405,13 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         user_id=resolved_user_id,
         methods=auth_methods,
         roles=forced_roles,
-        # An application credential confers exactly the roles recorded on it, so
-        # the "no assignments means admin" convenience must not apply.
-        grant_default_admin_role=forced_roles is None,
+        # The "no assignments means admin" convenience is for simple password
+        # setups only. An application credential confers exactly the roles
+        # recorded on it, and a federated identity's access comes from the roles
+        # actually mapped or assigned to it — handing either one an admin role on
+        # rescope would make the token claim something its user was never
+        # granted.
+        grant_default_admin_role=forced_roles is None and not federation_context,
         **federation_context,
     )
 
@@ -2116,6 +2121,35 @@ async def delete_federation_mapping(
 # Federation helpers
 
 
+def discover_jwks_uri(issuer: str) -> str:
+    """Resolve an issuer's signing-key location from its discovery document.
+
+    There is no fixed path for a JWKS. OpenID Connect Discovery says the issuer
+    publishes ``jwks_uri`` at ``<issuer>/.well-known/openid-configuration``, and
+    providers put the keys wherever they like: Keycloak uses
+    ``/protocol/openid-connect/certs``, navikt/mock-oauth2-server uses ``/jwks``,
+    and this emulator's own provider uses ``/keys``. Assuming any one of them
+    would break the other two.
+    """
+    url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            document = client.get(url).json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Could not read the discovery document of issuer {issuer!r}",
+        ) from exc
+
+    jwks_uri = document.get("jwks_uri")
+    if not jwks_uri:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Issuer {issuer!r} publishes no jwks_uri",
+        )
+    return str(jwks_uri)
+
+
 def validate_bearer_token(raw_token: str, provider: Any) -> dict[str, Any]:
     """Validate a bearer token and return the claims it asserts.
 
@@ -2146,7 +2180,8 @@ def validate_bearer_token(raw_token: str, provider: Any) -> dict[str, Any]:
         )
 
     try:
-        jwks_client = jwt.PyJWKClient(f"{issuer.rstrip('/')}/.well-known/jwks.json")
+        jwks_uri = discover_jwks_uri(issuer)
+        jwks_client = jwt.PyJWKClient(jwks_uri)
         signing = jwks_client.get_signing_key_from_jwt(raw_token)
         verified: dict[str, Any] = jwt.decode(
             raw_token,
@@ -2154,6 +2189,8 @@ def validate_bearer_token(raw_token: str, provider: Any) -> dict[str, Any]:
             algorithms=["RS256"],
             options={"verify_aud": False},
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Bearer token failed validation") from exc
     return verified

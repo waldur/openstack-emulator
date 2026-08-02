@@ -133,9 +133,14 @@ def _listing_content_type(request: Request, format_param: str | None) -> str:
 
 
 def _account_headers(account: str) -> dict[str, str]:
-    """Build the standard account response headers."""
-    record = db.get_swift_account(account)
-    assert record is not None  # noqa: S101 - get_swift_account creates on demand
+    """Build the standard account response headers.
+
+    Deliberately does not create the account: a HEAD or GET is a read, and
+    letting it materialise state meant merely looking at an account brought it
+    into existence and inflated every account listing. An account that has never
+    been written to reports zeroes.
+    """
+    record = db.get_swift_account(account, create=False)
     usage = db.get_swift_account_usage(account)
     headers = {
         "X-Account-Container-Count": str(usage["container_count"]),
@@ -144,6 +149,8 @@ def _account_headers(account: str) -> dict[str, str]:
         "Content-Type": "application/json; charset=utf-8",
         "Accept-Ranges": "bytes",
     }
+    if record is None:
+        return headers
     # Quotas are readable by everyone even though only resellers may set them.
     for quota_type in QUOTA_TYPES:
         stored = record.sysmeta.get(quota_type)
