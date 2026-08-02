@@ -266,6 +266,27 @@ async def get_version_v3(request: Request) -> dict[str, Any]:
     }
 
 
+def _resolve_domain_id(domain_spec: dict[str, Any] | None) -> str:
+    """Resolve a Keystone domain reference to an id.
+
+    A client may name a domain by ``id`` or by ``name``, and Keystone treats a
+    user's domain and a scoped project's domain as independent. Defaulting the
+    id before looking at the name made every non-default domain unreachable:
+    the name was never consulted, so a user outside ``default`` was never found.
+    """
+    if not domain_spec:
+        return "default"
+    domain_id = domain_spec.get("id")
+    if domain_id:
+        return str(domain_id)
+    domain_name = domain_spec.get("name")
+    if domain_name:
+        domain = db.get_domain_by_name(domain_name)
+        if domain:
+            return domain.id
+    return "default"
+
+
 # Authentication endpoints
 @router.post("/v3/auth/tokens")
 async def create_token(body: AuthBody, request: Request, response: Response) -> dict[str, Any]:
@@ -329,11 +350,7 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         logger.debug("Extracted user_info: %s", user_info)
         user_name = user_info.get("name", "admin")
         user_domain = user_info.get("domain", {})
-        domain_id = user_domain.get("id", "default")
-        if not domain_id:
-            domain_name = user_domain.get("name", "Default")
-            domain = db.get_domain_by_name(domain_name)
-            domain_id = domain.id if domain else "default"
+        domain_id = _resolve_domain_id(user_domain)
 
     elif "token" in auth_methods and body.auth.identity.token:
         # Token-based authentication (re-authentication with existing token)
@@ -372,6 +389,9 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     # project id) or by name; honor whichever is provided.
     project_name = "admin"
     project_id = None
+    # A project lives in its own domain, which need not be the user's. Resolving
+    # a project name in the user's domain finds the wrong project, or none.
+    project_domain_id = domain_id
     if forced_project_id:
         # An application credential is bound to the project it was created in;
         # the request may not rescope it.
@@ -387,6 +407,8 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
         # not know about produced an admin token with cross-tenant access.
         # Unscoped requests keep the historical admin default.
         project_name = project_scope.get("name") or ("" if project_id else "admin")
+        if project_scope.get("domain"):
+            project_domain_id = _resolve_domain_id(project_scope["domain"])
 
     logger.debug(
         "Creating token for user: %s, project: %s (id=%s), domain: %s",
@@ -403,6 +425,7 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
             project_name=project_name,
             base_url=base_url,
             domain_id=domain_id,
+            project_domain_id=project_domain_id,
             project_id=project_id,
             user_id=resolved_user_id,
             methods=auth_methods,
