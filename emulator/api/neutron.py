@@ -123,14 +123,18 @@ class RouterInterfaceRequest(BaseModel):
 
 # Helper functions
 def _get_project_id(token: str | None) -> str:
-    """Extract project ID from token."""
+    """Extract project ID from token.
+
+    A token that is present but rejected propagates the 401 rather than falling
+    back to a project name: keystonemiddleware answers an expired token with 401
+    and clients re-authenticate and retry on it. Degrading to a filter value
+    instead turns the retryable 401 into a resource-shaped error the client
+    takes at face value.
+    """
     if not token:
         return "admin"
-    try:
-        token_data = validate_token_simple(token, "Neutron")
-        return token_data.project_id
-    except HTTPException:
-        return "admin"  # Fallback for development
+    token_data = validate_token_simple(token, "Neutron")
+    return token_data.project_id
 
 
 def _resolve_project_id(data: dict[str, Any], token: str | None) -> str:
@@ -150,14 +154,11 @@ def _lookup_project_id(token: str | None) -> str | None:
     Returns ``None`` (no project restriction → cross-project access) for a token
     scoped to the cloud admin project, so Waldur's admin session can operate on
     a tenant's resources by id. Other tokens are restricted to their own
-    project.
+    project. A rejected token raises 401, as in :func:`_get_project_id`.
     """
     if not token:
         return "admin"
-    try:
-        info = validate_token_simple(token, "Neutron")
-    except HTTPException:
-        return "admin"
+    info = validate_token_simple(token, "Neutron")
     return None if info.is_admin else info.project_id
 
 

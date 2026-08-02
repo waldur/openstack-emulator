@@ -53,6 +53,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Subnets get a default allocation pool derived from their CIDR, and a port
   asking for a subnet without naming an address gets one allocated. Ports
   previously came back with an empty `ip_address`
+- Neutron, Glance and Octavia answer a rejected token with 401 instead of
+  falling back to the literal project `admin` as a filter value. On a by-id
+  lookup that fallback surfaced an expired token as `404 Port not found`, which
+  a client takes at face value; keystonemiddleware returns 401 and clients
+  re-authenticate and retry on it. A token-less request keeps its development
+  fallback
 - Preset users are created in their project's domain rather than always in the
   default one
 - `--service=placement` is accepted by the CLI

@@ -12,14 +12,15 @@ router = APIRouter(tags=["octavia"])
 
 
 def _get_project_id(auth_token: str | None) -> str:
-    """Get project_id from auth token. Returns 'admin' if no token provided."""
+    """Get project_id from auth token. Returns 'admin' if no token provided.
+
+    A rejected token propagates the 401 so clients re-authenticate, rather than
+    degrading into a project filter that reads as a missing resource.
+    """
     if not auth_token:
         return "admin"
-    try:
-        token = validate_token_simple(auth_token, "Octavia")
-        return token.project_id
-    except HTTPException:
-        return "admin"  # Fallback for development
+    token = validate_token_simple(auth_token, "Octavia")
+    return token.project_id
 
 
 # Pydantic models for request/response validation
