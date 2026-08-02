@@ -22,6 +22,7 @@ from emulator.api.placement import router as placement_router
 from emulator.api.scenarios import router as scenarios_router
 from emulator.api.status_ui import router as status_router
 from emulator.api.swift import router as swift_router
+from emulator.core.database import db
 from emulator.core.exceptions import add_openstack_exception_handlers
 from emulator.core.headers import add_openstack_headers_middleware
 from emulator.core.logging_middleware import (
@@ -251,6 +252,10 @@ async def run_all_services_async(host: str = "0.0.0.0", port_offset: int = 0) ->
     """
     # Create all service apps
     service_apps = create_all_service_apps()
+
+    # The catalog has to name the same ports the listeners bind, or every SDK
+    # client resolves endpoints that nothing is serving.
+    db.port_offset = port_offset
 
     # Calculate actual ports with offset
     ports = {service: port + port_offset for service, port in SERVICE_PORTS.items()}

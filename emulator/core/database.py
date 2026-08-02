@@ -149,6 +149,10 @@ class Database:
         self._lock = threading.RLock()
         self.persist_path = persist_path
         self.auto_save = auto_save
+        # Shift applied to every port in the service catalog, so a catalog built
+        # under --port-offset names the ports the services are actually bound to.
+        # A deployment parameter rather than state: set at startup, never saved.
+        self.port_offset = 0
         # Set when a load could not read everything, so the first save keeps a
         # copy of the original instead of silently replacing it.
         self._load_degraded = False
@@ -751,13 +755,18 @@ class Database:
     ) -> list[dict[str, Any]]:
         """Generate a service catalog for tokens.
 
-        Uses standard OpenStack ports:
+        Uses standard OpenStack ports, shifted by :attr:`port_offset`:
         - Keystone (Identity): 5000
         - Nova (Compute): 8774
         - Cinder (Block Storage): 8776
         - Glance (Image): 9292
         - Neutron (Network): 9696
         - Octavia (Load Balancer): 9876
+
+        The offset matters because clients reach every service through this
+        catalog. Advertising 8774 while Nova listens on 8874 leaves an SDK
+        client dialling a closed port, so ``--port-offset`` has to reach here
+        as well as the listeners.
         """
         from urllib.parse import urlparse
 
@@ -766,16 +775,18 @@ class Database:
         host = parsed.hostname or "localhost"
         scheme = parsed.scheme or "http"
 
-        # Build URLs with standard OpenStack ports
-        keystone_url = f"{scheme}://{host}:5000"
-        nova_url = f"{scheme}://{host}:8774"
-        cinder_url = f"{scheme}://{host}:8776"
-        glance_url = f"{scheme}://{host}:9292"
-        neutron_url = f"{scheme}://{host}:9696"
-        octavia_url = f"{scheme}://{host}:9876"
-        placement_url = f"{scheme}://{host}:8778"
-        swift_url = f"{scheme}://{host}:8080"
-        rating_url = f"{scheme}://{host}:8889"
+        def url_for(port: int) -> str:
+            return f"{scheme}://{host}:{port + self.port_offset}"
+
+        keystone_url = url_for(5000)
+        nova_url = url_for(8774)
+        cinder_url = url_for(8776)
+        glance_url = url_for(9292)
+        neutron_url = url_for(9696)
+        octavia_url = url_for(9876)
+        placement_url = url_for(8778)
+        swift_url = url_for(8080)
+        rating_url = url_for(8889)
 
         return [
             {
@@ -1230,6 +1241,10 @@ class Database:
 
         Attached interfaces are released like Nova's deallocate_for_instance:
         Nova-created ports are deleted, pre-existing ports are unbound.
+
+        Attached volumes are detached the way Nova's _cleanup_volumes does. A
+        volume left carrying an attachment to a server that no longer exists
+        reads as in-use forever and can never be deleted or re-attached.
         """
         with self._lock:
             if server_id in self._servers:
@@ -1240,12 +1255,31 @@ class Database:
                 del self._servers[server_id]
                 for interface in self._server_network_interfaces.pop(server_id, []):
                     self._release_interface_port(interface, server_id)
+                self._detach_server_volumes(server_id)
                 if self.auto_save:
                     self.save()
                 return True
             return False
 
     # Server actions
+    def _detach_server_volumes(self, server_id: str) -> None:
+        """Release every volume attached to a server that is going away.
+
+        Caller holds the lock. A volume marked ``delete_on_termination`` goes
+        with the instance, as in Nova; the rest return to ``available``.
+        """
+        for attachment in self._server_volume_attachments.pop(server_id, []):
+            volume = self._volumes.get(attachment.volume_id)
+            if volume is None:
+                continue
+            volume.attachments = [a for a in volume.attachments if a.server_id != server_id]
+            if attachment.delete_on_termination:
+                self._volumes.pop(attachment.volume_id, None)
+                continue
+            if not volume.attachments:
+                volume.status = VolumeStatus.AVAILABLE
+            volume.updated_at = datetime.now(timezone.utc)
+
     def server_action(self, server_id: str, action: str) -> bool:
         """Perform an action on a server."""
         with self._lock:
@@ -1423,6 +1457,7 @@ class Database:
                 },
             )
             self._glance_images[image.id] = image
+            self._images[image.id] = image.to_nova_image()
             self._image_members[image.id] = []
             return image
 
@@ -3972,6 +4007,10 @@ class Database:
                 os_version=os_version,
             )
             self._glance_images[image.id] = image
+            # Nova serves images from its own store, so an image that only lands
+            # in Glance cannot be booted from. The seeded images are mirrored the
+            # same way; anything created later has to be too.
+            self._images[image.id] = image.to_nova_image()
             self._image_members[image.id] = []
             if self.auto_save:
                 self.save()
