@@ -39,6 +39,21 @@ class FixedIPAlreadyInUseError(Exception):
         super().__init__(f"Fixed IP {ip} is already in use.")
 
 
+class ScopeUnauthorizedError(Exception):
+    """A token was requested for a scope the user holds no role on.
+
+    Keystone refuses to mint such a token: ``TokenModel.mint`` runs
+    ``_validate_project_scope``, which raises ``Unauthorized`` when a
+    project-scoped token would carry no roles. Raised from the storage layer so
+    the API layer can answer 401 with the same wording.
+    """
+
+    def __init__(self, user_id: str, project_id: str) -> None:
+        self.user_id = user_id
+        self.project_id = project_id
+        super().__init__(f"User {user_id} has no access to project {project_id}")
+
+
 def add_openstack_exception_handlers(app: FastAPI) -> None:
     """Add OpenStack-style exception handlers to a FastAPI app.
 

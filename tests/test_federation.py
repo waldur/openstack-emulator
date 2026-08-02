@@ -507,17 +507,16 @@ class TestServiceProviders:
 
 
 class TestFederatedRescopePrivilege:
-    """A federated token carries only the roles its user was actually granted."""
+    """A federated token can only reach projects its user was actually granted."""
 
-    def test_rescoping_to_an_unassigned_project_grants_nothing(
+    def test_rescoping_to_an_unassigned_project_is_refused(
         self, client, oidc_client, federation_setup
     ):
-        """The default-role convenience must not apply to a federated identity.
+        """Scoping is checked, so a federated identity cannot wander.
 
-        For simple password setups the emulator hands a user with no assignments
-        an "admin" role so the token is usable. Letting that fire on a federated
-        rescope would make the token claim a role nobody granted, which is the
-        opposite of what mapping a federated user onto real assignments is for.
+        The unscoped token proves who the user is; it does not entitle them to
+        any particular project. Keystone refuses to mint a scoped token that
+        would carry no roles, and so does this.
         """
         db.create_user(name="alice@example.org", domain_id="default")
         stranger = db.create_project(name="not-hers", domain_id="default")
@@ -538,32 +537,34 @@ class TestFederatedRescopePrivilege:
             },
         )
 
-        assert response.json()["token"]["roles"] == []
-        from emulator.core.simple_auth import validate_token_simple
+        assert response.status_code == 401
 
-        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is False
+    def test_rescoping_to_a_granted_project_carries_only_that_role(
+        self, client, oidc_client, federation_setup
+    ):
+        user = db.create_user(name="alice@example.org", domain_id="default")
+        project = db.create_project(name="hers", domain_id="default")
+        role = db.create_role(name="member")
+        db.assign_role_to_user_on_project(role.id, user.id, project.id)
 
-    def test_a_password_token_keeps_the_convenience_fallback(self, client):
-        """The fallback still applies where it always did, so setups keep working."""
-        project = db.create_project(name="plain-tenant", domain_id="default")
-        db.create_user(name="plain", domain_id="default")
+        token = _access_token(oidc_client, "alice", "alice@example.org")
+        unscoped = client.post(
+            f"/v3/OS-FEDERATION/identity_providers/{IDP}/protocols/{PROTOCOL}/auth",
+            headers={"Authorization": f"Bearer {token}"},
+        ).headers["X-Subject-Token"]
 
         response = client.post(
             "/v3/auth/tokens",
             json={
                 "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {
-                            "user": {
-                                "name": "plain",
-                                "domain": {"id": "default"},
-                                "password": "pw",
-                            }
-                        },
-                    },
+                    "identity": {"methods": ["token"], "token": {"id": unscoped}},
                     "scope": {"project": {"id": project.id}},
                 }
             },
         )
-        assert [r["name"] for r in response.json()["token"]["roles"]] == ["admin"]
+
+        assert response.status_code == 200
+        assert [r["name"] for r in response.json()["token"]["roles"]] == ["member"]
+        from emulator.core.simple_auth import validate_token_simple
+
+        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is False

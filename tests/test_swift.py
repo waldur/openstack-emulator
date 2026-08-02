@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import grant_scope
 
 ACCOUNT = "AUTH_proj-1"
 
@@ -62,8 +63,7 @@ def reseller(apps):
 @pytest.fixture
 def user(apps):
     """Headers for an unprivileged token owning AUTH_proj-1."""
-    db.create_project(name="proj-one", domain_id="default", project_id="proj-1")
-    db.create_user(name="member", domain_id="default")
+    grant_scope(project_name="proj-one", project_id="proj-1", user_name="member")
     return _token(apps, "member", project_id="proj-1")
 
 

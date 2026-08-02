@@ -11,6 +11,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from emulator.core.database import db
+from emulator.core.exceptions import ScopeUnauthorizedError
 from emulator.core.federation import MappingError, process_rules
 
 logger = logging.getLogger(__name__)
@@ -396,24 +397,21 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
     )
 
     # Create token
-    token = db.create_token(
-        user_name=user_name,
-        project_name=project_name,
-        base_url=base_url,
-        domain_id=domain_id,
-        project_id=project_id,
-        user_id=resolved_user_id,
-        methods=auth_methods,
-        roles=forced_roles,
-        # The "no assignments means admin" convenience is for simple password
-        # setups only. An application credential confers exactly the roles
-        # recorded on it, and a federated identity's access comes from the roles
-        # actually mapped or assigned to it — handing either one an admin role on
-        # rescope would make the token claim something its user was never
-        # granted.
-        grant_default_admin_role=forced_roles is None and not federation_context,
-        **federation_context,
-    )
+    try:
+        token = db.create_token(
+            user_name=user_name,
+            project_name=project_name,
+            base_url=base_url,
+            domain_id=domain_id,
+            project_id=project_id,
+            user_id=resolved_user_id,
+            methods=auth_methods,
+            roles=forced_roles,
+            grant_default_admin_role=forced_roles is None and not federation_context,
+            **federation_context,
+        )
+    except ScopeUnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     # Set token in header
     response.headers["X-Subject-Token"] = token.id

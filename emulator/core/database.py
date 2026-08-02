@@ -9,13 +9,14 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from emulator.core import persistence
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     PortInUseError,
+    ScopeUnauthorizedError,
 )
 from emulator.core.models import (
     AllocationPool,
@@ -611,10 +612,8 @@ class Database:
             user_id: User id to scope to; takes precedence over the name.
             methods: Authentication methods recorded on the token.
             unscoped: Issue a token with no project and no catalog.
-            grant_default_admin_role: When the user holds no role assignment on
-                the project, fall back to an "admin" role. Convenient for simple
-                test setups, but federated authentication must pass ``False`` so
-                that a user only ever gets the roles actually assigned to them.
+            grant_default_admin_role: Retained for call compatibility; scoping
+                now requires a real role assignment either way.
             is_federated: Mark the token as produced by OS-FEDERATION.
             idp_id: Identity provider that authenticated the user.
             protocol_id: Federation protocol used.
@@ -630,9 +629,15 @@ class Database:
             if not user:
                 user = self.get_user_by_name(user_name, domain_id)
             if not user:
-                # Create a temporary user record for testing
+                # A name nobody registered still authenticates — the emulator
+                # cannot check passwords — but it must not become somebody else.
+                # This used to hand back _default_user_id, which is the seeded
+                # admin's id, so any unrecognised name inherited the admin's
+                # role assignments and could scope anywhere they could. The
+                # identity is now derived from the name, so it is stable across
+                # calls and holds no assignments until something grants one.
                 user = User(
-                    id=self._default_user_id,
+                    id=str(uuid5(NAMESPACE_DNS, f"{domain_id}:{user_name}")),
                     name=user_name,
                     domain_id=domain_id,
                 )
@@ -666,9 +671,14 @@ class Database:
             if roles is not None:
                 explicit_roles = list(roles)
             token_roles = list(explicit_roles)
-            if not token_roles and grant_default_admin_role and not unscoped:
-                # Default to admin role for testing
-                token_roles = [{"id": self._admin_role_id, "name": "admin"}]
+            if not token_roles and not unscoped:
+                # Keystone will not mint a scoped token that would carry no
+                # roles: TokenModel.mint calls _validate_project_scope, which
+                # raises Unauthorized. Reproduced so that a client scoping to a
+                # project it was never granted fails here the way it would fail
+                # against a real cloud, instead of quietly receiving a usable
+                # token.
+                raise ScopeUnauthorizedError(user.id, project.id if project else "")
 
             is_admin = (project.name or "").lower() == "admin" if project else False
             if any(role["name"].lower() == "admin" for role in explicit_roles):

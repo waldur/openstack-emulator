@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import grant_scope
 
 TENANT = "tenant-1"
 OTHER = "tenant-2"
@@ -64,8 +65,7 @@ def admin_headers(apps):
 @pytest.fixture
 def tenant_headers(apps):
     """Headers for an unprivileged token scoped to TENANT."""
-    db.create_project(name="tenant-one", domain_id="default", project_id=TENANT)
-    db.create_user(name="member", domain_id="default")
+    grant_scope(project_name="tenant-one", project_id=TENANT, user_name="member")
     return _token(apps, "member", project_id=TENANT)
 
 

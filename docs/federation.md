@@ -220,5 +220,11 @@ token, so check the claims with `GET /userinfo`.
 no catalog; discover projects with `GET /v3/OS-FEDERATION/projects` addressed
 directly, then rescope.
 
+**401 "User … has no access to project …" when rescoping** — the mapped identity
+holds no role on that project. An unscoped federated token proves who the user
+is; it does not entitle them to a project. Grant a role directly or through a
+group, exactly as Keystone requires. `GET /v3/OS-FEDERATION/projects` lists the
+projects that will work.
+
 **Groups in the mapping had no effect** — the group must already exist in the
 same domain. Unknown groups are skipped and logged rather than created.

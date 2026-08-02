@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 from emulator.core.simple_auth import validate_token_simple
+from tests.conftest import grant_scope
 
 
 @pytest.fixture
@@ -796,17 +797,16 @@ class TestAuthFailures:
 
 
 class TestScopePrivilege:
-    """A token is privileged only when it is genuinely scoped to "admin".
+    """Scoping requires a real role assignment, and confers only what it grants.
 
-    ``validate_token_simple`` derives ``is_admin`` from the token's project
-    name. Scoping by project id used to default that name to "admin", so a
-    session scoped to an id the emulator had never seen came back with
-    cross-tenant access.
+    Keystone refuses to mint a scoped token that would carry no roles
+    (``TokenModel._validate_project_scope``), so a session cannot reach a project
+    it was never granted — and cannot acquire privilege by naming one.
     """
 
     @staticmethod
-    def _authenticate(client, scope):
-        response = client.post(
+    def _authenticate(client, scope, user="alice"):
+        return client.post(
             "/v3/auth/tokens",
             json={
                 "auth": {
@@ -814,7 +814,7 @@ class TestScopePrivilege:
                         "methods": ["password"],
                         "password": {
                             "user": {
-                                "name": "alice",
+                                "name": user,
                                 "domain": {"id": "default"},
                                 "password": "pw",
                             }
@@ -824,41 +824,42 @@ class TestScopePrivilege:
                 }
             },
         )
-        assert response.status_code in (200, 201)
-        return response.headers["X-Subject-Token"]
 
-    def test_scope_by_name_admin_is_privileged(self, client):
-        token = self._authenticate(
-            client, {"project": {"name": "admin", "domain": {"id": "default"}}}
+    def test_the_admin_user_scoped_to_the_admin_project_is_privileged(self, client):
+        response = self._authenticate(
+            client, {"project": {"name": "admin", "domain": {"id": "default"}}}, user="admin"
         )
-        assert validate_token_simple(token).is_admin is True
+        assert response.status_code == 200
+        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is True
 
     def test_unscoped_request_keeps_the_admin_default(self, client):
-        token = self._authenticate(client, None)
-        assert validate_token_simple(token).is_admin is True
+        response = self._authenticate(client, None, user="admin")
+        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is True
 
-    def test_scope_by_unknown_project_id_is_not_privileged(self, client):
-        token = self._authenticate(
+    def test_scope_by_unknown_project_id_is_refused(self, client):
+        response = self._authenticate(
             client, {"project": {"id": "11111111-2222-3333-4444-555555555555"}}
         )
+        assert response.status_code == 401
 
-        info = validate_token_simple(token)
-        assert info.is_admin is False
-        assert info.project_id == "11111111-2222-3333-4444-555555555555"
-        assert info.project_name != "admin"
-
-    def test_scope_by_known_project_id_uses_the_real_name(self, client):
+    def test_scope_without_an_assignment_is_refused(self, client):
         project = db.create_project(name="tenant-a", domain_id="default")
 
-        token = self._authenticate(client, {"project": {"id": project.id}})
+        response = self._authenticate(client, {"project": {"id": project.id}})
+        assert response.status_code == 401
 
-        info = validate_token_simple(token)
+    def test_scope_with_an_assignment_uses_the_real_name(self, client):
+        project = grant_scope(project_name="tenant-a", user_name="alice")
+
+        response = self._authenticate(client, {"project": {"id": project.id}})
+        assert response.status_code == 200
+        info = validate_token_simple(response.headers["X-Subject-Token"])
         assert info.project_name == "tenant-a"
         assert info.is_admin is False
 
-    def test_scope_by_known_admin_project_id_is_privileged(self, client):
+    def test_an_arbitrary_name_cannot_reach_the_admin_project(self, client):
+        """An unrecognised name is not the admin user and holds none of its roles."""
         admin_project = db.get_project_by_name("admin", "default")
 
-        token = self._authenticate(client, {"project": {"id": admin_project.id}})
-
-        assert validate_token_simple(token).is_admin is True
+        response = self._authenticate(client, {"project": {"id": admin_project.id}})
+        assert response.status_code == 401

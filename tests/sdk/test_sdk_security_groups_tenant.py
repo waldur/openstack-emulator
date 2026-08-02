@@ -9,6 +9,8 @@ import pytest
 from openstack.connection import Connection
 from openstack.exceptions import NotFoundException
 
+from tests.conftest import grant_scope
+
 
 class TestSecurityGroupTenantIsolation:
     """Test security group tenant/project isolation."""
@@ -43,6 +45,9 @@ class TestSecurityGroupTenantIsolation:
             domain_id="default",
             default_project_id=project1.id,
         )
+        # Keystone will not scope a token to a project the user holds no
+        # role on, so grant it the way an operator would.
+        grant_scope(project_id=project1.id, user_name="user1")
         admin_conn.close()
 
         # Connect as tenant1
@@ -91,6 +96,9 @@ class TestSecurityGroupTenantIsolation:
             domain_id="default",
             default_project_id=project2.id,
         )
+        # Keystone will not scope a token to a project the user holds no
+        # role on, so grant it the way an operator would.
+        grant_scope(project_id=project2.id, user_name="user2")
         admin_conn.close()
 
         # Connect as tenant2
@@ -248,6 +256,8 @@ class TestSecurityGroupRuleTenantIsolation:
             domain_id="default",
             default_project_id=project1.id,
         )
+        # Scoping requires a real assignment, as against a real Keystone.
+        grant_scope(project_id=project1.id, user_name="user1_rules")
         admin_conn.close()
 
         conn = openstack.connect(
@@ -290,6 +300,8 @@ class TestSecurityGroupRuleTenantIsolation:
             domain_id="default",
             default_project_id=project2.id,
         )
+        # Scoping requires a real assignment, as against a real Keystone.
+        grant_scope(project_id=project2.id, user_name="user2_rules")
         admin_conn.close()
 
         conn = openstack.connect(

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import scoped_token
 
 
 @pytest.fixture(autouse=True)
@@ -821,8 +822,7 @@ class TestRbacExternalNetworks:
     @staticmethod
     def _token_for(project: str) -> str:
         """Create a project and return an auth token scoped to it."""
-        db.create_project(name=project, project_id=project)
-        return db.create_token(project_name=project).id
+        return scoped_token(project_name=project, project_id=project).id
 
     @staticmethod
     def _create_network(token: str, name: str, **attrs) -> str:

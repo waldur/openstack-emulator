@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import grant_scope
 
 
 @pytest.fixture(autouse=True)
@@ -544,7 +545,7 @@ class TestServerSecurityGroups:
         assert "security_group_rules" not in groups[0]
 
     def test_owning_tenant_lists_groups(self, client):
-        project = db.create_project(name="tenant-a", domain_id="default")
+        project = grant_scope(project_name="tenant-a", user_name="alice")
         token = db.create_token(user_name="alice", project_name="tenant-a", domain_id="default").id
         assert db.get_project(project.id) is not None
         server_id = self._create_server(client, token)
@@ -560,7 +561,7 @@ class TestServerSecurityGroups:
     def test_foreign_tenant_gets_404(self, client, auth_token):
         """Tenant isolation, matching Nova: another project's server is invisible."""
         server_id = self._create_server(client, auth_token, name="owned-by-admin")
-        db.create_project(name="tenant-b", domain_id="default")
+        grant_scope(project_name="tenant-b", user_name="bob")
         other = db.create_token(user_name="bob", project_name="tenant-b", domain_id="default").id
 
         response = client.get(

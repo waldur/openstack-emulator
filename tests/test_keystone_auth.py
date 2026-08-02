@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
 from emulator.core.simple_auth import validate_token_simple
+from tests.conftest import grant_scope
 
 
 @pytest.fixture
@@ -55,8 +56,7 @@ class TestTokenPrivilege:
         assert info.is_admin is True
 
     def test_member_project_token_is_not_privileged(self, client):
-        project = db.create_project(name="tenant-a", domain_id="default")
-        db.create_user(name="alice", domain_id="default")
+        project = grant_scope(project_name="tenant-a", user_name="alice")
 
         response = _password_auth(client, "alice", project_id=project.id)
         assert response.status_code == 200
@@ -74,25 +74,23 @@ class TestTokenPrivilege:
         info = validate_token_simple(response.headers["X-Subject-Token"])
         assert info.is_admin is True
 
-    def test_default_role_fallback_does_not_confer_privilege(self, client):
-        """A user with no assignments still gets a usable token, not an admin one."""
+    def test_a_user_with_no_assignment_is_refused(self, client):
+        """Keystone will not mint a scoped token that would carry no roles."""
         project = db.create_project(name="tenant-c", domain_id="default")
         db.create_user(name="carol", domain_id="default")
 
         response = _password_auth(client, "carol", project_id=project.id)
-        body = response.json()
-        # The convenience fallback still hands out a role so the token is usable...
-        assert [role["name"] for role in body["token"]["roles"]] == ["admin"]
-        # ...but it must not be mistaken for genuine privilege.
-        assert validate_token_simple(response.headers["X-Subject-Token"]).is_admin is False
+
+        assert response.status_code == 401
+        assert "no access to project" in response.json()["error"]["message"]
 
 
 class TestTokenRescoping:
     """Rescoping preserves the exact user rather than re-resolving by name."""
 
     def test_rescope_preserves_user_id(self, client):
-        project = db.create_project(name="tenant-d", domain_id="default")
-        user = db.create_user(name="dave", domain_id="default")
+        project = grant_scope(project_name="tenant-d", user_name="dave")
+        user = db.get_user_by_name("dave", "default")
 
         first = _password_auth(client, "dave", project_id=project.id)
         unscoped_id = first.headers["X-Subject-Token"]
@@ -224,3 +222,64 @@ class TestUnscopedTokens:
         assert "catalog" not in body
         assert body["user"]["name"] == "frank"
         assert token.is_admin is False
+
+
+class TestScopeRequiresAssignment:
+    """Keystone's scoping rule, reproduced.
+
+    ``TokenModel.mint`` runs ``_validate_project_scope``, which raises
+    ``Unauthorized`` when a project-scoped token would carry no roles. There is
+    no default-role fallback in Keystone and there is none here.
+    """
+
+    def test_direct_assignment_is_enough(self, client):
+        project = db.create_project(name="direct", domain_id="default")
+        user = db.create_user(name="dana", domain_id="default")
+        role = db.create_role(name="member")
+        db.assign_role_to_user_on_project(role.id, user.id, project.id)
+
+        response = _password_auth(client, "dana", project_id=project.id)
+
+        assert response.status_code == 200
+        assert [r["name"] for r in response.json()["token"]["roles"]] == ["member"]
+
+    def test_a_group_assignment_is_enough(self, client):
+        """Group-derived roles count, as they do in Keystone's role resolution."""
+        project = db.create_project(name="via-group", domain_id="default")
+        user = db.create_user(name="gina", domain_id="default")
+        group = db.create_group(name="engineers", domain_id="default")
+        db.add_user_to_group(user.id, group.id)
+        role = db.create_role(name="member")
+        db.assign_role_to_group_on_project(role.id, group.id, project.id)
+
+        response = _password_auth(client, "gina", project_id=project.id)
+
+        assert response.status_code == 200
+        assert [r["name"] for r in response.json()["token"]["roles"]] == ["member"]
+
+    def test_an_unscoped_token_needs_no_assignment(self, client):
+        """Only *scoped* tokens are checked; an unscoped one proves identity only."""
+        db.create_user(name="hal", domain_id="default")
+
+        token = db.create_token(user_name="hal", unscoped=True)
+
+        assert token.roles == []
+        assert token.is_admin is False
+
+    def test_an_unknown_name_is_not_the_admin_user(self, client):
+        """An unrecognised name must not inherit the seeded admin's assignments.
+
+        It used to resolve to the default user id, which is the admin's, so any
+        name at all could scope wherever the admin could.
+        """
+        admin = db.get_user_by_name("admin", "default")
+
+        token = db.create_token(user_name="not-a-real-account", unscoped=True)
+
+        assert token.user_id != admin.id
+
+    def test_the_same_unknown_name_is_a_stable_identity(self, client):
+        first = db.create_token(user_name="ghost", unscoped=True)
+        second = db.create_token(user_name="ghost", unscoped=True)
+
+        assert first.user_id == second.user_id

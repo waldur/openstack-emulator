@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   object storage and a working federated login
 
 ### Changed
+- **Breaking.** Scoping a token now requires a real role assignment, as in
+  Keystone: `TokenModel.mint` runs `_validate_project_scope`, which rejects a
+  project-scoped token that would carry no roles. The emulator previously
+  issued one and invented an `admin` role. A client scoping to a project it was
+  never granted now gets 401 instead of a usable token. Grant the role the way
+  an operator would (`openstack role add --project P --user U member`), or use
+  the `grant_scope` helper in `tests/conftest.py`
+- **Breaking.** An unrecognised user name no longer resolves to the seeded
+  admin's identity. It used to inherit the admin's role assignments, so any
+  name at all could scope wherever the admin could. Unknown names now get a
+  stable identity of their own, derived from the name, holding no assignments
 - Resolve token privilege from a real admin role assignment or the admin
   project instead of inferring it from the project name, so the default-role
   fallback for users with no assignments no longer confers access
