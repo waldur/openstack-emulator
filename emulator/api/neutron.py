@@ -423,6 +423,42 @@ async def list_ports(
     return {"ports": [p.to_dict() for p in ports]}
 
 
+def _enforce_fixed_ip_policy(data: dict[str, Any], token: str | None) -> None:
+    """Pinning an IP requires admin, or ownership of the network.
+
+    Neutron's ``create_port:fixed_ips:ip_address`` rule is admin-or-network-owner.
+    A tenant may create a port on a network shared to it by RBAC, and may let
+    Neutron allocate an address, but may not choose one on a network it does not
+    own — real Neutron answers 403. Verified against RHOS 17: the same request
+    succeeds on the tenant's own network, succeeds without an ``ip_address``,
+    and succeeds when an admin makes it on the tenant's behalf.
+    """
+    requested = [
+        fip
+        for fip in (data.get("fixed_ips") or [])
+        if isinstance(fip, dict) and fip.get("ip_address")
+    ]
+    if not requested or not token:
+        return
+    try:
+        info = validate_token_simple(token, "Neutron")
+    except HTTPException:
+        return
+    if info.is_admin:
+        return
+    network = db.get_network(data.get("network_id", ""))
+    if network is not None and network.project_id == info.project_id:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "(rule:create_port and (rule:create_port:fixed_ips and "
+            "(rule:create_port:fixed_ips:subnet_id and "
+            "rule:create_port:fixed_ips:ip_address))) is disallowed by policy"
+        ),
+    )
+
+
 @router.post("/v2.0/ports", status_code=201)
 async def create_port(
     request: dict[str, Any],
@@ -431,6 +467,7 @@ async def create_port(
     """Create a port."""
     data = request.get("port", {})
     project_id = _resolve_project_id(data, x_auth_token)
+    _enforce_fixed_ip_policy(data, x_auth_token)
 
     try:
         port = db.create_port(
@@ -1182,9 +1219,32 @@ async def delete_rbac_policy(
     policy_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
-    """Delete an RBAC policy."""
-    success = db.delete_rbac_policy(policy_id)
-    if not success:
+    """Delete an RBAC policy.
+
+    Revoking the share while the target project still holds ports on the network
+    would strip access from resources that are using it, so Neutron refuses with
+    409 until those ports are gone. Verified against RHOS 17.
+    """
+    policy = db.get_rbac_policy(policy_id)
+    if policy is None:
+        raise HTTPException(status_code=404, detail="RBAC policy not found")
+    if policy.action == "access_as_shared" and policy.target_project not in ("*", ""):
+        dependents = [
+            port
+            for port in db.list_ports(network_id=policy.object_id)
+            if port.project_id == policy.target_project
+        ]
+        if dependents:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"RBAC policy on object {policy.object_id} cannot be removed "
+                    "because other objects depend on it. Details: Unable to "
+                    f"reconfigure sharing settings for network {policy.object_id}. "
+                    "Multiple tenants are using it."
+                ),
+            )
+    if not db.delete_rbac_policy(policy_id):
         raise HTTPException(status_code=404, detail="RBAC policy not found")
     return Response(status_code=204)
 

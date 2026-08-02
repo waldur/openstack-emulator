@@ -594,6 +594,7 @@ class Database:
         project_name: str = "admin",
         base_url: str = "http://localhost:8774",
         domain_id: str = "default",
+        project_domain_id: str | None = None,
         project_id: str | None = None,
         user_id: str | None = None,
         methods: list[str] | None = None,
@@ -610,7 +611,9 @@ class Database:
             user_name: Name of the authenticating user.
             project_name: Name of the project to scope to.
             base_url: Request base URL, used to build the service catalog.
-            domain_id: Domain the user (and project) belong to.
+            domain_id: Domain the user belongs to.
+            project_domain_id: Domain the scoped project belongs to. Keystone
+                treats it as independent of the user's domain; defaults to it.
             project_id: Project id to scope to; takes precedence over the name.
             user_id: User id to scope to; takes precedence over the name.
             methods: Authentication methods recorded on the token.
@@ -653,7 +656,7 @@ class Database:
             elif project_id:
                 project = self.get_project(project_id)
             else:
-                project = self.get_project_by_name(project_name, domain_id)
+                project = self.get_project_by_name(project_name, project_domain_id or domain_id)
             if not project and not unscoped:
                 # Synthesize a project, preserving the requested id if any so the
                 # token stays consistent with the scope the client asked for.
@@ -663,7 +666,7 @@ class Database:
                 project = Project(
                     id=project_id or self._default_project_id,
                     name=project_name or f"project-{project_id}",
-                    domain_id=domain_id,
+                    domain_id=project_domain_id or domain_id,
                 )
 
             # Roles the user genuinely holds on this project. Keep these apart
