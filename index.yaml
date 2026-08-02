@@ -2,8 +2,30 @@ apiVersion: v1
 entries:
   openstack-emulator:
   - apiVersion: v2
+    appVersion: 0.4.1
+    created: "2026-08-02T15:16:37.420557154Z"
+    description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
+      intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
+    digest: fef1e48db494c69f6cc7e820c3e39abfa818da64dd94f19663c0e935d41fd00d
+    home: https://code.opennodecloud.com/waldur/openstack-emulator
+    keywords:
+    - openstack
+    - emulator
+    - testing
+    - waldur
+    maintainers:
+    - name: Waldur Team
+      url: https://waldur.com/
+    name: openstack-emulator
+    sources:
+    - https://code.opennodecloud.com/waldur/openstack-emulator
+    type: application
+    urls:
+    - https://waldur.github.io/openstack-emulator/charts/openstack-emulator-0.4.1.tgz
+    version: 0.4.1
+  - apiVersion: v2
     appVersion: 0.4.0
-    created: "2026-08-02T14:42:19.399395836Z"
+    created: "2026-08-02T15:16:37.419183713Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 964dae22d036c8fac4d2ee4e06803efcf135b6c32158501625a6cb98a40931d1
@@ -25,7 +47,7 @@ entries:
     version: 0.4.0
   - apiVersion: v2
     appVersion: 0.3.0
-    created: "2026-08-02T14:42:19.397925094Z"
+    created: "2026-08-02T15:16:37.417768953Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: dac6ebe616ec8f7734f557ba71d93dc8fd956d2a0b98bef458bb3db51fd7098a
@@ -47,7 +69,7 @@ entries:
     version: 0.3.0
   - apiVersion: v2
     appVersion: 0.2.4
-    created: "2026-08-02T14:42:19.396539754Z"
+    created: "2026-08-02T15:16:37.416359242Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: c09131af9df5243e4fd397a8b0ce5751678e9a57de70aacf9243acd4a2f59247
@@ -69,7 +91,7 @@ entries:
     version: 0.2.4
   - apiVersion: v2
     appVersion: 0.2.3
-    created: "2026-08-02T14:42:19.395070961Z"
+    created: "2026-08-02T15:16:37.414958692Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 58d18b2e76ff67810e7681f2215fb0892df4ad9a940ba106573f6b8c8e3a193c
@@ -91,7 +113,7 @@ entries:
     version: 0.2.3
   - apiVersion: v2
     appVersion: 0.2.2
-    created: "2026-08-02T14:42:19.39363194Z"
+    created: "2026-08-02T15:16:37.41348999Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 9655f4f2f133e170056efe82e9d8b9a9075d9adab84c11d5fca7408642a5c057
@@ -113,7 +135,7 @@ entries:
     version: 0.2.2
   - apiVersion: v2
     appVersion: 0.2.1
-    created: "2026-08-02T14:42:19.391997136Z"
+    created: "2026-08-02T15:16:37.412044169Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 796abbeba168e09141cbc7df6a9d39c11cde2d0a9d2928b7b5b6760411d868c8
@@ -135,7 +157,7 @@ entries:
     version: 0.2.1
   - apiVersion: v2
     appVersion: latest
-    created: "2026-08-02T14:42:19.389961785Z"
+    created: "2026-08-02T15:16:37.410441565Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 734230e7546ced73429c64d012b3825ff36e278d69f6a756aeba78194c889493
@@ -157,7 +179,7 @@ entries:
     version: 0.0.2
   - apiVersion: v2
     appVersion: latest
-    created: "2026-08-02T14:42:19.388095527Z"
+    created: "2026-08-02T15:16:37.408712819Z"
     description: 'Lightweight OpenStack API emulator (Keystone/Nova/Cinder/Glance/Neutron/Octavia/Placement)
       intended as a demo/sandbox companion for Waldur Mastermind in Kubernetes. '
     digest: 0255f094752659a69f4fc87d1e13a663333b6199613c03cd8766ae217427cde2
@@ -177,4 +199,4 @@ entries:
     urls:
     - https://waldur.github.io/openstack-emulator/charts/openstack-emulator-0.0.1.tgz
     version: 0.0.1
-generated: "2026-08-02T14:42:19.384045326Z"
+generated: "2026-08-02T15:16:37.404317645Z"
