@@ -4862,7 +4862,7 @@ async def api_status(request: Request) -> dict:
             "health_monitors": len(db.list_health_monitors()),
             "swift_accounts": len(db.list_swift_accounts()),
             "swift_containers": len(db.list_swift_containers()),
-            "swift_objects": len(db._swift_objects),
+            "swift_objects": len(db.list_swift_objects()),
             "identity_providers": len(db.list_identity_providers()),
             "federation_mappings": len(db.list_federation_mappings()),
             "federation_protocols": len(db.list_all_federation_protocols()),

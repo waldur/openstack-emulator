@@ -515,7 +515,7 @@ class Token:
     project_name: str = ""
     domain_id: str = "default"
     domain_name: str = "Default"
-    roles: list[dict[str, str]] = field(default_factory=lambda: [{"id": "admin", "name": "admin"}])
+    roles: list[dict[str, str]] = field(default_factory=list)
     issued_at: datetime = field(default_factory=datetime.utcnow)
     expires_at: datetime | None = None
     catalog: list[dict[str, Any]] = field(default_factory=list)

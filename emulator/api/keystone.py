@@ -407,7 +407,6 @@ async def create_token(body: AuthBody, request: Request, response: Response) -> 
             user_id=resolved_user_id,
             methods=auth_methods,
             roles=forced_roles,
-            grant_default_admin_role=forced_roles is None and not federation_context,
             **federation_context,
         )
     except ScopeUnauthorizedError as exc:

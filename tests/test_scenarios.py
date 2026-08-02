@@ -471,3 +471,30 @@ class TestControlPlaneReachesDataPlane:
         stats = scenarios_client.get("/scenarios/stats").json()["global"]
         assert stats["failures_injected"] == 3
         assert stats["last_triggered"] is not None
+
+
+class TestNewServiceResourceTargeting:
+    """Failure injection can target the resources of the newer services.
+
+    ``get_resource_from_path`` matches against a lowercased path, so a pattern
+    carrying uppercase (``/v1/AUTH``) would silently never match and the request
+    would fall back to the catch-all "all" resource.
+    """
+
+    def test_object_storage_paths_are_recognised(self):
+        from emulator.core.middleware import get_resource_from_path
+
+        assert get_resource_from_path("/v1/AUTH_proj/backups/dump.tar") == "object_store"
+        assert get_resource_from_path("/v1/AUTH_proj") == "object_store"
+
+    def test_rating_paths_are_recognised(self):
+        from emulator.core.middleware import get_resource_from_path
+
+        assert get_resource_from_path("/v2/summary") == "rating"
+        assert get_resource_from_path("/v2/dataframes") == "rating"
+
+    def test_existing_mappings_still_win(self):
+        from emulator.core.middleware import get_resource_from_path
+
+        assert get_resource_from_path("/v2.1/servers") == "server"
+        assert get_resource_from_path("/v3/projects") == "project"

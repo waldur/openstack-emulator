@@ -50,6 +50,13 @@ def get_resource_from_path(path: str) -> str:
         ("/tokens", "token"),
         ("/domains", "domain"),
         ("/roles", "role"),
+        # Object storage paths are /v1/AUTH_<project>/<container>/<object>, so
+        # the account segment identifies them. Lowercase: patterns are matched
+        # against path.lower() below.
+        ("/v1/auth", "object_store"),
+        # Rating
+        ("/summary", "rating"),
+        ("/dataframes", "rating"),
     ]
 
     path_lower = path.lower()

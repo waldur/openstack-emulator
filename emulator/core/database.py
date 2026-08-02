@@ -443,12 +443,18 @@ class Database:
         manager_role = Role(id=str(uuid4()), name="manager", description="Manager role")
 
         self._roles[admin_role.id] = admin_role
+        # Nothing reads this today — the default-role fallback that used to was
+        # removed when scoping started requiring a real assignment. It stays
+        # because it belongs to the seeded-defaults set that
+        # test_keystone_defaults_still_point_at_real_objects guards: those ids
+        # were once re-minted on boot while the objects they named were loaded
+        # from disk, leaving them dangling.
+        self._admin_role_id = admin_role.id
         self._roles[member_role.id] = member_role
         self._roles[member_cap_role.id] = member_cap_role
         self._roles[member_underscore_role.id] = member_underscore_role
         self._roles[reader_role.id] = reader_role
         self._roles[manager_role.id] = manager_role
-        self._admin_role_id = admin_role.id
 
         # Assign admin role to admin user on admin project
         self._role_assignments.append(
@@ -594,7 +600,6 @@ class Database:
         user_id: str | None = None,
         methods: list[str] | None = None,
         unscoped: bool = False,
-        grant_default_admin_role: bool = True,
         is_federated: bool = False,
         idp_id: str = "",
         protocol_id: str = "",
@@ -612,8 +617,6 @@ class Database:
             user_id: User id to scope to; takes precedence over the name.
             methods: Authentication methods recorded on the token.
             unscoped: Issue a token with no project and no catalog.
-            grant_default_admin_role: Retained for call compatibility; scoping
-                now requires a real role assignment either way.
             is_federated: Mark the token as produced by OS-FEDERATION.
             idp_id: Identity provider that authenticated the user.
             protocol_id: Federation protocol used.
@@ -6296,14 +6299,22 @@ class Database:
             return True
 
     def list_swift_objects(
-        self, account: str, container: str, prefix: str | None = None
+        self,
+        account: str | None = None,
+        container: str | None = None,
+        prefix: str | None = None,
     ) -> list[SwiftObject]:
-        """List a container's objects, ordered by name as Swift does."""
+        """List objects, ordered by name as Swift does.
+
+        With no account or container, lists across the whole cloud, which the
+        API layer never does but the status dashboard needs.
+        """
         with self._lock:
             objects = [
                 o
                 for o in self._swift_objects.values()
-                if o.account == account and o.container == container
+                if (account is None or o.account == account)
+                and (container is None or o.container == container)
             ]
             if prefix:
                 objects = [o for o in objects if o.name.startswith(prefix)]
