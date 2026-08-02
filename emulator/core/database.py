@@ -1241,6 +1241,10 @@ class Database:
 
         Attached interfaces are released like Nova's deallocate_for_instance:
         Nova-created ports are deleted, pre-existing ports are unbound.
+
+        Attached volumes are detached the way Nova's _cleanup_volumes does. A
+        volume left carrying an attachment to a server that no longer exists
+        reads as in-use forever and can never be deleted or re-attached.
         """
         with self._lock:
             if server_id in self._servers:
@@ -1251,12 +1255,31 @@ class Database:
                 del self._servers[server_id]
                 for interface in self._server_network_interfaces.pop(server_id, []):
                     self._release_interface_port(interface, server_id)
+                self._detach_server_volumes(server_id)
                 if self.auto_save:
                     self.save()
                 return True
             return False
 
     # Server actions
+    def _detach_server_volumes(self, server_id: str) -> None:
+        """Release every volume attached to a server that is going away.
+
+        Caller holds the lock. A volume marked ``delete_on_termination`` goes
+        with the instance, as in Nova; the rest return to ``available``.
+        """
+        for attachment in self._server_volume_attachments.pop(server_id, []):
+            volume = self._volumes.get(attachment.volume_id)
+            if volume is None:
+                continue
+            volume.attachments = [a for a in volume.attachments if a.server_id != server_id]
+            if attachment.delete_on_termination:
+                self._volumes.pop(attachment.volume_id, None)
+                continue
+            if not volume.attachments:
+                volume.status = VolumeStatus.AVAILABLE
+            volume.updated_at = datetime.now(timezone.utc)
+
     def server_action(self, server_id: str, action: str) -> bool:
         """Perform an action on a server."""
         with self._lock:
@@ -1434,6 +1457,7 @@ class Database:
                 },
             )
             self._glance_images[image.id] = image
+            self._images[image.id] = image.to_nova_image()
             self._image_members[image.id] = []
             return image
 
@@ -3983,6 +4007,10 @@ class Database:
                 os_version=os_version,
             )
             self._glance_images[image.id] = image
+            # Nova serves images from its own store, so an image that only lands
+            # in Glance cannot be booted from. The seeded images are mirrored the
+            # same way; anything created later has to be too.
+            self._images[image.id] = image.to_nova_image()
             self._image_members[image.id] = []
             if self.auto_save:
                 self.save()
