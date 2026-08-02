@@ -120,10 +120,10 @@ Publish chart to GitHub Pages:
   #   helm install ose openstack-emulator/openstack-emulator --version X.Y.Z
   #
   # Versioning model: the tag IS the chart version. This job rewrites
-  # charts/openstack-emulator/Chart.yaml's `version:` to $CI_COMMIT_TAG at
-  # publish time, so the .tgz filename and the index always reflect the tag.
-  # appVersion stays at "latest" because the emulator image is currently only
-  # published with the :latest tag — bumping appVersion would break installs.
+  # charts/openstack-emulator/Chart.yaml's `version:` and `appVersion:` to
+  # $CI_COMMIT_TAG at publish time, so the .tgz filename, the index and the
+  # deployed image tag all reflect the tag. The matching :$CI_COMMIT_TAG image
+  # is pushed by the "Publish docker image" job below.
   #
   # Requires the CI variable $OPENNODE_JENKINS_GITHUB_TOKEN (same one
   # waldur-helm uses) to be configured at Settings → CI/CD → Variables, with

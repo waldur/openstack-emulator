@@ -395,7 +395,7 @@ The emulator ships a Helm chart at `charts/openstack-emulator/`, published to Gi
    uv run scripts/release.py release X.Y.Z     # bump, check, changelog, commit, tag, optionally push
    ```
 
-   The script bumps both `pyproject.toml`'s `[project].version` and `charts/openstack-emulator/Chart.yaml`'s `version:`. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned.
+   The script bumps `pyproject.toml`'s `[project].version` and both `version:` and `appVersion:` in `charts/openstack-emulator/Chart.yaml`. `appVersion` is the image tag the chart deploys (`templates/_helpers.tpl` defaults the image tag to `.Chart.AppVersion`), and the `Publish docker image` CI job pushes a matching `:X.Y.Z` image alongside `:latest` on tag.
 
 5. **Changelog:** `release` also generates a `CHANGELOG.md` entry via `scripts/changelog.sh`, which categorizes the commits since the previous tag (`scripts/generate_changelog_data.py`), drafts an entry with the `claude` CLI using `scripts/prompts/changelog-prompt.md`, and lets you accept/edit/regenerate it before it's prepended to `CHANGELOG.md` and included in the release commit. This step is **interactive and local-only** (it shells out to `claude`); it is not run in CI. Pass `--skip-changelog` to bypass it, or run `scripts/changelog.sh X.Y.Z` standalone.
 

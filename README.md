@@ -35,12 +35,12 @@ pip install -e ".[dev]"
 
 ### Run on Kubernetes (via Helm)
 
-A published Helm chart deploys the emulator as a single-replica `Deployment` + `ClusterIP` Service that exposes all nine ports. Consumers in the same cluster reach Keystone at `http://<release>-openstack-emulator.<ns>.svc.cluster.local:5000/v3` with the admin/`s4l4dus`/`Default` credentials.
+A published Helm chart deploys the emulator as a single-replica `Deployment` + `ClusterIP` Service that exposes all twelve ports. Consumers in the same cluster reach Keystone at `http://<release>-openstack-emulator.<ns>.svc.cluster.local:5000/v3` with the admin/`s4l4dus`/`Default` credentials.
 
 ```bash
 helm repo add openstack-emulator https://waldur.github.io/openstack-emulator/
 helm install ose openstack-emulator/openstack-emulator \
-  --namespace ose --create-namespace --version 0.0.1
+  --namespace ose --create-namespace --version 0.4.1
 helm test ose -n ose      # curls /health on the five main service ports
 ```
 
@@ -57,6 +57,13 @@ openstack-emulator --service=nova
 
 # Run with persistence enabled
 openstack-emulator --persist-db=emulator_data.json --auto-save
+
+# Seed sample resources from a built-in preset
+openstack-emulator --list-presets
+openstack-emulator --preset development
+
+# Shift every port (useful when 5000 is taken) — keystone then listens on 6000
+openstack-emulator --port-offset 1000
 ```
 
 ### Using with OpenStack CLI
@@ -77,12 +84,18 @@ openstack volume list
 
 ### API Documentation
 
-Once running, access Swagger UI at:
+Every service serves Swagger UI at `/docs` and a health probe at `/health`:
 - Keystone: http://localhost:5000/docs
 - Nova: http://localhost:8774/docs
 - Cinder: http://localhost:8776/docs
 - Glance: http://localhost:9292/docs
 - Neutron: http://localhost:9696/docs
+- Octavia: http://localhost:9876/docs
+- Placement: http://localhost:8778/docs
+- Swift: http://localhost:8080/docs
+- OIDC: http://localhost:5556/docs
+- CloudKitty: http://localhost:8889/docs
+- Scenarios: http://localhost:8999/docs
 - Status UI: http://localhost:10000/
 
 ## Documentation
@@ -92,6 +105,8 @@ Once running, access Swagger UI at:
 - [API Examples](docs/api-examples.md) - curl and SDK examples
 - [Federated identity (OIDC)](docs/federation.md) - Keystone federation and the embedded OpenID Provider
 - [Scenario Injection](docs/scenarios.md) - Failure testing guide
+- [Development Guide](docs/development.md) - Code style, adding a service, release pipeline
+- [API Compliance](docs/api-compliance.md) - Comparing the emulator against official OpenStack specs
 - [Architecture](docs/architecture/) - System design documentation
   - [Overview](docs/architecture/README.md) - Architecture overview
   - [Data Models](docs/architecture/data-models.md) - Model definitions
@@ -108,7 +123,8 @@ openstack-emulator/
 ├── charts/
 │   └── openstack-emulator/  # Helm chart published to GitHub Pages
 ├── scripts/
-│   ├── release.py     # Tag-driven release helper (status / check / release X.Y.Z)
+│   ├── release.py     # Tag-driven release helper (status / check / release X.Y.Z / build)
+│   ├── changelog.sh   # Interactive CHANGELOG.md entry generator
 │   └── check-api-compliance.sh  # OpenStack API compliance comparison
 ├── tests/             # Python test suite
 ├── docs/              # User-facing documentation
@@ -131,17 +147,21 @@ Releases are tag-driven. Pushing a `X.Y.Z` tag triggers GitLab CI to:
 - Run the full Python test matrix (3.10–3.13), linters, type checks, and `helm lint` + `helm unittest`
 - Package the chart and push `charts/openstack-emulator-X.Y.Z.tgz` + an updated `index.yaml` to the `gh-pages` branch of the GitHub mirror at [github.com/waldur/openstack-emulator](https://github.com/waldur/openstack-emulator)
 - GitHub Pages serves the branch at <https://waldur.github.io/openstack-emulator/>, where `helm repo add` consumers pick up the new version
+- Build and push the Docker image as both `:X.Y.Z` and `:latest`
 
-The [`scripts/release.py`](scripts/release.py) helper bundles the version bump + checks + tag + push:
+The [`scripts/release.py`](scripts/release.py) helper bundles the version bump + checks + changelog + tag + push:
 
 ```bash
 uv run scripts/release.py status                   # show current versions + recent tags
 uv run scripts/release.py check                    # run the same gates CI runs (fast subset)
-uv run scripts/release.py version-update 0.2.0     # bump pyproject.toml + Chart.yaml only
-uv run scripts/release.py release 0.2.0            # bump → check → commit → tag → (confirm) push
+uv run scripts/release.py version-update 0.4.2     # bump pyproject.toml + Chart.yaml only
+uv run scripts/release.py release 0.4.2            # bump → check → changelog → commit → tag → (confirm) push
+uv run scripts/release.py build                    # build the sdist/wheel and package the chart locally
 ```
 
-The release script keeps `pyproject.toml`'s `[project].version` and `charts/openstack-emulator/Chart.yaml`'s `version:` in lockstep. `appVersion:` is intentionally left at `"latest"` until the Docker image starts being tag-versioned.
+The release script keeps `pyproject.toml`'s `[project].version` and both `version:` and `appVersion:` in `charts/openstack-emulator/Chart.yaml` in lockstep — `appVersion` is the image tag the chart deploys, and CI publishes a matching `:X.Y.Z` image on tag.
+
+`release` also drafts a `CHANGELOG.md` entry via [`scripts/changelog.sh`](scripts/changelog.sh), which shells out to the `claude` CLI and prompts you to accept/edit/regenerate it. That step is interactive and local-only; pass `--skip-changelog` to bypass it.
 
 ## Limitations
 

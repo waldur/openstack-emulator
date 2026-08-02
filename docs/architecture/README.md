@@ -67,7 +67,7 @@ The OpenStack Emulator is a lightweight implementation of OpenStack APIs designe
 - **Framework**: FastAPI (async REST API framework)
 - **Validation**: Pydantic (request/response validation)
 - **Database**: In-memory Python dictionaries (thread-safe)
-- **Concurrency**: Multiprocessing (each service runs independently)
+- **Concurrency**: One process; every service app runs as an asyncio task on its own port
 
 ## Key Design Decisions
 
@@ -104,9 +104,24 @@ Because the services share a process and therefore one stdout, each request is
 logged by an access-log middleware that names the service and port that handled
 it; uvicorn's own access log cannot distinguish them.
 
-### 3. Simplified Authentication
+### 3. Simplified Authentication, Real Authorization
 
-While the emulator implements Keystone token authentication, it accepts any valid credentials by default. This simplifies testing while maintaining API compatibility.
+Passwords are not checked — any username authenticates, and an unknown name
+becomes a stable identity derived from the name and domain rather than the
+seeded admin. Authorization is not simplified in the same way:
+
+- Scoping a token to a project requires a real role assignment on it. Without
+  one, `POST /v3/auth/tokens` fails the way Keystone's `_validate_project_scope`
+  fails, instead of quietly returning a usable token.
+- A rejected token is answered with `401`, not `404`.
+- Privilege comes from holding the `admin` role (or scoping to the `admin`
+  project); a privileged token may address resources across projects, while a
+  tenant-scoped token stays isolated. See
+  [`emulator/core/simple_auth.py`](../../emulator/core/simple_auth.py).
+
+Federated authentication is supported end to end — an OIDC token from the
+embedded provider maps to a Keystone user via an identity provider, protocol
+and mapping. See [Federation](../federation.md).
 
 ### 4. Immediate Resource Transitions
 
@@ -116,9 +131,9 @@ Unlike real OpenStack where resource creation is asynchronous (BUILD -> ACTIVE),
 
 ```
 emulator/
-├── __init__.py          # CLI entry point
+├── __init__.py          # CLI entry point (argument parsing, service startup)
 ├── api/                 # REST API layer
-│   ├── app_*.py         # Standalone service applications
+│   ├── unified_app.py   # Builds every service app; runs them as asyncio tasks
 │   ├── keystone.py      # Keystone API routes
 │   ├── nova.py          # Nova API routes
 │   ├── cinder.py        # Cinder API routes
@@ -126,14 +141,25 @@ emulator/
 │   ├── neutron.py       # Neutron API routes
 │   ├── octavia.py       # Octavia API routes
 │   ├── placement.py     # Placement API routes
+│   ├── swift.py         # Swift object storage routes
+│   ├── oidc.py          # Embedded OpenID Provider routes
+│   ├── cloudkitty.py    # CloudKitty rating routes
+│   ├── presets.py       # Preset loading
 │   ├── scenarios.py     # Scenario injection routes
 │   └── status_ui.py     # Status Web UI routes
-└── core/                # Core business logic
-    ├── database.py      # In-memory database
-    ├── models.py        # Data models (dataclasses)
-    ├── middleware.py    # Scenario injection middleware
-    ├── scenarios.py     # Scenario definitions
-    └── scenario_manager.py  # Scenario state (shared by the API, UI and middleware)
+├── core/                # Core business logic
+│   ├── database.py      # In-memory database
+│   ├── models.py        # Data models (dataclasses)
+│   ├── persistence.py   # Dataclass-derived JSON save/load
+│   ├── federation.py    # Federated identity mapping
+│   ├── simple_auth.py   # Token validation shared by every service
+│   ├── exceptions.py    # Domain errors (e.g. unauthorized scope)
+│   ├── headers.py       # Header helpers
+│   ├── middleware.py    # Scenario injection middleware
+│   ├── logging_middleware.py  # Per-service access log
+│   ├── scenarios.py     # Scenario definitions
+│   └── scenario_manager.py  # Scenario state (shared by the API, UI and middleware)
+└── presets/             # Built-in preset YAMLs (development, production, …)
 ```
 
 ## Related Documentation
