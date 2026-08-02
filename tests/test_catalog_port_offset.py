@@ -76,3 +76,28 @@ class TestOffsetPorts:
 class TestOffsetIsNotState:
     def test_offset_defaults_to_zero(self):
         assert Database().port_offset == 0
+
+
+class TestStatusUiHonoursOffset:
+    """The dashboard probes the ports the services are bound to.
+
+    It health-checks by connecting to each service's port. Probing the standard
+    ports under an offset made every service render OFFLINE while the emulator
+    was serving happily one port-block over.
+    """
+
+    def test_reported_ports_are_shifted(self, monkeypatch):
+        from emulator.api import status_ui
+
+        db = Database()
+        db.port_offset = 100
+        monkeypatch.setattr(status_ui, "db", db)
+
+        reported = {
+            name: info["port"] + status_ui.db.port_offset
+            for name, info in status_ui.SERVICES.items()
+        }
+
+        assert reported["keystone"] == SERVICE_PORTS["keystone"] + 100
+        assert reported["nova"] == SERVICE_PORTS["nova"] + 100
+        assert not set(reported.values()) & set(SERVICE_PORTS.values())
