@@ -5521,7 +5521,11 @@ class Database:
         """
         with self._lock:
             network = self._networks.get(floating_network_id)
-            if not network or not network.external:
+            # is_network_external_for, not network.external: a network shared
+            # through an access_as_external RBAC policy is a valid floating-IP
+            # network, exactly as it is a valid router gateway. Checking the flag
+            # directly made those two disagree.
+            if not network or not self.is_network_external_for(floating_network_id, project_id):
                 return None
 
             # Allocate from the external network's own subnet, the way Neutron
@@ -5548,13 +5552,13 @@ class Database:
             # Create floating IP ID first (needed for port device_id)
             fip_id = str(uuid4())
 
-            # Find a subnet on the external network for the floating port
-            subnet_id = None
-            for sid in network.subnets:
-                subnet = self._subnets.get(sid)
-                if subnet:
-                    subnet_id = sid
-                    break
+            # Pair the address with the subnet that actually contains it. Taking
+            # the network's first subnet mislabels the port on a multi-subnet
+            # external network, and _allocate_ip_from_subnet keys its used-address
+            # set on subnet_id - so a wrong or empty one lets the address be
+            # handed out a second time.
+            subnet = self._find_subnet_for_ip(network, floating_ip_address)
+            subnet_id = subnet.id if subnet else None
 
             # Create a port on the external network to hold the floating IP
             # This mimics real Neutron behavior where a port with
@@ -5571,9 +5575,19 @@ class Database:
                     if subnet_id
                     else []
                 ),
-                device_id=fip_id,  # Link back to the floating IP
+                # Neutron sets device_id to the literal "PENDING" here and only
+                # rewrites it to the floating IP's id after the record commits,
+                # so a crash in between leaves a port its janitor can reap
+                # (_get_dead_floating_port_candidates). We create both under one
+                # lock, so that window cannot open and the sentinel would be a
+                # state nothing could ever observe.
+                device_id=fip_id,
                 device_owner=DEVICE_OWNER_FLOATINGIP,
-                project_id=project_id,
+                # Neutron: "This external port is never exposed to the project.
+                # it is used purely for internal system and admin use when
+                # managing floating IPs." Leaving it project-less keeps it out of
+                # tenant port listings, as in a real cloud.
+                project_id="",
                 security_groups=[],
                 port_security_enabled=False,  # Floating IP ports don't have port security
             )
