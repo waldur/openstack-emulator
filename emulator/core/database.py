@@ -15,6 +15,7 @@ from emulator.core import persistence
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
+    IpAddressGenerationFailureError,
     PortInUseError,
     PortNotFoundError,
     ScopeUnauthorizedError,
@@ -5139,9 +5140,18 @@ class Database:
 
         self._release_router_gateway_port(router_id)
 
+        network = self._networks.get(network_id)
         fixed_ips = requested_ips
-        if not fixed_ips:
-            network = self._networks.get(network_id)
+        if fixed_ips:
+            # Pair each requested address with the subnet that contains it.
+            # _allocate_ip_from_subnet keys its used-address set on subnet_id, so
+            # an unresolved one leaves the address invisible to the allocator and
+            # it can be handed out a second time.
+            if network:
+                fixed_ips = [
+                    self._resolve_fixed_ip_subnet(network, fixed_ip) for fixed_ip in fixed_ips
+                ]
+        else:
             subnet = None
             if network:
                 subnet = next(
@@ -5154,8 +5164,17 @@ class Database:
                 )
             if subnet:
                 ip_address = self._allocate_ip_from_subnet(subnet)
-                if ip_address:
-                    fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
+                if not ip_address:
+                    # A subnet exists but has nothing left. Neutron surfaces this
+                    # as IpAddressGenerationFailure (409) from IPAM and the
+                    # gateway is not set. Only a network with no subnets at all
+                    # yields a gateway port with no address - see below.
+                    raise IpAddressGenerationFailureError(network_id)
+                fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
+            # No subnet at all: fall through with an empty fixed_ips. Neutron
+            # calls this "not an error" (Subnet.network_has_no_subnet) and
+            # _create_router_gw_port merely logs "No IPs available for external
+            # network", leaving the gateway set with external_fixed_ips: [].
 
         # The port is created either way, so an explicitly requested address is
         # accounted for and cannot later be handed out to something else.
@@ -5182,6 +5201,15 @@ class Database:
             enable_snat=external_gateway_info.get("enable_snat", True),
             external_fixed_ips=fixed_ips,
         )
+
+    def _resolve_fixed_ip_subnet(self, network: Network, fixed_ip: FixedIP) -> FixedIP:
+        """Fill in a requested fixed IP's subnet_id from its address."""
+        if fixed_ip.subnet_id or not fixed_ip.ip_address:
+            return fixed_ip
+        subnet = self._find_subnet_for_ip(network, fixed_ip.ip_address)
+        if subnet is None:
+            return fixed_ip
+        return FixedIP(subnet_id=subnet.id, ip_address=fixed_ip.ip_address)
 
     @staticmethod
     def _same_fixed_ips(current: list[FixedIP], requested: list[FixedIP]) -> bool:

@@ -516,14 +516,126 @@ class TestRouters:
                 }
             },
         ).json()["router"]
-        assert router["external_gateway_info"]["external_fixed_ips"] == [
-            {"subnet_id": "", "ip_address": "203.0.113.55"}
-        ]
+        fixed_ips = router["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in fixed_ips] == ["203.0.113.55"]
+        # The subnet is resolved from the address, so the allocator can see the
+        # address is taken.
+        assert fixed_ips[0]["subnet_id"]
 
         gateway_ports = db.list_ports(device_owner="network:router_gateway")
         assert len(gateway_ports) == 1
         assert gateway_ports[0].device_id == router["id"]
         assert [ip.ip_address for ip in gateway_ports[0].fixed_ips] == ["203.0.113.55"]
+
+    def test_exhausted_external_subnet_fails_the_gateway(self):
+        """A subnet with nothing left is a conflict, not a silent empty gateway.
+
+        Neutron's IPAM raises IpAddressGenerationFailure (a Conflict) and the
+        gateway is not set. Answering 201 with external_fixed_ips: [] would tell
+        the client it had a gateway when it has no address.
+        """
+        net_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "tiny-gw-ext", "router:external": True}},
+        ).json()["network"]["id"]
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "tiny-gw-subnet",
+                    "network_id": net_id,
+                    "cidr": "198.51.100.0/24",
+                    "allocation_pools": [{"start": "198.51.100.10", "end": "198.51.100.10"}],
+                }
+            },
+        )
+
+        first = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gw-one",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert first.status_code == 201, first.text
+
+        second = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gw-two",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert second.status_code == 409, second.text
+
+    def test_external_network_without_subnets_yields_an_empty_gateway(self):
+        """No subnets at all is not an error - Neutron says so explicitly.
+
+        Subnet.network_has_no_subnet: "Network has *no* subnets of any kind.
+        This isn't an error." _create_router_gw_port then just logs "No IPs
+        available for external network" and the gateway is set regardless.
+        """
+        net_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "bare-gw-ext", "router:external": True}},
+        ).json()["network"]["id"]
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "bare-gw-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+        gateway = response.json()["router"]["external_gateway_info"]
+        assert gateway["network_id"] == net_id
+        assert gateway["external_fixed_ips"] == []
+
+    def test_explicit_gateway_ip_is_not_handed_out_again(self):
+        """An explicitly requested gateway address is accounted for.
+
+        The port carries it with a subnet_id resolved from the address, which is
+        what _allocate_ip_from_subnet matches on when computing used addresses.
+        Left unresolved, the next allocation would hand out the same address.
+        """
+        net_id = self._external_network_id()
+        subnet_id = client.get(f"/v2.0/networks/{net_id}").json()["network"]["subnets"][0]
+        subnet = client.get(f"/v2.0/subnets/{subnet_id}").json()["subnet"]
+        pinned = subnet["allocation_pools"][0]["start"]
+
+        client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "pinned-gw-router",
+                    "external_gateway_info": {
+                        "network_id": net_id,
+                        "external_fixed_ips": [{"ip_address": pinned}],
+                    },
+                }
+            },
+        )
+
+        # A second router allocating from the same pool must skip the pinned one.
+        second = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "auto-gw-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert second.status_code == 201, second.text
+        allocated = second.json()["router"]["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in allocated] != [pinned]
 
     def test_clearing_gateway_releases_the_port(self):
         """Removing the gateway drops its port so the pool does not leak."""

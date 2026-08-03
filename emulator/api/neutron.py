@@ -9,7 +9,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.exceptions import FixedIPAlreadyInUseError, InvalidFixedIPError
+from emulator.core.exceptions import (
+    FixedIPAlreadyInUseError,
+    InvalidFixedIPError,
+    IpAddressGenerationFailureError,
+)
 from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
@@ -617,13 +621,19 @@ async def create_router(
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
-    router = db.create_router(
-        name=data.get("name", ""),
-        project_id=project_id,
-        description=data.get("description", ""),
-        admin_state_up=data.get("admin_state_up", True),
-        external_gateway_info=data.get("external_gateway_info"),
-    )
+    try:
+        router = db.create_router(
+            name=data.get("name", ""),
+            project_id=project_id,
+            description=data.get("description", ""),
+            admin_state_up=data.get("admin_state_up", True),
+            external_gateway_info=data.get("external_gateway_info"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     return {"router": router.to_dict()}
 
 
@@ -658,15 +668,21 @@ async def update_router(
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
-    router = db.update_router(
-        router_id=router_id,
-        project_id=project_id,
-        name=data.get("name"),
-        description=data.get("description"),
-        admin_state_up=data.get("admin_state_up"),
-        external_gateway_info=data.get("external_gateway_info"),
-        routes=data.get("routes"),
-    )
+    try:
+        router = db.update_router(
+            router_id=router_id,
+            project_id=project_id,
+            name=data.get("name"),
+            description=data.get("description"),
+            admin_state_up=data.get("admin_state_up"),
+            external_gateway_info=data.get("external_gateway_info"),
+            routes=data.get("routes"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     if not router:
         raise HTTPException(status_code=404, detail="Router not found")
     return {"router": router.to_dict()}
