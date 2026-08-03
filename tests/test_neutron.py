@@ -425,6 +425,241 @@ class TestRouters:
         data = response.json()
         assert data["router"]["name"] == "updated-router"
 
+    def _external_network_id(self):
+        """Return the id of the seeded external network."""
+        networks = client.get("/v2.0/networks?router:external=true").json()["networks"]
+        return networks[0]["id"]
+
+    def test_set_gateway_allocates_external_fixed_ip(self):
+        """A gateway set without fixed IPs gets one from the external subnet.
+
+        Real Neutron allocates the address and reports it back; clients such as
+        Waldur read external_fixed_ips[0] straight after the call.
+        """
+        net_id = self._external_network_id()
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gateway-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+        router = response.json()["router"]
+        fixed_ips = router["external_gateway_info"]["external_fixed_ips"]
+        assert len(fixed_ips) == 1
+        assert fixed_ips[0]["ip_address"].startswith("203.0.113.")
+        assert fixed_ips[0]["subnet_id"]
+
+        # The allocation is backed by a gateway port, as in real Neutron.
+        gateway_ports = db.list_ports(device_owner="network:router_gateway")
+        assert len(gateway_ports) == 1
+        assert gateway_ports[0].device_id == router["id"]
+
+        # ...but that port is hidden from the tenant, the way Neutron hides it
+        # ("Port has no 'project-id', as it is hidden from user").
+        visible = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
+        assert [p for p in visible if p["device_owner"] == "network:router_gateway"] == []
+
+    def test_setting_the_same_gateway_is_idempotent(self):
+        """Re-sending an unchanged gateway keeps the address and the port.
+
+        Neutron's _update_router_gw_info only replaces the gateway port when
+        the network changed or the requested IPs actually differ, so a client
+        that re-asserts its desired state does not get a new address.
+        """
+        net_id = self._external_network_id()
+
+        router_id = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "idempotent-gateway-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        ).json()["router"]["id"]
+        first = client.get(f"/v2.0/routers/{router_id}").json()["router"]
+        first_ip = first["external_gateway_info"]["external_fixed_ips"][0]["ip_address"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}",
+            json={"router": {"external_gateway_info": {"network_id": net_id}}},
+        )
+        assert response.status_code == 200, response.text
+        again = response.json()["router"]["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in again] == [first_ip]
+
+        assert len(db.list_ports(device_owner="network:router_gateway")) == 1
+
+    def test_explicit_external_fixed_ip_is_backed_by_a_port(self):
+        """An explicitly requested gateway address still gets a port.
+
+        Neutron's _create_router_gw_port always creates the port, passing the
+        caller's fixed_ips through. Without one the address is unaccounted for
+        and could later be handed out to something else.
+        """
+        net_id = self._external_network_id()
+
+        router = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "explicit-gateway-router",
+                    "external_gateway_info": {
+                        "network_id": net_id,
+                        "external_fixed_ips": [{"ip_address": "203.0.113.55"}],
+                    },
+                }
+            },
+        ).json()["router"]
+        fixed_ips = router["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in fixed_ips] == ["203.0.113.55"]
+        # The subnet is resolved from the address, so the allocator can see the
+        # address is taken.
+        assert fixed_ips[0]["subnet_id"]
+
+        gateway_ports = db.list_ports(device_owner="network:router_gateway")
+        assert len(gateway_ports) == 1
+        assert gateway_ports[0].device_id == router["id"]
+        assert [ip.ip_address for ip in gateway_ports[0].fixed_ips] == ["203.0.113.55"]
+
+    def test_exhausted_external_subnet_fails_the_gateway(self):
+        """A subnet with nothing left is a conflict, not a silent empty gateway.
+
+        Neutron's IPAM raises IpAddressGenerationFailure (a Conflict) and the
+        gateway is not set. Answering 201 with external_fixed_ips: [] would tell
+        the client it had a gateway when it has no address.
+        """
+        net_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "tiny-gw-ext", "router:external": True}},
+        ).json()["network"]["id"]
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "tiny-gw-subnet",
+                    "network_id": net_id,
+                    "cidr": "198.51.100.0/24",
+                    "allocation_pools": [{"start": "198.51.100.10", "end": "198.51.100.10"}],
+                }
+            },
+        )
+
+        first = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gw-one",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert first.status_code == 201, first.text
+
+        second = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gw-two",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert second.status_code == 409, second.text
+
+    def test_external_network_without_subnets_yields_an_empty_gateway(self):
+        """No subnets at all is not an error - Neutron says so explicitly.
+
+        Subnet.network_has_no_subnet: "Network has *no* subnets of any kind.
+        This isn't an error." _create_router_gw_port then just logs "No IPs
+        available for external network" and the gateway is set regardless.
+        """
+        net_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "bare-gw-ext", "router:external": True}},
+        ).json()["network"]["id"]
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "bare-gw-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+        gateway = response.json()["router"]["external_gateway_info"]
+        assert gateway["network_id"] == net_id
+        assert gateway["external_fixed_ips"] == []
+
+    def test_explicit_gateway_ip_is_not_handed_out_again(self):
+        """An explicitly requested gateway address is accounted for.
+
+        The port carries it with a subnet_id resolved from the address, which is
+        what _allocate_ip_from_subnet matches on when computing used addresses.
+        Left unresolved, the next allocation would hand out the same address.
+        """
+        net_id = self._external_network_id()
+        subnet_id = client.get(f"/v2.0/networks/{net_id}").json()["network"]["subnets"][0]
+        subnet = client.get(f"/v2.0/subnets/{subnet_id}").json()["subnet"]
+        pinned = subnet["allocation_pools"][0]["start"]
+
+        client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "pinned-gw-router",
+                    "external_gateway_info": {
+                        "network_id": net_id,
+                        "external_fixed_ips": [{"ip_address": pinned}],
+                    },
+                }
+            },
+        )
+
+        # A second router allocating from the same pool must skip the pinned one.
+        second = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "auto-gw-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert second.status_code == 201, second.text
+        allocated = second.json()["router"]["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in allocated] != [pinned]
+
+    def test_clearing_gateway_releases_the_port(self):
+        """Removing the gateway drops its port so the pool does not leak."""
+        net_id = self._external_network_id()
+
+        router_id = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gateway-release-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        ).json()["router"]["id"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}",
+            json={"router": {"external_gateway_info": {}}},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["router"]["external_gateway_info"] is None
+
+        assert db.list_ports(device_owner="network:router_gateway") == []
+
     def test_delete_router(self):
         """Test deleting a router."""
         # Create a router first
@@ -496,6 +731,81 @@ class TestFloatingIPs:
         data = response.json()
         assert data["floatingip"]["floating_network_id"] == ext_network["id"]
         assert data["floatingip"]["floating_ip_address"]
+
+    def test_floating_ips_come_from_the_subnet_allocation_pool(self):
+        """Allocation follows the external subnet's pool, not a fixed counter.
+
+        The gateway (.1) sits outside the pool, so handing it out as the first
+        floating IP would collide with the router's own address.
+        """
+        networks = client.get("/v2.0/networks").json()["networks"]
+        ext_network = next((n for n in networks if n.get("router:external")), None)
+        if not ext_network:
+            pytest.skip("No external network available")
+
+        subnet = client.get(f"/v2.0/subnets/{ext_network['subnets'][0]}").json()["subnet"]
+        pool = subnet["allocation_pools"][0]
+        pool_start = int(pool["start"].rsplit(".", 1)[1])
+        pool_end = int(pool["end"].rsplit(".", 1)[1])
+        prefix = pool["start"].rsplit(".", 1)[0]
+
+        addresses = []
+        for _ in range(3):
+            response = client.post(
+                "/v2.0/floatingips",
+                json={"floatingip": {"floating_network_id": ext_network["id"]}},
+            )
+            assert response.status_code == 201, response.text
+            addresses.append(response.json()["floatingip"]["floating_ip_address"])
+
+        assert len(set(addresses)) == 3, "floating IPs must not be handed out twice"
+        for address in addresses:
+            head, host = address.rsplit(".", 1)
+            assert head == prefix, f"{address} is outside the external subnet"
+            assert pool_start <= int(host) <= pool_end, f"{address} is outside the pool"
+            assert address != subnet["gateway_ip"]
+
+    def test_exhausted_pool_is_a_conflict_not_a_missing_network(self):
+        """A full pool answers 409, not the 404 used for an unknown network.
+
+        Neutron raises IpAddressGenerationFailure, a Conflict. Clients act on
+        the difference: Waldur catches the exhaustion errors specifically to
+        report a full external pool rather than a broken configuration.
+        """
+        network_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "tiny-ext", "router:external": True}},
+        ).json()["network"]["id"]
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "tiny-ext-subnet",
+                    "network_id": network_id,
+                    "cidr": "198.51.100.0/24",
+                    "allocation_pools": [{"start": "198.51.100.10", "end": "198.51.100.11"}],
+                }
+            },
+        )
+
+        for _ in range(2):
+            response = client.post(
+                "/v2.0/floatingips",
+                json={"floatingip": {"floating_network_id": network_id}},
+            )
+            assert response.status_code == 201, response.text
+
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": network_id}},
+        )
+        assert response.status_code == 409, response.text
+
+        missing = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": "no-such-network"}},
+        )
+        assert missing.status_code == 404, missing.text
 
     def test_create_floating_ip_creates_port(self):
         """Test that creating a floating IP also creates a port on the external network.

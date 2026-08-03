@@ -15,6 +15,7 @@ from emulator.core import persistence
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
+    IpAddressGenerationFailureError,
     PortInUseError,
     PortNotFoundError,
     ScopeUnauthorizedError,
@@ -196,7 +197,6 @@ class Database:
         self._floating_ips: dict[str, FloatingIP] = {}
         self._security_groups: dict[str, SecurityGroup] = {}
         self._security_group_rules: dict[str, SecurityGroupRule] = {}
-        self._next_floating_ip: int = 1  # For generating sequential floating IPs
 
         # Storage dictionaries - Nova Server Groups
         self._server_groups: dict[str, ServerGroup] = {}
@@ -5089,28 +5089,167 @@ class Database:
             return True
 
     # Router operations
-    @staticmethod
     def _build_external_gateway_info(
+        self,
         external_gateway_info: dict[str, Any] | None,
+        router_id: str,
     ) -> ExternalGatewayInfo | None:
         """Build an ExternalGatewayInfo from a request payload.
 
-        Returns None when the payload is empty (gateway removal). Fixed IPs are
-        converted into FixedIP objects, tolerating entries that omit subnet_id.
+        Setting a gateway is backed by a real port, as in Neutron: l3_db's
+        ``_create_router_gw_port`` always creates one with device_owner
+        ``network:router_gateway`` and device_id set to the router, passing
+        ``fixed_ips or ATTR_NOT_SPECIFIED`` so IPAM allocates an address from
+        the external network's subnet when the caller named none. Clients read
+        the result back out of external_fixed_ips — Waldur indexes
+        ``external_fixed_ips[0]`` right after the call — so an empty list makes
+        the router look gateway-less to them.
+
+        Neutron keeps that port stable: ``_update_router_gw_info`` only touches
+        it when the requested IPs actually differ or the network changed, so
+        re-sending the same gateway is idempotent and does not re-allocate.
+
+        Returns None when the payload is empty, which is how a gateway is
+        cleared.
         """
         if not external_gateway_info:
+            self._release_router_gateway_port(router_id)
             return None
-        return ExternalGatewayInfo(
-            network_id=external_gateway_info.get("network_id", ""),
-            enable_snat=external_gateway_info.get("enable_snat", True),
-            external_fixed_ips=[
-                FixedIP(
-                    subnet_id=f.get("subnet_id", ""),
-                    ip_address=f.get("ip_address", ""),
+
+        network_id = external_gateway_info.get("network_id", "")
+        requested_ips = [
+            FixedIP(
+                subnet_id=f.get("subnet_id", ""),
+                ip_address=f.get("ip_address", ""),
+            )
+            for f in external_gateway_info.get("external_fixed_ips", [])
+        ]
+
+        # Idempotence: an unchanged request keeps the existing port and its
+        # address. Neutron decides this in _check_for_external_ip_change, which
+        # treats "no external_fixed_ips supplied" as "no change requested".
+        current = self._get_router_gateway_port(router_id)
+        if current is not None and current.network_id == network_id:
+            if not requested_ips or self._same_fixed_ips(current.fixed_ips, requested_ips):
+                return ExternalGatewayInfo(
+                    network_id=network_id,
+                    enable_snat=external_gateway_info.get("enable_snat", True),
+                    external_fixed_ips=list(current.fixed_ips),
                 )
-                for f in external_gateway_info.get("external_fixed_ips", [])
-            ],
+
+        self._release_router_gateway_port(router_id)
+
+        network = self._networks.get(network_id)
+        fixed_ips = requested_ips
+        if fixed_ips:
+            # Pair each requested address with the subnet that contains it.
+            # _allocate_ip_from_subnet keys its used-address set on subnet_id, so
+            # an unresolved one leaves the address invisible to the allocator and
+            # it can be handed out a second time.
+            if network:
+                fixed_ips = [
+                    self._resolve_fixed_ip_subnet(network, fixed_ip) for fixed_ip in fixed_ips
+                ]
+        else:
+            subnet = None
+            if network:
+                subnet = next(
+                    (
+                        self._subnets[subnet_id]
+                        for subnet_id in network.subnets
+                        if subnet_id in self._subnets
+                    ),
+                    None,
+                )
+            if subnet:
+                ip_address = self._allocate_ip_from_subnet(subnet)
+                if not ip_address:
+                    # A subnet exists but has nothing left. Neutron surfaces this
+                    # as IpAddressGenerationFailure (409) from IPAM and the
+                    # gateway is not set. Only a network with no subnets at all
+                    # yields a gateway port with no address - see below.
+                    raise IpAddressGenerationFailureError(network_id)
+                fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
+            # No subnet at all: fall through with an empty fixed_ips. Neutron
+            # calls this "not an error" (Subnet.network_has_no_subnet) and
+            # _create_router_gw_port merely logs "No IPs available for external
+            # network", leaving the gateway set with external_fixed_ips: [].
+
+        # The port is created either way, so an explicitly requested address is
+        # accounted for and cannot later be handed out to something else.
+        # Neutron leaves project_id unset ("Port has no 'project-id', as it is
+        # hidden from user"), which also keeps it out of tenant port listings.
+        gateway_port = Port(
+            id=str(uuid4()),
+            name="",
+            description="",
+            network_id=network_id,
+            admin_state_up=True,
+            mac_address=self._generate_mac_address(),
+            fixed_ips=list(fixed_ips),
+            device_id=router_id,
+            device_owner=DEVICE_OWNER_ROUTER_GATEWAY,
+            project_id="",
+            security_groups=[],
+            port_security_enabled=False,
         )
+        self._ports[gateway_port.id] = gateway_port
+
+        return ExternalGatewayInfo(
+            network_id=network_id,
+            enable_snat=external_gateway_info.get("enable_snat", True),
+            external_fixed_ips=fixed_ips,
+        )
+
+    def _resolve_fixed_ip_subnet(self, network: Network, fixed_ip: FixedIP) -> FixedIP:
+        """Fill in a requested fixed IP's subnet_id from its address."""
+        if fixed_ip.subnet_id or not fixed_ip.ip_address:
+            return fixed_ip
+        subnet = self._find_subnet_for_ip(network, fixed_ip.ip_address)
+        if subnet is None:
+            return fixed_ip
+        return FixedIP(subnet_id=subnet.id, ip_address=fixed_ip.ip_address)
+
+    @staticmethod
+    def _same_fixed_ips(current: list[FixedIP], requested: list[FixedIP]) -> bool:
+        """Compare fixed IPs the way Neutron's change detection does.
+
+        Only the fields the caller actually specified take part: a request that
+        names subnets but no addresses must not count as a change just because
+        the allocated addresses are filled in on our side.
+        """
+        requested_subnets = {ip.subnet_id for ip in requested if ip.subnet_id}
+        if requested_subnets and requested_subnets != {ip.subnet_id for ip in current}:
+            return False
+        requested_addresses = {ip.ip_address for ip in requested if ip.ip_address}
+        if requested_addresses and requested_addresses != {ip.ip_address for ip in current}:
+            return False
+        return True
+
+    def _get_router_gateway_port(self, router_id: str) -> Port | None:
+        """Return the gateway port belonging to ``router_id``, if any."""
+        return next(
+            (
+                port
+                for port in self._ports.values()
+                if port.device_id == router_id and port.device_owner == DEVICE_OWNER_ROUTER_GATEWAY
+            ),
+            None,
+        )
+
+    def _release_router_gateway_port(self, router_id: str) -> None:
+        """Drop any gateway port previously created for ``router_id``.
+
+        Keeps the allocation pool from leaking addresses when a gateway is
+        replaced or cleared.
+        """
+        stale = [
+            port_id
+            for port_id, port in self._ports.items()
+            if port.device_id == router_id and port.device_owner == DEVICE_OWNER_ROUTER_GATEWAY
+        ]
+        for port_id in stale:
+            del self._ports[port_id]
 
     def create_router(
         self,
@@ -5122,10 +5261,11 @@ class Database:
     ) -> Router:
         """Create a new router."""
         with self._lock:
-            ext_gateway = self._build_external_gateway_info(external_gateway_info)
+            router_id = str(uuid4())
+            ext_gateway = self._build_external_gateway_info(external_gateway_info, router_id)
 
             router = Router(
-                id=str(uuid4()),
+                id=router_id,
                 name=name,
                 description=description,
                 project_id=project_id,
@@ -5206,7 +5346,7 @@ class Database:
                 router.admin_state_up = admin_state_up
             if external_gateway_info is not None:
                 router.external_gateway_info = self._build_external_gateway_info(
-                    external_gateway_info
+                    external_gateway_info, router.id
                 )
             if routes is not None:
                 router.routes = routes
@@ -5369,10 +5509,26 @@ class Database:
             if not network or not network.external:
                 return None
 
-            # Allocate floating IP address from external network
+            # Allocate from the external network's own subnet, the way Neutron
+            # does. Falling back to a hardcoded 203.0.113.x counter would hand
+            # out addresses off the wrong network entirely once a preset defines
+            # an external network with a different CIDR, and would start at .1 -
+            # the subnet's gateway - rather than inside the allocation pool.
             if not floating_ip_address:
-                floating_ip_address = f"203.0.113.{self._next_floating_ip}"
-                self._next_floating_ip += 1
+                for sid in network.subnets:
+                    external_subnet = self._subnets.get(sid)
+                    if external_subnet is None:
+                        continue
+                    floating_ip_address = self._allocate_ip_from_subnet(external_subnet)
+                    if floating_ip_address:
+                        break
+                if not floating_ip_address:
+                    # No subnet, or every pool is full. Neutron reports this as
+                    # IpAddressGenerationFailure (409) / ExternalIpAddressExhausted,
+                    # not as a missing network, and clients rely on telling the
+                    # two apart - so don't fold it into the None that the caller
+                    # renders as "external network not found".
+                    raise IpAddressGenerationFailureError(floating_network_id)
 
             # Create floating IP ID first (needed for port device_id)
             fip_id = str(uuid4())
@@ -5833,7 +5989,6 @@ class Database:
             self._security_groups.clear()
             self._security_group_rules.clear()
             self._rbac_policies.clear()
-            self._next_floating_ip = 1
             self._init_default_neutron_data()
 
     # ==================== Server Group Operations ====================
