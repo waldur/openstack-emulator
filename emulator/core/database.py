@@ -141,6 +141,21 @@ DEVICE_OWNER_ROUTER_INTERFACE = "network:router_interface"
 DEVICE_OWNER_ROUTER_GATEWAY = "network:router_gateway"
 
 
+def default_resource_id(name: str) -> str:
+    """Return the stable id of a seeded default resource.
+
+    The seeded Neutron defaults used to get a fresh uuid4() on every boot, which
+    made them impossible to reference from anything static. A client configured
+    with a network id — Waldur's external_network_id setting, say — cannot carry
+    that value in a fixture or preset if it changes each time the emulator
+    starts, forcing every caller to discover it at runtime first.
+
+    Deriving from a fixed namespace keeps the ids valid UUIDs (callers do
+    validate) while making them reproducible across boots and across machines.
+    """
+    return str(uuid5(NAMESPACE_DNS, f"openstack-emulator:default:{name}"))
+
+
 class Database:
     """In-memory database for storing OpenStack resources."""
 
@@ -4356,7 +4371,7 @@ class Database:
 
         # Create external network
         ext_network = Network(
-            id=str(uuid4()),
+            id=default_resource_id("network:external"),
             name="external",
             description="External network for floating IPs",
             external=True,
@@ -4367,7 +4382,7 @@ class Database:
 
         # Create external subnet
         ext_subnet = Subnet(
-            id=str(uuid4()),
+            id=default_resource_id("subnet:external-subnet"),
             name="external-subnet",
             network_id=ext_network.id,
             cidr="203.0.113.0/24",
@@ -4381,7 +4396,7 @@ class Database:
 
         # Create default private network
         private_network = Network(
-            id=str(uuid4()),
+            id=default_resource_id("network:private"),
             name="private",
             description="Default private network",
             project_id="admin",
@@ -4391,7 +4406,7 @@ class Database:
 
         # Create private subnet
         private_subnet = Subnet(
-            id=str(uuid4()),
+            id=default_resource_id("subnet:private-subnet"),
             name="private-subnet",
             network_id=private_network.id,
             cidr="192.168.1.0/24",
