@@ -4,6 +4,17 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.2] - 2026-08-03
+
+### Added
+- Allocate an external fixed IP on the gateway port when a router gateway is set
+- Allocate floating IPs from the external subnet's allocation pool
+
+### Changed
+- Pin the ids of the seeded default networks so they are deterministic across restarts
+- Match Neutron's error contract for floating IP and router gateway failures
+- Update the docs to match the emulator's actual behaviour
+
 ## [0.4.1] - 2026-08-02
 
 ### Fixed
