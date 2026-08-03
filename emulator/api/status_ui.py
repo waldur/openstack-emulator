@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
+from emulator.core.exceptions import IpAddressGenerationFailureError
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -5245,11 +5246,19 @@ async def api_create_floating_ip(
         raise HTTPException(status_code=400, detail="External network not found")
 
     # Create floating IP using database method
-    floating_ip = db.create_floating_ip(
-        floating_network_id=request.floating_network_id,
-        project_id=user["project_id"],
-        port_id=request.port_id,
-    )
+    try:
+        floating_ip = db.create_floating_ip(
+            floating_network_id=request.floating_network_id,
+            project_id=user["project_id"],
+            port_id=request.port_id,
+        )
+    except IpAddressGenerationFailureError as exc:
+        # Same contract as the Neutron endpoint: an exhausted pool is a conflict,
+        # not a server error. Without this the management UI answers 500.
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
 
     if not floating_ip:
         raise HTTPException(status_code=400, detail="Failed to allocate floating IP")

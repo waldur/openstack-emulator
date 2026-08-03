@@ -924,3 +924,48 @@ class TestStatusPageNewServices:
         body = client.get("/").text
         assert "NO OBJECT STORAGE ACCOUNTS FOUND" in body
         assert "NO OPENID PROVIDER USERS FOUND" in body
+
+
+class TestManagementFloatingIPs:
+    """Management API floating IP allocation."""
+
+    @staticmethod
+    def _login(client) -> str:
+        response = client.post(
+            "/api/login",
+            json={"username": "admin", "password": "s4l4dus"},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["token"]
+
+    def test_exhausted_pool_is_a_conflict_not_a_server_error(self, client):
+        """The management API shares the Neutron endpoint's error contract.
+
+        db.create_floating_ip raises on an exhausted pool; left uncaught here it
+        surfaced as a 500 through the generic handler.
+        """
+        token = self._login(client)
+        cookies = {"auth_token": token}
+
+        network = db.create_network(name="tiny-mgmt-ext", project_id="admin", external=True)
+        db.create_subnet(
+            network_id=network.id,
+            cidr="198.51.100.0/24",
+            project_id="admin",
+            name="tiny-mgmt-subnet",
+            allocation_pools=[{"start": "198.51.100.10", "end": "198.51.100.10"}],
+        )
+
+        first = client.post(
+            "/api/floating_ips",
+            json={"floating_network_id": network.id},
+            cookies=cookies,
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            "/api/floating_ips",
+            json={"floating_network_id": network.id},
+            cookies=cookies,
+        )
+        assert second.status_code == 409, second.text
