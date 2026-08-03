@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
-from emulator.core.database import db
+from emulator.core.database import db, default_resource_id
 from tests.conftest import scoped_token
 
 
@@ -55,6 +55,21 @@ class TestNetworks:
         assert "networks" in data
         # Default networks should exist
         assert len(data["networks"]) >= 2
+
+    def test_default_network_ids_are_stable_across_resets(self):
+        """Seeded defaults keep their ids, so fixtures can reference them.
+
+        A client configured with a network id cannot carry it in a static
+        fixture if the emulator re-randomises it on every boot.
+        """
+        before = {n["name"]: n["id"] for n in client.get("/v2.0/networks").json()["networks"]}
+
+        db.reset_neutron()
+
+        after = {n["name"]: n["id"] for n in client.get("/v2.0/networks").json()["networks"]}
+        assert before == after
+        assert before["external"] == default_resource_id("network:external")
+        assert before["private"] == default_resource_id("network:private")
 
     def test_create_network(self):
         """Test creating a network."""
