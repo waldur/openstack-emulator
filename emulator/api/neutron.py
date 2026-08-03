@@ -9,7 +9,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
-from emulator.core.exceptions import FixedIPAlreadyInUseError, InvalidFixedIPError
+from emulator.core.exceptions import (
+    FixedIPAlreadyInUseError,
+    InvalidFixedIPError,
+    IpAddressGenerationFailureError,
+)
 from emulator.core.simple_auth import validate_token_simple
 
 router = APIRouter()
@@ -617,13 +621,19 @@ async def create_router(
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
-    router = db.create_router(
-        name=data.get("name", ""),
-        project_id=project_id,
-        description=data.get("description", ""),
-        admin_state_up=data.get("admin_state_up", True),
-        external_gateway_info=data.get("external_gateway_info"),
-    )
+    try:
+        router = db.create_router(
+            name=data.get("name", ""),
+            project_id=project_id,
+            description=data.get("description", ""),
+            admin_state_up=data.get("admin_state_up", True),
+            external_gateway_info=data.get("external_gateway_info"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     return {"router": router.to_dict()}
 
 
@@ -658,15 +668,21 @@ async def update_router(
 
     _validate_external_gateway(project_id, data.get("external_gateway_info"))
 
-    router = db.update_router(
-        router_id=router_id,
-        project_id=project_id,
-        name=data.get("name"),
-        description=data.get("description"),
-        admin_state_up=data.get("admin_state_up"),
-        external_gateway_info=data.get("external_gateway_info"),
-        routes=data.get("routes"),
-    )
+    try:
+        router = db.update_router(
+            router_id=router_id,
+            project_id=project_id,
+            name=data.get("name"),
+            description=data.get("description"),
+            admin_state_up=data.get("admin_state_up"),
+            external_gateway_info=data.get("external_gateway_info"),
+            routes=data.get("routes"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     if not router:
         raise HTTPException(status_code=404, detail="Router not found")
     return {"router": router.to_dict()}
@@ -760,14 +776,22 @@ async def create_floating_ip(
     data = request.get("floatingip", {})
     project_id = _resolve_project_id(data, x_auth_token)
 
-    fip = db.create_floating_ip(
-        floating_network_id=data.get("floating_network_id", ""),
-        project_id=project_id,
-        description=data.get("description", ""),
-        port_id=data.get("port_id"),
-        fixed_ip_address=data.get("fixed_ip_address"),
-        floating_ip_address=data.get("floating_ip_address"),
-    )
+    try:
+        fip = db.create_floating_ip(
+            floating_network_id=data.get("floating_network_id", ""),
+            project_id=project_id,
+            description=data.get("description", ""),
+            port_id=data.get("port_id"),
+            fixed_ip_address=data.get("fixed_ip_address"),
+            floating_ip_address=data.get("floating_ip_address"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        # Neutron's IpAddressGenerationFailure is a Conflict, so 409. Clients
+        # distinguish an exhausted pool from a misconfigured network.
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     if not fip:
         raise HTTPException(status_code=404, detail="External network not found")
     return {"floatingip": fip.to_dict()}
