@@ -5523,9 +5523,12 @@ class Database:
                     if floating_ip_address:
                         break
                 if not floating_ip_address:
-                    # No subnet, or its pool is exhausted. Neutron answers 409
-                    # here; the caller turns None into an error response.
-                    return None
+                    # No subnet, or every pool is full. Neutron reports this as
+                    # IpAddressGenerationFailure (409) / ExternalIpAddressExhausted,
+                    # not as a missing network, and clients rely on telling the
+                    # two apart - so don't fold it into the None that the caller
+                    # renders as "external network not found".
+                    raise IpAddressGenerationFailureError(floating_network_id)
 
             # Create floating IP ID first (needed for port device_id)
             fip_id = str(uuid4())

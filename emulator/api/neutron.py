@@ -776,14 +776,22 @@ async def create_floating_ip(
     data = request.get("floatingip", {})
     project_id = _resolve_project_id(data, x_auth_token)
 
-    fip = db.create_floating_ip(
-        floating_network_id=data.get("floating_network_id", ""),
-        project_id=project_id,
-        description=data.get("description", ""),
-        port_id=data.get("port_id"),
-        fixed_ip_address=data.get("fixed_ip_address"),
-        floating_ip_address=data.get("floating_ip_address"),
-    )
+    try:
+        fip = db.create_floating_ip(
+            floating_network_id=data.get("floating_network_id", ""),
+            project_id=project_id,
+            description=data.get("description", ""),
+            port_id=data.get("port_id"),
+            fixed_ip_address=data.get("fixed_ip_address"),
+            floating_ip_address=data.get("floating_ip_address"),
+        )
+    except IpAddressGenerationFailureError as exc:
+        # Neutron's IpAddressGenerationFailure is a Conflict, so 409. Clients
+        # distinguish an exhausted pool from a misconfigured network.
+        raise HTTPException(
+            status_code=409,
+            detail=f"No more IP addresses available on network {exc.network_id}.",
+        ) from exc
     if not fip:
         raise HTTPException(status_code=404, detail="External network not found")
     return {"floatingip": fip.to_dict()}

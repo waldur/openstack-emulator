@@ -765,6 +765,48 @@ class TestFloatingIPs:
             assert pool_start <= int(host) <= pool_end, f"{address} is outside the pool"
             assert address != subnet["gateway_ip"]
 
+    def test_exhausted_pool_is_a_conflict_not_a_missing_network(self):
+        """A full pool answers 409, not the 404 used for an unknown network.
+
+        Neutron raises IpAddressGenerationFailure, a Conflict. Clients act on
+        the difference: Waldur catches the exhaustion errors specifically to
+        report a full external pool rather than a broken configuration.
+        """
+        network_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "tiny-ext", "router:external": True}},
+        ).json()["network"]["id"]
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "tiny-ext-subnet",
+                    "network_id": network_id,
+                    "cidr": "198.51.100.0/24",
+                    "allocation_pools": [{"start": "198.51.100.10", "end": "198.51.100.11"}],
+                }
+            },
+        )
+
+        for _ in range(2):
+            response = client.post(
+                "/v2.0/floatingips",
+                json={"floatingip": {"floating_network_id": network_id}},
+            )
+            assert response.status_code == 201, response.text
+
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": network_id}},
+        )
+        assert response.status_code == 409, response.text
+
+        missing = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": "no-such-network"}},
+        )
+        assert missing.status_code == 404, missing.text
+
     def test_create_floating_ip_creates_port(self):
         """Test that creating a floating IP also creates a port on the external network.
 
