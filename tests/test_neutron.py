@@ -455,10 +455,75 @@ class TestRouters:
         assert fixed_ips[0]["subnet_id"]
 
         # The allocation is backed by a gateway port, as in real Neutron.
-        ports = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
-        gateway_ports = [p for p in ports if p["device_owner"] == "network:router_gateway"]
+        gateway_ports = db.list_ports(device_owner="network:router_gateway")
         assert len(gateway_ports) == 1
-        assert gateway_ports[0]["device_id"] == router["id"]
+        assert gateway_ports[0].device_id == router["id"]
+
+        # ...but that port is hidden from the tenant, the way Neutron hides it
+        # ("Port has no 'project-id', as it is hidden from user").
+        visible = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
+        assert [p for p in visible if p["device_owner"] == "network:router_gateway"] == []
+
+    def test_setting_the_same_gateway_is_idempotent(self):
+        """Re-sending an unchanged gateway keeps the address and the port.
+
+        Neutron's _update_router_gw_info only replaces the gateway port when
+        the network changed or the requested IPs actually differ, so a client
+        that re-asserts its desired state does not get a new address.
+        """
+        net_id = self._external_network_id()
+
+        router_id = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "idempotent-gateway-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        ).json()["router"]["id"]
+        first = client.get(f"/v2.0/routers/{router_id}").json()["router"]
+        first_ip = first["external_gateway_info"]["external_fixed_ips"][0]["ip_address"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}",
+            json={"router": {"external_gateway_info": {"network_id": net_id}}},
+        )
+        assert response.status_code == 200, response.text
+        again = response.json()["router"]["external_gateway_info"]["external_fixed_ips"]
+        assert [ip["ip_address"] for ip in again] == [first_ip]
+
+        assert len(db.list_ports(device_owner="network:router_gateway")) == 1
+
+    def test_explicit_external_fixed_ip_is_backed_by_a_port(self):
+        """An explicitly requested gateway address still gets a port.
+
+        Neutron's _create_router_gw_port always creates the port, passing the
+        caller's fixed_ips through. Without one the address is unaccounted for
+        and could later be handed out to something else.
+        """
+        net_id = self._external_network_id()
+
+        router = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "explicit-gateway-router",
+                    "external_gateway_info": {
+                        "network_id": net_id,
+                        "external_fixed_ips": [{"ip_address": "203.0.113.55"}],
+                    },
+                }
+            },
+        ).json()["router"]
+        assert router["external_gateway_info"]["external_fixed_ips"] == [
+            {"subnet_id": "", "ip_address": "203.0.113.55"}
+        ]
+
+        gateway_ports = db.list_ports(device_owner="network:router_gateway")
+        assert len(gateway_ports) == 1
+        assert gateway_ports[0].device_id == router["id"]
+        assert [ip.ip_address for ip in gateway_ports[0].fixed_ips] == ["203.0.113.55"]
 
     def test_clearing_gateway_releases_the_port(self):
         """Removing the gateway drops its port so the pool does not leak."""
@@ -481,8 +546,7 @@ class TestRouters:
         assert response.status_code == 200, response.text
         assert response.json()["router"]["external_gateway_info"] is None
 
-        ports = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
-        assert [p for p in ports if p["device_owner"] == "network:router_gateway"] == []
+        assert db.list_ports(device_owner="network:router_gateway") == []
 
     def test_delete_router(self):
         """Test deleting a router."""

@@ -5093,26 +5093,31 @@ class Database:
         self,
         external_gateway_info: dict[str, Any] | None,
         router_id: str,
-        project_id: str,
     ) -> ExternalGatewayInfo | None:
         """Build an ExternalGatewayInfo from a request payload.
 
-        Returns None when the payload is empty (gateway removal). Fixed IPs are
-        converted into FixedIP objects, tolerating entries that omit subnet_id.
-
-        When the caller supplies no external_fixed_ips — which is what clients
-        do when they just want a gateway on a given network — an address is
-        allocated from the external network's subnet and a gateway port is
-        created, mirroring real Neutron. Clients read the allocated address
-        back out of external_fixed_ips, so returning an empty list here makes
+        Setting a gateway is backed by a real port, as in Neutron: l3_db's
+        ``_create_router_gw_port`` always creates one with device_owner
+        ``network:router_gateway`` and device_id set to the router, passing
+        ``fixed_ips or ATTR_NOT_SPECIFIED`` so IPAM allocates an address from
+        the external network's subnet when the caller named none. Clients read
+        the result back out of external_fixed_ips — Waldur indexes
+        ``external_fixed_ips[0]`` right after the call — so an empty list makes
         the router look gateway-less to them.
+
+        Neutron keeps that port stable: ``_update_router_gw_info`` only touches
+        it when the requested IPs actually differ or the network changed, so
+        re-sending the same gateway is idempotent and does not re-allocate.
+
+        Returns None when the payload is empty, which is how a gateway is
+        cleared.
         """
         if not external_gateway_info:
             self._release_router_gateway_port(router_id)
             return None
 
         network_id = external_gateway_info.get("network_id", "")
-        fixed_ips = [
+        requested_ips = [
             FixedIP(
                 subnet_id=f.get("subnet_id", ""),
                 ip_address=f.get("ip_address", ""),
@@ -5120,8 +5125,22 @@ class Database:
             for f in external_gateway_info.get("external_fixed_ips", [])
         ]
 
+        # Idempotence: an unchanged request keeps the existing port and its
+        # address. Neutron decides this in _check_for_external_ip_change, which
+        # treats "no external_fixed_ips supplied" as "no change requested".
+        current = self._get_router_gateway_port(router_id)
+        if current is not None and current.network_id == network_id:
+            if not requested_ips or self._same_fixed_ips(current.fixed_ips, requested_ips):
+                return ExternalGatewayInfo(
+                    network_id=network_id,
+                    enable_snat=external_gateway_info.get("enable_snat", True),
+                    external_fixed_ips=list(current.fixed_ips),
+                )
+
+        self._release_router_gateway_port(router_id)
+
+        fixed_ips = requested_ips
         if not fixed_ips:
-            self._release_router_gateway_port(router_id)
             network = self._networks.get(network_id)
             subnet = None
             if network:
@@ -5137,26 +5156,58 @@ class Database:
                 ip_address = self._allocate_ip_from_subnet(subnet)
                 if ip_address:
                     fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
-                    gateway_port = Port(
-                        id=str(uuid4()),
-                        name="",
-                        description="",
-                        network_id=network_id,
-                        admin_state_up=True,
-                        mac_address=self._generate_mac_address(),
-                        fixed_ips=list(fixed_ips),
-                        device_id=router_id,
-                        device_owner=DEVICE_OWNER_ROUTER_GATEWAY,
-                        project_id=project_id,
-                        security_groups=[],
-                        port_security_enabled=False,
-                    )
-                    self._ports[gateway_port.id] = gateway_port
+
+        # The port is created either way, so an explicitly requested address is
+        # accounted for and cannot later be handed out to something else.
+        # Neutron leaves project_id unset ("Port has no 'project-id', as it is
+        # hidden from user"), which also keeps it out of tenant port listings.
+        gateway_port = Port(
+            id=str(uuid4()),
+            name="",
+            description="",
+            network_id=network_id,
+            admin_state_up=True,
+            mac_address=self._generate_mac_address(),
+            fixed_ips=list(fixed_ips),
+            device_id=router_id,
+            device_owner=DEVICE_OWNER_ROUTER_GATEWAY,
+            project_id="",
+            security_groups=[],
+            port_security_enabled=False,
+        )
+        self._ports[gateway_port.id] = gateway_port
 
         return ExternalGatewayInfo(
             network_id=network_id,
             enable_snat=external_gateway_info.get("enable_snat", True),
             external_fixed_ips=fixed_ips,
+        )
+
+    @staticmethod
+    def _same_fixed_ips(current: list[FixedIP], requested: list[FixedIP]) -> bool:
+        """Compare fixed IPs the way Neutron's change detection does.
+
+        Only the fields the caller actually specified take part: a request that
+        names subnets but no addresses must not count as a change just because
+        the allocated addresses are filled in on our side.
+        """
+        requested_subnets = {ip.subnet_id for ip in requested if ip.subnet_id}
+        if requested_subnets and requested_subnets != {ip.subnet_id for ip in current}:
+            return False
+        requested_addresses = {ip.ip_address for ip in requested if ip.ip_address}
+        if requested_addresses and requested_addresses != {ip.ip_address for ip in current}:
+            return False
+        return True
+
+    def _get_router_gateway_port(self, router_id: str) -> Port | None:
+        """Return the gateway port belonging to ``router_id``, if any."""
+        return next(
+            (
+                port
+                for port in self._ports.values()
+                if port.device_id == router_id and port.device_owner == DEVICE_OWNER_ROUTER_GATEWAY
+            ),
+            None,
         )
 
     def _release_router_gateway_port(self, router_id: str) -> None:
@@ -5184,9 +5235,7 @@ class Database:
         """Create a new router."""
         with self._lock:
             router_id = str(uuid4())
-            ext_gateway = self._build_external_gateway_info(
-                external_gateway_info, router_id, project_id
-            )
+            ext_gateway = self._build_external_gateway_info(external_gateway_info, router_id)
 
             router = Router(
                 id=router_id,
@@ -5270,7 +5319,7 @@ class Database:
                 router.admin_state_up = admin_state_up
             if external_gateway_info is not None:
                 router.external_gateway_info = self._build_external_gateway_info(
-                    external_gateway_info, router.id, router.project_id
+                    external_gateway_info, router.id
                 )
             if routes is not None:
                 router.routes = routes
