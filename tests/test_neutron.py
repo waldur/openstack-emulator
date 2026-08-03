@@ -511,9 +511,7 @@ class TestFloatingIPs:
         if not ext_network:
             pytest.skip("No external network available")
 
-        # Get initial port count on external network
-        initial_ports = client.get(f"/v2.0/ports?network_id={ext_network['id']}").json()["ports"]
-        initial_port_count = len(initial_ports)
+        initial_ports = db.list_ports(device_owner="network:floatingip")
 
         # Create a floating IP
         response = client.post(
@@ -527,23 +525,57 @@ class TestFloatingIPs:
         assert fip_data.get("floating_port_id") is not None
         floating_port_id = fip_data["floating_port_id"]
 
-        # Verify the port was created on the external network
-        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
-        assert port_response.status_code == 200
-        port_data = port_response.json()["port"]
+        # The port is a service port owned by no project, so it is only visible
+        # to an admin - assert through the storage layer rather than the
+        # tenant-scoped API.
+        final_ports = db.list_ports(device_owner="network:floatingip")
+        assert len(final_ports) == len(initial_ports) + 1
+        port = next(p for p in final_ports if p.id == floating_port_id)
 
         # Verify port properties
-        assert port_data["network_id"] == ext_network["id"]
-        assert port_data["device_owner"] == "network:floatingip"
-        assert port_data["device_id"] == fip_data["id"]
+        assert port.network_id == ext_network["id"]
+        assert port.device_owner == "network:floatingip"
+        assert port.device_id == fip_data["id"]
 
-        # Verify the port has the floating IP address
-        assert len(port_data["fixed_ips"]) > 0
-        assert port_data["fixed_ips"][0]["ip_address"] == fip_data["floating_ip_address"]
+        # Verify the port has the floating IP address, paired with the subnet
+        # that actually contains it
+        assert len(port.fixed_ips) > 0
+        assert port.fixed_ips[0].ip_address == fip_data["floating_ip_address"]
+        assert port.fixed_ips[0].subnet_id in ext_network["subnets"]
 
-        # Verify port count increased
-        final_ports = client.get(f"/v2.0/ports?network_id={ext_network['id']}").json()["ports"]
-        assert len(final_ports) == initial_port_count + 1
+    def test_floating_ip_port_is_hidden_from_the_tenant(self):
+        """The floating port belongs to no project, as in real Neutron.
+
+        Neutron: "This external port is never exposed to the project. it is used
+        purely for internal system and admin use when managing floating IPs."
+        """
+        ext_network = next(
+            (
+                n
+                for n in client.get("/v2.0/networks").json()["networks"]
+                if n.get("router:external")
+            ),
+            None,
+        )
+        if not ext_network:
+            pytest.skip("No external network available")
+
+        fip = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": ext_network["id"]}},
+        ).json()["floatingip"]
+
+        port = next(
+            p
+            for p in db.list_ports(device_owner="network:floatingip")
+            if p.id == fip["floating_port_id"]
+        )
+        assert port.project_id == ""
+
+        # Not in the tenant's listing, and not fetchable by id as that tenant.
+        visible = client.get(f"/v2.0/ports?network_id={ext_network['id']}").json()["ports"]
+        assert fip["floating_port_id"] not in [p["id"] for p in visible]
+        assert client.get(f"/v2.0/ports/{fip['floating_port_id']}").status_code == 404
 
     def test_delete_floating_ip_deletes_port(self):
         """Test that deleting a floating IP also deletes its associated port.
@@ -567,17 +599,57 @@ class TestFloatingIPs:
         fip_id = fip_data["id"]
         floating_port_id = fip_data["floating_port_id"]
 
-        # Verify the port exists
-        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
-        assert port_response.status_code == 200
+        # Verify the port exists (admin view: it is project-less)
+        assert any(p.id == floating_port_id for p in db.list_ports())
 
         # Delete the floating IP
         delete_response = client.delete(f"/v2.0/floatingips/{fip_id}")
         assert delete_response.status_code == 204
 
         # Verify the associated port was also deleted
-        port_response = client.get(f"/v2.0/ports/{floating_port_id}")
-        assert port_response.status_code == 404
+        assert not any(p.id == floating_port_id for p in db.list_ports())
+
+    def test_non_external_network_is_a_bad_request_not_a_missing_one(self):
+        """Neutron answers 400 for a network that exists but is not external.
+
+        Only a genuinely unknown network is a 404. Collapsing the two tells a
+        client its configuration is wrong when the real problem is the network.
+        """
+        internal_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "not-external"}},
+        ).json()["network"]["id"]
+
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": internal_id}},
+        )
+        assert response.status_code == 400, response.text
+        assert "not a valid external network" in response.json()["error"]["message"]
+
+        missing = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": "no-such-network"}},
+        )
+        assert missing.status_code == 404, missing.text
+
+    def test_external_network_without_ipv4_subnet_is_rejected(self):
+        """Neutron: "Network %s does not contain any IPv4 subnet" -> 400.
+
+        Without the check the emulator would invent an address on a network that
+        has nothing to allocate from.
+        """
+        network_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "bare-ext", "router:external": True}},
+        ).json()["network"]["id"]
+
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": network_id}},
+        )
+        assert response.status_code == 400, response.text
+        assert "does not contain any IPv4 subnet" in response.json()["error"]["message"]
 
     def test_get_floating_ip(self):
         """Test getting a specific floating IP."""
@@ -1076,3 +1148,72 @@ class TestRbacExternalNetworks:
             headers={"X-Auth-Token": token_b},
         )
         assert response.status_code == 201, response.text
+
+    def test_floating_ip_works_on_rbac_shared_external_network(self):
+        """An access_as_external network can carry a floating IP, not just a gateway.
+
+        Neutron applies one notion of external-ness to both. Checking
+        network.external directly made the emulator accept such a network as a
+        router gateway while refusing it a floating IP.
+        """
+        token_a = self._token_for("tenant-a")
+        token_b = self._token_for("tenant-b")
+
+        net_id = self._create_network(token_a, "shared-ext-fip")
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "shared-ext-subnet",
+                    "network_id": net_id,
+                    "cidr": "198.51.100.0/24",
+                }
+            },
+            headers={"X-Auth-Token": token_a},
+        )
+        self._share(token_a, net_id, "tenant-b", "access_as_external")
+
+        response = client.post(
+            "/v2.0/floatingips",
+            json={"floatingip": {"floating_network_id": net_id}},
+            headers={"X-Auth-Token": token_b},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["floatingip"]["floating_network_id"] == net_id
+
+    def test_gateway_ip_cannot_be_requested_as_the_external_fixed_ip(self):
+        """Neutron: "External IP %s is the same as the gateway IP" -> 400.
+
+        That address belongs to the subnet's own gateway; handing it to a router
+        would collide with it.
+        """
+        token_a = self._token_for("tenant-a")
+        net_id = self._create_network(token_a, "gw-clash-ext", **{"router:external": True})
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "name": "gw-clash-subnet",
+                    "network_id": net_id,
+                    "cidr": "198.51.100.0/24",
+                    "gateway_ip": "198.51.100.1",
+                }
+            },
+            headers={"X-Auth-Token": token_a},
+        )
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "clash-router",
+                    "external_gateway_info": {
+                        "network_id": net_id,
+                        "external_fixed_ips": [{"ip_address": "198.51.100.1"}],
+                    },
+                }
+            },
+            headers={"X-Auth-Token": token_a},
+        )
+        assert response.status_code == 400, response.text
+        assert "same as the gateway IP" in response.json()["error"]["message"]

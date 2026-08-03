@@ -208,6 +208,29 @@ against RHOS 17):
   while the target project still holds ports on the network is answered with
   `409` until those ports are gone.
 
+An `access_as_external` share makes the network usable both as a **router
+gateway** and as a **floating IP** network. Those two are the same question in
+Neutron, so both go through `Database.is_network_external_for()` rather than
+reading the `external` flag directly.
+
+### Service ports belong to no project
+
+Two ports the emulator creates on an external network carry an empty
+`project_id`, mirroring Neutron:
+
+| Port | `device_owner` | Created by |
+|------|----------------|------------|
+| Router gateway | `network:router_gateway` | setting `external_gateway_info` |
+| Floating IP | `network:floatingip` | creating a floating IP |
+
+Neutron's wording is explicit — *"Port has no 'project-id', as it is hidden from
+user"* and *"This external port is never exposed to the project. it is used
+purely for internal system and admin use"*. The practical consequence, given the
+filters above, is that neither port appears in the owning tenant's `/v2.0/ports`
+listing and neither is retrievable by id with a tenant token; an admin token
+(which applies no project filter) sees both. Tests that need to assert on them
+should go through `db.list_ports(device_owner=...)` rather than the tenant API.
+
 ### Image Visibility
 
 Glance images have a visibility model:
