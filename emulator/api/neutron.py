@@ -604,6 +604,26 @@ def _validate_external_gateway(
             status_code=400,
             detail="Network is not usable as an external gateway for this project",
         )
+    _reject_gateway_ip_collision(network_id, external_gateway_info.get("external_fixed_ips") or [])
+
+
+def _reject_gateway_ip_collision(network_id: str, external_fixed_ips: list[dict[str, Any]]) -> None:
+    """Refuse a requested gateway address that is a subnet's own gateway IP.
+
+    Neutron's ``_validate_gw_info`` compares each requested address against every
+    subnet on the network, skipping subnets that have no gateway, and answers
+    400 "External IP %s is the same as the gateway IP".
+    """
+    gateway_ips = {
+        subnet.gateway_ip for subnet in db.list_subnets(network_id=network_id) if subnet.gateway_ip
+    }
+    for fixed_ip in external_fixed_ips:
+        ip_address = fixed_ip.get("ip_address")
+        if ip_address and ip_address in gateway_ips:
+            raise HTTPException(
+                status_code=400,
+                detail=f"External IP {ip_address} is the same as the gateway IP",
+            )
 
 
 @router.post("/v2.0/routers", status_code=201)
@@ -751,6 +771,35 @@ async def list_floating_ips(
     return {"floatingips": [f.to_dict() for f in fips]}
 
 
+def _validate_floating_network(project_id: str | None, network_id: str) -> None:
+    """Check the target network can carry a floating IP, as Neutron does.
+
+    Mirrors :func:`_validate_external_gateway`: the network must exist, be
+    visible, and be external for this project. Neutron's ``_create_floatingip``
+    answers 400 (BadRequest) for a network that exists but is not external, and
+    400 again when it carries no IPv4 subnet to allocate from — only a genuinely
+    unknown network is a 404. Folding those into one 404 tells a client its
+    configuration is wrong when the real problem is the network's shape.
+
+    ``is_network_external_for`` is deliberate: a network shared through an
+    ``access_as_external`` RBAC policy is a valid floating-IP network, exactly as
+    it is a valid router gateway.
+    """
+    if db.get_network(network_id, project_id=project_id) is None:
+        raise HTTPException(status_code=404, detail="External network not found")
+    if not db.is_network_external_for(network_id, project_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Network {network_id} is not a valid external network",
+        )
+    subnets = db.list_subnets(network_id=network_id)
+    if not any(subnet.ip_version == 4 for subnet in subnets):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Network {network_id} does not contain any IPv4 subnet",
+        )
+
+
 @router.post("/v2.0/floatingips", status_code=201)
 async def create_floating_ip(
     request: dict[str, Any],
@@ -759,6 +808,7 @@ async def create_floating_ip(
     """Create a floating IP."""
     data = request.get("floatingip", {})
     project_id = _resolve_project_id(data, x_auth_token)
+    _validate_floating_network(project_id, data.get("floating_network_id", ""))
 
     fip = db.create_floating_ip(
         floating_network_id=data.get("floating_network_id", ""),

@@ -531,6 +531,24 @@ curl -s -X DELETE "http://localhost:9696/v2.0/floatingips/{floatingip_id}" \
   -H "X-Auth-Token: $TOKEN"
 ```
 
+The create call rejects an unusable target network the way Neutron does, so a
+client can tell a configuration mistake from a missing resource:
+
+| Condition | Status | Message |
+|-----------|--------|---------|
+| Network does not exist | 404 | `External network not found` |
+| Network exists but is not external | 400 | `Network <id> is not a valid external network` |
+| External network has no IPv4 subnet | 400 | `Network <id> does not contain any IPv4 subnet` |
+
+A network shared to the project through an `access_as_external` RBAC policy counts
+as external here, exactly as it does for a router gateway.
+
+The port that holds the address (`device_owner: network:floatingip`) belongs to no
+project, as in real Neutron — *"This external port is never exposed to the
+project"* — so it does not appear in the tenant's `/v2.0/ports` listing and is only
+retrievable with an admin token. The same is true of a router's
+`network:router_gateway` port.
+
 ### Security Groups
 
 ```bash
