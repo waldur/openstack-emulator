@@ -47,6 +47,26 @@ class FixedIPAlreadyInUseError(Exception):
         super().__init__(f"Fixed IP {ip} is already in use.")
 
 
+class IpAddressGenerationFailureError(Exception):
+    """A network's subnets have no free address left to allocate.
+
+    Neutron's ``IpAddressGenerationFailure`` subclasses ``Conflict``, so the API
+    answers 409. Distinct from "network not found" on purpose: clients act on the
+    difference — Waldur catches the exhaustion errors specifically to tell the
+    operator the external pool is full rather than reporting a broken
+    configuration.
+
+    Note this is *not* the same as a network with no subnets at all. Neutron
+    treats that as "not an error" (``Subnet.network_has_no_subnet``) and hands
+    back a port with no fixed IPs; only a subnet that exists and cannot spare an
+    address is a conflict.
+    """
+
+    def __init__(self, network_id: str) -> None:
+        self.network_id = network_id
+        super().__init__(f"No more IP addresses available on network {network_id}.")
+
+
 class ScopeUnauthorizedError(Exception):
     """A token was requested for a scope the user holds no role on.
 
