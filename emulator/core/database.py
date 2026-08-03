@@ -197,7 +197,6 @@ class Database:
         self._floating_ips: dict[str, FloatingIP] = {}
         self._security_groups: dict[str, SecurityGroup] = {}
         self._security_group_rules: dict[str, SecurityGroupRule] = {}
-        self._next_floating_ip: int = 1  # For generating sequential floating IPs
 
         # Storage dictionaries - Nova Server Groups
         self._server_groups: dict[str, ServerGroup] = {}
@@ -5510,10 +5509,23 @@ class Database:
             if not network or not network.external:
                 return None
 
-            # Allocate floating IP address from external network
+            # Allocate from the external network's own subnet, the way Neutron
+            # does. Falling back to a hardcoded 203.0.113.x counter would hand
+            # out addresses off the wrong network entirely once a preset defines
+            # an external network with a different CIDR, and would start at .1 -
+            # the subnet's gateway - rather than inside the allocation pool.
             if not floating_ip_address:
-                floating_ip_address = f"203.0.113.{self._next_floating_ip}"
-                self._next_floating_ip += 1
+                for sid in network.subnets:
+                    external_subnet = self._subnets.get(sid)
+                    if external_subnet is None:
+                        continue
+                    floating_ip_address = self._allocate_ip_from_subnet(external_subnet)
+                    if floating_ip_address:
+                        break
+                if not floating_ip_address:
+                    # No subnet, or its pool is exhausted. Neutron answers 409
+                    # here; the caller turns None into an error response.
+                    return None
 
             # Create floating IP ID first (needed for port device_id)
             fip_id = str(uuid4())
@@ -5974,7 +5986,6 @@ class Database:
             self._security_groups.clear()
             self._security_group_rules.clear()
             self._rbac_policies.clear()
-            self._next_floating_ip = 1
             self._init_default_neutron_data()
 
     # ==================== Server Group Operations ====================

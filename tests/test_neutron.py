@@ -732,6 +732,39 @@ class TestFloatingIPs:
         assert data["floatingip"]["floating_network_id"] == ext_network["id"]
         assert data["floatingip"]["floating_ip_address"]
 
+    def test_floating_ips_come_from_the_subnet_allocation_pool(self):
+        """Allocation follows the external subnet's pool, not a fixed counter.
+
+        The gateway (.1) sits outside the pool, so handing it out as the first
+        floating IP would collide with the router's own address.
+        """
+        networks = client.get("/v2.0/networks").json()["networks"]
+        ext_network = next((n for n in networks if n.get("router:external")), None)
+        if not ext_network:
+            pytest.skip("No external network available")
+
+        subnet = client.get(f"/v2.0/subnets/{ext_network['subnets'][0]}").json()["subnet"]
+        pool = subnet["allocation_pools"][0]
+        pool_start = int(pool["start"].rsplit(".", 1)[1])
+        pool_end = int(pool["end"].rsplit(".", 1)[1])
+        prefix = pool["start"].rsplit(".", 1)[0]
+
+        addresses = []
+        for _ in range(3):
+            response = client.post(
+                "/v2.0/floatingips",
+                json={"floatingip": {"floating_network_id": ext_network["id"]}},
+            )
+            assert response.status_code == 201, response.text
+            addresses.append(response.json()["floatingip"]["floating_ip_address"])
+
+        assert len(set(addresses)) == 3, "floating IPs must not be handed out twice"
+        for address in addresses:
+            head, host = address.rsplit(".", 1)
+            assert head == prefix, f"{address} is outside the external subnet"
+            assert pool_start <= int(host) <= pool_end, f"{address} is outside the pool"
+            assert address != subnet["gateway_ip"]
+
     def test_create_floating_ip_creates_port(self):
         """Test that creating a floating IP also creates a port on the external network.
 

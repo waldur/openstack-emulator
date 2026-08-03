@@ -333,10 +333,8 @@ PERSISTED: tuple[Collection, ...] = (
 #: Plain values that must survive a restart. The ID scalars are minted fresh by
 #: ``_init_default_keystone_data`` on every boot while ``_projects``/``_users``/
 #: ``_roles`` are replaced by the loaded ones, so without these the defaults
-#: point at objects that no longer exist. ``_next_floating_ip`` resetting to 1
-#: while allocated addresses persist hands out duplicate floating IPs.
+#: point at objects that no longer exist.
 PERSISTED_SCALARS: tuple[str, ...] = (
-    "_next_floating_ip",
     "_next_lb_vip",
     "_default_project_id",
     "_default_project_name",
