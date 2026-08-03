@@ -425,6 +425,65 @@ class TestRouters:
         data = response.json()
         assert data["router"]["name"] == "updated-router"
 
+    def _external_network_id(self):
+        """Return the id of the seeded external network."""
+        networks = client.get("/v2.0/networks?router:external=true").json()["networks"]
+        return networks[0]["id"]
+
+    def test_set_gateway_allocates_external_fixed_ip(self):
+        """A gateway set without fixed IPs gets one from the external subnet.
+
+        Real Neutron allocates the address and reports it back; clients such as
+        Waldur read external_fixed_ips[0] straight after the call.
+        """
+        net_id = self._external_network_id()
+
+        response = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gateway-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+        router = response.json()["router"]
+        fixed_ips = router["external_gateway_info"]["external_fixed_ips"]
+        assert len(fixed_ips) == 1
+        assert fixed_ips[0]["ip_address"].startswith("203.0.113.")
+        assert fixed_ips[0]["subnet_id"]
+
+        # The allocation is backed by a gateway port, as in real Neutron.
+        ports = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
+        gateway_ports = [p for p in ports if p["device_owner"] == "network:router_gateway"]
+        assert len(gateway_ports) == 1
+        assert gateway_ports[0]["device_id"] == router["id"]
+
+    def test_clearing_gateway_releases_the_port(self):
+        """Removing the gateway drops its port so the pool does not leak."""
+        net_id = self._external_network_id()
+
+        router_id = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gateway-release-router",
+                    "external_gateway_info": {"network_id": net_id},
+                }
+            },
+        ).json()["router"]["id"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}",
+            json={"router": {"external_gateway_info": {}}},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["router"]["external_gateway_info"] is None
+
+        ports = client.get(f"/v2.0/ports?network_id={net_id}").json()["ports"]
+        assert [p for p in ports if p["device_owner"] == "network:router_gateway"] == []
+
     def test_delete_router(self):
         """Test deleting a router."""
         # Create a router first

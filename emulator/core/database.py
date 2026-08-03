@@ -5089,28 +5089,89 @@ class Database:
             return True
 
     # Router operations
-    @staticmethod
     def _build_external_gateway_info(
+        self,
         external_gateway_info: dict[str, Any] | None,
+        router_id: str,
+        project_id: str,
     ) -> ExternalGatewayInfo | None:
         """Build an ExternalGatewayInfo from a request payload.
 
         Returns None when the payload is empty (gateway removal). Fixed IPs are
         converted into FixedIP objects, tolerating entries that omit subnet_id.
+
+        When the caller supplies no external_fixed_ips — which is what clients
+        do when they just want a gateway on a given network — an address is
+        allocated from the external network's subnet and a gateway port is
+        created, mirroring real Neutron. Clients read the allocated address
+        back out of external_fixed_ips, so returning an empty list here makes
+        the router look gateway-less to them.
         """
         if not external_gateway_info:
+            self._release_router_gateway_port(router_id)
             return None
-        return ExternalGatewayInfo(
-            network_id=external_gateway_info.get("network_id", ""),
-            enable_snat=external_gateway_info.get("enable_snat", True),
-            external_fixed_ips=[
-                FixedIP(
-                    subnet_id=f.get("subnet_id", ""),
-                    ip_address=f.get("ip_address", ""),
+
+        network_id = external_gateway_info.get("network_id", "")
+        fixed_ips = [
+            FixedIP(
+                subnet_id=f.get("subnet_id", ""),
+                ip_address=f.get("ip_address", ""),
+            )
+            for f in external_gateway_info.get("external_fixed_ips", [])
+        ]
+
+        if not fixed_ips:
+            self._release_router_gateway_port(router_id)
+            network = self._networks.get(network_id)
+            subnet = None
+            if network:
+                subnet = next(
+                    (
+                        self._subnets[subnet_id]
+                        for subnet_id in network.subnets
+                        if subnet_id in self._subnets
+                    ),
+                    None,
                 )
-                for f in external_gateway_info.get("external_fixed_ips", [])
-            ],
+            if subnet:
+                ip_address = self._allocate_ip_from_subnet(subnet)
+                if ip_address:
+                    fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
+                    gateway_port = Port(
+                        id=str(uuid4()),
+                        name="",
+                        description="",
+                        network_id=network_id,
+                        admin_state_up=True,
+                        mac_address=self._generate_mac_address(),
+                        fixed_ips=list(fixed_ips),
+                        device_id=router_id,
+                        device_owner=DEVICE_OWNER_ROUTER_GATEWAY,
+                        project_id=project_id,
+                        security_groups=[],
+                        port_security_enabled=False,
+                    )
+                    self._ports[gateway_port.id] = gateway_port
+
+        return ExternalGatewayInfo(
+            network_id=network_id,
+            enable_snat=external_gateway_info.get("enable_snat", True),
+            external_fixed_ips=fixed_ips,
         )
+
+    def _release_router_gateway_port(self, router_id: str) -> None:
+        """Drop any gateway port previously created for ``router_id``.
+
+        Keeps the allocation pool from leaking addresses when a gateway is
+        replaced or cleared.
+        """
+        stale = [
+            port_id
+            for port_id, port in self._ports.items()
+            if port.device_id == router_id and port.device_owner == DEVICE_OWNER_ROUTER_GATEWAY
+        ]
+        for port_id in stale:
+            del self._ports[port_id]
 
     def create_router(
         self,
@@ -5122,10 +5183,13 @@ class Database:
     ) -> Router:
         """Create a new router."""
         with self._lock:
-            ext_gateway = self._build_external_gateway_info(external_gateway_info)
+            router_id = str(uuid4())
+            ext_gateway = self._build_external_gateway_info(
+                external_gateway_info, router_id, project_id
+            )
 
             router = Router(
-                id=str(uuid4()),
+                id=router_id,
                 name=name,
                 description=description,
                 project_id=project_id,
@@ -5206,7 +5270,7 @@ class Database:
                 router.admin_state_up = admin_state_up
             if external_gateway_info is not None:
                 router.external_gateway_info = self._build_external_gateway_info(
-                    external_gateway_info
+                    external_gateway_info, router.id, router.project_id
                 )
             if routes is not None:
                 router.routes = routes
