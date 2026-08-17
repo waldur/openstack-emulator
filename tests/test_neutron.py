@@ -350,13 +350,22 @@ class TestPorts:
             },
         )
         assert response.status_code == 400
-        assert response.json()["error"]["message"] == (
+        error = response.json()["NeutronError"]
+        assert error["type"] == "InvalidIpForNetwork"
+        assert error["message"] == (
             "IP address 10.99.0.1 is not a valid IP for any of "
             "the subnets on the specified network."
         )
 
     def test_create_port_duplicate_ip_returns_409(self):
-        """Real Neutron rejects an already-allocated IP (IpAddressAlreadyAllocated)."""
+        """Real Neutron rejects an already-allocated IP (IpAddressAlreadyAllocated).
+
+        The ``type`` is the part that matters. python-neutronclient maps it to
+        ``IpAddressAlreadyAllocatedClient``, and callers catch that subclass to
+        recover; without it the client raises the generic ``Conflict`` parent
+        and the recovery branch is skipped, so a test here would exercise a
+        different path than production does.
+        """
         net, sub = self._make_net_with_subnet("dup-ip-net", "10.7.0.0/24")
         payload = {
             "port": {
@@ -369,7 +378,54 @@ class TestPorts:
 
         second = client.post("/v2.0/ports", json=payload)
         assert second.status_code == 409
-        assert "10.7.0.5 already allocated" in second.json()["error"]["message"]
+        error = second.json()["NeutronError"]
+        assert error["type"] == "IpAddressAlreadyAllocated"
+        # Neutron names the subnet, not the network.
+        assert error["message"] == (f"IP address 10.7.0.5 already allocated in subnet {sub['id']}")
+
+    def test_duplicate_rbac_policy_returns_409(self):
+        """Neutron keys a policy on (object, target, action) and refuses a second.
+
+        Waldur leans on this: its own uniqueness check can be raced by
+        concurrent requests, leaving the backend as the last line of defence
+        against a duplicate share.
+        """
+        net, _ = self._make_net_with_subnet("rbac-dup-net", "10.8.0.0/24")
+        payload = {
+            "rbac_policy": {
+                "object_type": "network",
+                "object_id": net["id"],
+                "action": "access_as_shared",
+                "target_tenant": "some-other-project",
+            }
+        }
+        assert client.post("/v2.0/rbac-policies", json=payload).status_code == 201
+
+        second = client.post("/v2.0/rbac-policies", json=payload)
+        assert second.status_code == 409
+        error = second.json()["NeutronError"]
+        assert error["type"] == "DuplicateRbacPolicy"
+        assert error["message"] == "An RBAC policy already exists with those values."
+
+    def test_rbac_policy_differing_only_in_action_is_allowed(self):
+        """The key includes the action, so the two share types coexist."""
+        net, _ = self._make_net_with_subnet("rbac-action-net", "10.9.0.0/24")
+
+        def share(action):
+            return client.post(
+                "/v2.0/rbac-policies",
+                json={
+                    "rbac_policy": {
+                        "object_type": "network",
+                        "object_id": net["id"],
+                        "action": action,
+                        "target_tenant": "some-other-project",
+                    }
+                },
+            )
+
+        assert share("access_as_shared").status_code == 201
+        assert share("access_as_external").status_code == 201
 
     def test_create_port_resolves_subnet_id_from_cidr(self):
         """An explicit IP without subnet_id gets the containing subnet's id."""
