@@ -4932,7 +4932,7 @@ class Database:
                         if subnet is None:
                             raise InvalidFixedIPError(ip_address, network_id)
                         if self._is_fixed_ip_in_use(network_id, ip_address):
-                            raise FixedIPAlreadyInUseError(ip_address, network_id)
+                            raise FixedIPAlreadyInUseError(ip_address, network_id, subnet.id)
                         if not subnet_id:
                             subnet_id = subnet.id
                     if not ip_address and subnet_id:

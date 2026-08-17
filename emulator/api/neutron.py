@@ -13,6 +13,7 @@ from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
     InvalidFixedIPError,
     IpAddressGenerationFailureError,
+    NeutronAPIError,
 )
 from emulator.core.simple_auth import validate_token_simple
 
@@ -489,17 +490,25 @@ async def create_port(
             validate_fixed_ips=True,
         )
     except InvalidFixedIPError as exc:
-        raise HTTPException(
+        raise NeutronAPIError(
             status_code=400,
-            detail=(
+            neutron_type="InvalidIpForNetwork",
+            message=(
                 f"IP address {exc.ip} is not a valid IP for any of "
                 "the subnets on the specified network."
             ),
         ) from exc
     except FixedIPAlreadyInUseError as exc:
-        raise HTTPException(
+        # Typed on purpose: python-neutronclient turns "IpAddressAlreadyAllocated"
+        # into IpAddressAlreadyAllocatedClient, and callers catch that subclass
+        # to reclaim a stranded port. A typeless 409 arrives as the parent
+        # Conflict instead and the reclaim never runs.
+        raise NeutronAPIError(
             status_code=409,
-            detail=f"IP address {exc.ip} already allocated in network {exc.network_id}",
+            neutron_type="IpAddressAlreadyAllocated",
+            message=(
+                f"IP address {exc.ip} already allocated in subnet {exc.subnet_id or exc.network_id}"
+            ),
         ) from exc
     if not port:
         raise HTTPException(status_code=404, detail="Network not found")
@@ -1229,6 +1238,22 @@ async def create_rbac_policy(
         raise HTTPException(
             status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}"
         )
+
+    # Neutron keys an RBAC policy on (object, target, action) and refuses a
+    # second one. Waldur relies on that refusal: its own uniqueness check can be
+    # raced by concurrent requests, leaving the backend as the last line of
+    # defence against a duplicate share.
+    for existing in db.list_rbac_policies(object_type=object_type):
+        if (
+            existing.object_id == object_id
+            and existing.target_project == target_tenant
+            and existing.action == action
+        ):
+            raise NeutronAPIError(
+                status_code=409,
+                neutron_type="DuplicateRbacPolicy",
+                message="An RBAC policy already exists with those values.",
+            )
 
     # The RBAC policy is owned by the project that owns the shared object.
     # Honor an explicit body project_id/tenant_id, else derive it from the
