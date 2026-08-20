@@ -133,6 +133,13 @@ Publish chart to GitHub Pages:
     entrypoint: [""]
   stage: release
   interruptible: false
+  # The published chart pins appVersion (and therefore image.tag) to this tag.
+  # Publishing it before the image exists would put a .tgz on gh-pages that
+  # installs to ImagePullBackOff, and gh-pages entries are not retractable —
+  # fixing it would mean republishing the same chart version.
+  needs:
+    - job: Publish docker image
+      artifacts: false
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       when: never
@@ -159,8 +166,11 @@ Publish chart to GitHub Pages:
     - git fetch github-origin
     # Switch to gh-pages (create as orphan on the very first publish).
     - |
+      # -f is required: the sed above leaves Chart.yaml modified, and it does not
+      # exist on gh-pages, so a plain checkout refuses to discard it and aborts.
+      # Safe here — the chart is already packaged into /tmp/dist at this point.
       if git ls-remote --exit-code github-origin gh-pages >/dev/null; then
-        git checkout -B gh-pages github-origin/gh-pages
+        git checkout -f -B gh-pages github-origin/gh-pages
       else
         git checkout --orphan gh-pages
         git rm -rf . || true
