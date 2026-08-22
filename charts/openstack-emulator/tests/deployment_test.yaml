@@ -1,9 +1,13 @@
 suite: deployment args, mounts, and image
 templates:
   - templates/deployment.yaml
+  # Rendered only so the checksum/preset annotation's include can resolve;
+  # every test scopes its assertions back to the Deployment.
+  - templates/configmap-preset.yaml
 
 tests:
   - it: uses the openstack-emulator entrypoint explicitly (Dockerfile only sets CMD)
+    template: templates/deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].command
@@ -11,6 +15,7 @@ tests:
             - openstack-emulator
 
   - it: emits baseline args (--host, --log-level) without optional flags
+    template: templates/deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].args
@@ -21,6 +26,7 @@ tests:
             - "info"
 
   - it: appends --preset when preset.name is set
+    template: templates/deployment.yaml
     set:
       preset.name: development
     asserts:
@@ -32,6 +38,7 @@ tests:
           content: "development"
 
   - it: customPreset overrides preset.name and uses --preset-file
+    template: templates/deployment.yaml
     set:
       preset.name: development
       customPreset.enabled: true
@@ -51,6 +58,7 @@ tests:
           content: "development"
 
   - it: mounts the preset ConfigMap when customPreset is enabled
+    template: templates/deployment.yaml
     set:
       customPreset.enabled: true
       customPreset.yaml: "name: x\ndescription: y\n"
@@ -69,6 +77,7 @@ tests:
               name: RELEASE-NAME-openstack-emulator-preset
 
   - it: appends --persist-db and --auto-save when persistence.enabled
+    template: templates/deployment.yaml
     set:
       persistence.enabled: true
     asserts:
@@ -83,6 +92,7 @@ tests:
           content: "--auto-save"
 
   - it: omits --auto-save when persistence.autoSave is false
+    template: templates/deployment.yaml
     set:
       persistence.enabled: true
       persistence.autoSave: false
@@ -92,6 +102,7 @@ tests:
           content: "--auto-save"
 
   - it: mounts the PVC at the directory of persistence.path
+    template: templates/deployment.yaml
     set:
       persistence.enabled: true
       persistence.path: /var/lib/emulator/db.json
@@ -109,6 +120,7 @@ tests:
               claimName: RELEASE-NAME-openstack-emulator
 
   - it: appends extraArgs verbatim
+    template: templates/deployment.yaml
     set:
       extraArgs:
         - "--port-offset"
@@ -122,6 +134,7 @@ tests:
           content: "1000"
 
   - it: defaults image tag to .Chart.AppVersion when image.tag is empty
+    template: templates/deployment.yaml
     # Pin appVersion so the assertion is independent of the released version
     # (release.py bumps Chart.yaml appVersion to the release tag).
     chart:
@@ -132,6 +145,7 @@ tests:
           value: "opennode/openstack-emulator:latest"
 
   - it: respects image.tag override
+    template: templates/deployment.yaml
     set:
       image.tag: "0.2.0"
     asserts:
@@ -140,6 +154,7 @@ tests:
           value: "opennode/openstack-emulator:0.2.0"
 
   - it: probes target the keystone port and /health
+    template: templates/deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet
@@ -153,6 +168,7 @@ tests:
             port: keystone
 
   - it: declares all twelve emulator ports with stable names
+    template: templates/deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -190,3 +206,44 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].ports
           content: { name: scenarios, containerPort: 8999, protocol: TCP }
+
+  - it: has no annotations block when nothing needs one
+    template: templates/deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.metadata.annotations
+
+  - it: rolls the pod when the preset ConfigMap changes
+    template: templates/deployment.yaml
+    set:
+      customPreset.enabled: true
+      customPreset.yaml: "name: x\ndescription: y\n"
+    asserts:
+      - isNotNull:
+          path: spec.template.metadata.annotations["checksum/preset"]
+
+  - it: keeps podAnnotations working alongside the checksum
+    template: templates/deployment.yaml
+    set:
+      customPreset.enabled: true
+      customPreset.yaml: "name: x\ndescription: y\n"
+      podAnnotations:
+        foo: bar
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations.foo
+          value: bar
+      - isNotNull:
+          path: spec.template.metadata.annotations["checksum/preset"]
+
+  - it: emits podAnnotations without a checksum when customPreset is off
+    template: templates/deployment.yaml
+    set:
+      podAnnotations:
+        foo: bar
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations.foo
+          value: bar
+      - isNull:
+          path: spec.template.metadata.annotations["checksum/preset"]
