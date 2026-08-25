@@ -9,6 +9,8 @@ include:
   # Add the include once those are cleaned up as a separate pass.
   - project: "waldur/waldur-pipelines"
     file: "/templates/release/publish-multiarch.yml"
+  - project: "waldur/waldur-pipelines"
+    file: "/templates/test/license-scan.yml"
 
 variables:
   COMPONENT_VERSION: "latest"
@@ -281,3 +283,17 @@ Publish docker image:
         buildah push "${IMAGE_REPO}:${CI_COMMIT_TAG}" "docker://${IMAGE_REPO}:${CI_COMMIT_TAG}"
       fi
     - buildah push "${IMAGE_REPO}:latest" "docker://${IMAGE_REPO}:latest"
+
+# Fails when a dependency arrives under a licence Waldur cannot ship — strong
+# copyleft (GPL, AGPL), source-available (SSPL, BUSL, Elastic) or non-OSI
+# use-restricted (Hippocratic, JSON). LGPL and MPL pass but stay listed in the
+# job artifact. See waldur/waldur-mastermind#285.
+#
+# The job only runs on merge requests that touch pyproject.toml or uv.lock, plus
+# the default branch and release tags.
+#
+# allow_failure is inherited as true from the template, so this cannot redden an
+# MR while it is being adopted. Override it with `allow_failure: false` to make
+# the gate binding once this repo is known clean.
+Check dependency licences:
+  extends: .Licence gate (python) template
