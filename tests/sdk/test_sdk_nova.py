@@ -523,7 +523,7 @@ class TestNovaServerMetadata:
 
         openstack_connection.compute.set_server_metadata(server, env="prod", role="db")
 
-        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        metadata = openstack_connection.compute.get_server(server.id).metadata
         assert metadata == {"env": "prod", "owner": "team-a", "role": "db"}
 
     def test_delete_metadata_removes_only_the_named_keys(
@@ -535,7 +535,7 @@ class TestNovaServerMetadata:
 
         openstack_connection.compute.delete_server_metadata(server, ["owner"])
 
-        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        metadata = openstack_connection.compute.get_server(server.id).metadata
         assert metadata == {"env": "prod"}
 
     def test_replacing_metadata_takes_a_delete_then_a_set(
@@ -551,5 +551,5 @@ class TestNovaServerMetadata:
         openstack_connection.compute.delete_server_metadata(server, ["owner"])
         openstack_connection.compute.set_server_metadata(server, env="prod")
 
-        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        metadata = openstack_connection.compute.get_server(server.id).metadata
         assert metadata == {"env": "prod"}
