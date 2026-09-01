@@ -314,6 +314,9 @@ async def create_server(
         if not image:
             raise HTTPException(status_code=400, detail=f"Image {req.imageRef} not found")
 
+    metadata = _validated_metadata(req.metadata or {})
+    _enforce_metadata_quota(token.project_id, metadata)
+
     # Convert networks to dict format
     networks = None
     if req.networks:
@@ -327,7 +330,7 @@ async def create_server(
             tenant_id=token.project_id,
             user_id=token.user_id,
             key_name=req.key_name,
-            metadata=req.metadata,
+            metadata=metadata,
             security_groups=req.security_groups,
             availability_zone=req.availability_zone or "nova",
             networks=networks,
@@ -580,17 +583,70 @@ async def list_server_security_groups(
 
 
 # Server metadata
+# Nova caps a metadata key and a metadata value at 255 characters each and
+# requires both to be strings; anything else is a 400 from its request schema.
+METADATA_MAX_LENGTH = 255
+
+
+def _get_server_for_metadata(server_id: str, x_auth_token: str | None) -> Server:
+    """Resolve a server the caller is allowed to see, or raise a 404."""
+    token = get_token_or_raise(x_auth_token)
+
+    server = db.get_server(server_id)
+    if not is_server_accessible(server, token):
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    return server
+
+
+def _validated_metadata(raw: Any) -> dict[str, str]:
+    """Check a metadata mapping the way Nova's request schema does."""
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=400, detail="Malformed request body: metadata must be an object"
+        )
+
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid metadata: value for key {key!r} must be a string",
+            )
+        if not key:
+            raise HTTPException(status_code=400, detail="Invalid metadata: key must not be empty")
+        if len(key) > METADATA_MAX_LENGTH or len(value) > METADATA_MAX_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid metadata: key {key!r} or its value exceeds {METADATA_MAX_LENGTH} characters",
+            )
+
+    return dict(raw)
+
+
+def _enforce_metadata_quota(tenant_id: str, metadata: dict[str, str]) -> None:
+    """Refuse a metadata write that would put the server over its quota.
+
+    Nova counts the *result* of the write, which is why a POST that merges into
+    a well-populated server can be refused even though the body itself is small.
+    """
+    limit = db.get_nova_quota(tenant_id).metadata_items
+    if limit >= 0 and len(metadata) > limit:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Quota exceeded for metadata_items: Requested {len(metadata)}, "
+                f"but the limit is {limit}"
+            ),
+        )
+
+
 @router.get("/v2.1/servers/{server_id}/metadata")
 async def get_server_metadata(
     server_id: str,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Get server metadata."""
-    token = get_token_or_raise(x_auth_token)
-
-    server = db.get_server(server_id)
-    if not is_server_accessible(server, token):
-        raise HTTPException(status_code=404, detail="Server not found")
+    server = _get_server_for_metadata(server_id, x_auth_token)
 
     return {"metadata": server.metadata}
 
@@ -601,18 +657,95 @@ async def update_server_metadata(
     request: Request,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
-    """Update server metadata."""
-    token = get_token_or_raise(x_auth_token)
-
-    server = db.get_server(server_id)
-    if not is_server_accessible(server, token):
-        raise HTTPException(status_code=404, detail="Server not found")
+    """Replace server metadata wholesale."""
+    server = _get_server_for_metadata(server_id, x_auth_token)
 
     body = await request.json()
-    metadata = body.get("metadata", {})
+    metadata = _validated_metadata(body.get("metadata", {}))
+    _enforce_metadata_quota(server.tenant_id, metadata)
 
     updated = db.update_server(server_id, metadata=metadata)
     return {"metadata": updated.metadata if updated else {}}
+
+
+@router.post("/v2.1/servers/{server_id}/metadata")
+async def create_server_metadata(
+    server_id: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Merge the given pairs into the server metadata.
+
+    This is the one Nova's own clients use to set metadata: ``set_meta`` in
+    novaclient and ``set_server_metadata`` in the SDK both POST here, and the
+    keys already on the server that the body does not mention survive. Removing
+    a key takes a DELETE of that key.
+    """
+    server = _get_server_for_metadata(server_id, x_auth_token)
+
+    body = await request.json()
+    merged = {**server.metadata, **_validated_metadata(body.get("metadata", {}))}
+    _enforce_metadata_quota(server.tenant_id, merged)
+
+    updated = db.update_server(server_id, metadata=merged)
+    return {"metadata": updated.metadata if updated else {}}
+
+
+@router.get("/v2.1/servers/{server_id}/metadata/{key}")
+async def get_server_metadata_item(
+    server_id: str,
+    key: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Get a single metadata item."""
+    server = _get_server_for_metadata(server_id, x_auth_token)
+
+    if key not in server.metadata:
+        raise HTTPException(status_code=404, detail=f"Metadata item {key} was not found")
+
+    return {"meta": {key: server.metadata[key]}}
+
+
+@router.put("/v2.1/servers/{server_id}/metadata/{key}")
+async def update_server_metadata_item(
+    server_id: str,
+    key: str,
+    request: Request,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> dict[str, Any]:
+    """Set a single metadata item."""
+    server = _get_server_for_metadata(server_id, x_auth_token)
+
+    body = await request.json()
+    meta = _validated_metadata(body.get("meta", {}))
+    if list(meta) != [key]:
+        raise HTTPException(
+            status_code=400,
+            detail="Request body and URI mismatch",
+        )
+
+    merged = {**server.metadata, **meta}
+    _enforce_metadata_quota(server.tenant_id, merged)
+
+    updated = db.update_server(server_id, metadata=merged)
+    return {"meta": {key: updated.metadata[key]} if updated else {}}
+
+
+@router.delete("/v2.1/servers/{server_id}/metadata/{key}", status_code=204)
+async def delete_server_metadata_item(
+    server_id: str,
+    key: str,
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
+) -> Response:
+    """Delete a single metadata item."""
+    server = _get_server_for_metadata(server_id, x_auth_token)
+
+    if key not in server.metadata:
+        raise HTTPException(status_code=404, detail=f"Metadata item {key} was not found")
+
+    remaining = {k: v for k, v in server.metadata.items() if k != key}
+    db.update_server(server_id, metadata=remaining)
+    return Response(status_code=204)
 
 
 def _parse_is_public(value: str | None) -> bool | None:

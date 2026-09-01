@@ -4,6 +4,12 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Serve the Nova server metadata sub-resource: merging POST, per-key GET, PUT and DELETE
+- Enforce the metadata_items quota and Nova's key/value limits on metadata writes and at boot
+
 ## [0.4.3] - 2026-08-17
 
 ### Fixed
