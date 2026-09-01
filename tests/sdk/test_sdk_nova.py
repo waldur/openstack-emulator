@@ -488,3 +488,68 @@ class TestSDKServerPortBinding:
         assert port.fixed_ips[0]["ip_address"].startswith("192.168.80.")
         # The gateway is not handed out.
         assert port.fixed_ips[0]["ip_address"] != "192.168.80.1"
+
+
+class TestNovaServerMetadata:
+    """Server metadata through a real SDK client.
+
+    Waldur drives this sub-resource the way novaclient does: a merging POST to
+    set keys and a DELETE per key to drop them. The SDK's
+    ``set_server_metadata`` / ``delete_server_metadata`` hit the same two
+    endpoints, so these exercise the wire contract those clients depend on.
+    """
+
+    def _server(self, conn: Connection, name: str, metadata: dict[str, str] | None = None):
+        flavor = conn.compute.find_flavor("m1.tiny")
+        assert flavor is not None
+        image = list(conn.compute.images())[0]
+        return conn.compute.create_server(
+            name=name,
+            flavor_id=flavor.id,
+            image_id=image.id,
+            metadata=metadata or {},
+        )
+
+    def test_metadata_given_at_boot_round_trips(self, openstack_connection: Connection) -> None:
+        server = self._server(openstack_connection, "meta-boot", {"env": "prod", "role": "db"})
+
+        fetched = openstack_connection.compute.get_server(server.id)
+        assert fetched.metadata == {"env": "prod", "role": "db"}
+
+    def test_set_metadata_merges(self, openstack_connection: Connection) -> None:
+        server = self._server(
+            openstack_connection, "meta-merge", {"env": "staging", "owner": "team-a"}
+        )
+
+        openstack_connection.compute.set_server_metadata(server, env="prod", role="db")
+
+        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        assert metadata == {"env": "prod", "owner": "team-a", "role": "db"}
+
+    def test_delete_metadata_removes_only_the_named_keys(
+        self, openstack_connection: Connection
+    ) -> None:
+        server = self._server(
+            openstack_connection, "meta-delete", {"env": "prod", "owner": "team-a"}
+        )
+
+        openstack_connection.compute.delete_server_metadata(server, ["owner"])
+
+        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        assert metadata == {"env": "prod"}
+
+    def test_replacing_metadata_takes_a_delete_then_a_set(
+        self, openstack_connection: Connection
+    ) -> None:
+        # The sequence Waldur's push performs: prune what disappeared, then push
+        # the new pairs. Doing it in this order also keeps the intermediate state
+        # from exceeding the metadata_items quota.
+        server = self._server(
+            openstack_connection, "meta-replace", {"env": "staging", "owner": "team-a"}
+        )
+
+        openstack_connection.compute.delete_server_metadata(server, ["owner"])
+        openstack_connection.compute.set_server_metadata(server, env="prod")
+
+        metadata = openstack_connection.compute.fetch_server_metadata(server).metadata
+        assert metadata == {"env": "prod"}

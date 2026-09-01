@@ -349,6 +349,178 @@ class TestServerEndpoints:
         assert response.status_code == 204
 
 
+class TestServerMetadata:
+    """Server metadata sub-resource.
+
+    Nova splits the two writes that clients rely on: POST merges into what the
+    server already carries, PUT replaces it wholesale, and a key goes away only
+    through a DELETE of that key.
+    """
+
+    @pytest.fixture
+    def server_id(self, client, auth_token):
+        images_response = client.get("/v2.1/images", headers={"X-Auth-Token": auth_token})
+        image_id = images_response.json()["images"][0]["id"]
+        response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": auth_token},
+            json={
+                "server": {
+                    "name": "meta-server",
+                    "flavorRef": "1",
+                    "imageRef": image_id,
+                    "metadata": {"env": "staging", "owner": "team-a"},
+                }
+            },
+        )
+        assert response.status_code == 202
+        return response.json()["server"]["id"]
+
+    def test_metadata_given_at_boot_is_readable(self, client, auth_token, server_id):
+        response = client.get(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        assert response.json()["metadata"] == {"env": "staging", "owner": "team-a"}
+
+    def test_metadata_is_on_the_server_detail(self, client, auth_token, server_id):
+        response = client.get(
+            f"/v2.1/servers/{server_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.json()["server"]["metadata"] == {"env": "staging", "owner": "team-a"}
+
+    def test_post_merges_and_keeps_untouched_keys(self, client, auth_token, server_id):
+        response = client.post(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"env": "prod", "role": "db"}},
+        )
+        assert response.status_code == 200
+        assert response.json()["metadata"] == {
+            "env": "prod",
+            "owner": "team-a",
+            "role": "db",
+        }
+
+    def test_put_replaces_wholesale(self, client, auth_token, server_id):
+        response = client.put(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"env": "prod"}},
+        )
+        assert response.status_code == 200
+        assert response.json()["metadata"] == {"env": "prod"}
+
+    def test_delete_removes_one_key(self, client, auth_token, server_id):
+        response = client.delete(
+            f"/v2.1/servers/{server_id}/metadata/owner",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 204
+
+        remaining = client.get(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert remaining.json()["metadata"] == {"env": "staging"}
+
+    def test_delete_of_an_absent_key_is_404(self, client, auth_token, server_id):
+        response = client.delete(
+            f"/v2.1/servers/{server_id}/metadata/nope",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 404
+
+    def test_get_single_item(self, client, auth_token, server_id):
+        response = client.get(
+            f"/v2.1/servers/{server_id}/metadata/env",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"meta": {"env": "staging"}}
+
+    def test_put_single_item(self, client, auth_token, server_id):
+        response = client.put(
+            f"/v2.1/servers/{server_id}/metadata/env",
+            headers={"X-Auth-Token": auth_token},
+            json={"meta": {"env": "prod"}},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"meta": {"env": "prod"}}
+
+    def test_put_single_item_rejects_key_mismatch(self, client, auth_token, server_id):
+        response = client.put(
+            f"/v2.1/servers/{server_id}/metadata/env",
+            headers={"X-Auth-Token": auth_token},
+            json={"meta": {"role": "db"}},
+        )
+        assert response.status_code == 400
+
+    def test_non_string_value_is_rejected(self, client, auth_token, server_id):
+        response = client.post(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"port": 8080}},
+        )
+        assert response.status_code == 400
+
+    def test_oversized_value_is_rejected(self, client, auth_token, server_id):
+        response = client.post(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"note": "v" * 256}},
+        )
+        assert response.status_code == 400
+
+    def test_merge_over_the_quota_is_refused(self, client, auth_token, server_id):
+        # The quota is checked against the result of the merge, so a small body
+        # can still be refused. This is why a client that replaces metadata has
+        # to delete the keys it drops before pushing the new ones.
+        quota = db.get_nova_quota(db.get_project_by_name("admin", "default").id)
+        quota.metadata_items = 3
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"a": "1", "b": "2"}},
+        )
+        assert response.status_code == 403
+        assert "metadata_items" in response.json()["error"]["message"]
+
+    def test_replacing_within_the_quota_is_allowed(self, client, auth_token, server_id):
+        quota = db.get_nova_quota(db.get_project_by_name("admin", "default").id)
+        quota.metadata_items = 2
+
+        response = client.put(
+            f"/v2.1/servers/{server_id}/metadata",
+            headers={"X-Auth-Token": auth_token},
+            json={"metadata": {"env": "prod", "role": "db"}},
+        )
+        assert response.status_code == 200
+
+    def test_boot_over_the_quota_is_refused(self, client, auth_token):
+        quota = db.get_nova_quota(db.get_project_by_name("admin", "default").id)
+        quota.metadata_items = 1
+        images_response = client.get("/v2.1/images", headers={"X-Auth-Token": auth_token})
+        image_id = images_response.json()["images"][0]["id"]
+
+        response = client.post(
+            "/v2.1/servers",
+            headers={"X-Auth-Token": auth_token},
+            json={
+                "server": {
+                    "name": "too-much-meta",
+                    "flavorRef": "1",
+                    "imageRef": image_id,
+                    "metadata": {"a": "1", "b": "2"},
+                }
+            },
+        )
+        assert response.status_code == 403
+
+
 class TestServerActions:
     """Test server action endpoints."""
 
