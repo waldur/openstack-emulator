@@ -207,6 +207,45 @@ curl -s -X DELETE http://localhost:8774/v2.1/servers/{server_id} \
   -H "X-Auth-Token: $TOKEN"
 ```
 
+### Server metadata
+
+Metadata can be handed to the server at boot through the `metadata` key of the
+create body. Afterwards, `POST` merges pairs into what the server already
+carries, `PUT` replaces the whole mapping, and a key is dropped by deleting it
+individually. The `metadata_items` quota is checked against the result of the
+write, so a small `POST` can still be refused with a 403 on a server that is
+already near the limit.
+
+```bash
+# Read metadata
+curl -s http://localhost:8774/v2.1/servers/{server_id}/metadata \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Merge pairs into the existing metadata (what novaclient's set_meta does)
+curl -s -X POST http://localhost:8774/v2.1/servers/{server_id}/metadata \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"env": "prod", "role": "db"}}' | jq
+
+# Replace the metadata wholesale
+curl -s -X PUT http://localhost:8774/v2.1/servers/{server_id}/metadata \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"env": "prod"}}' | jq
+
+# Read, set and delete a single item
+curl -s http://localhost:8774/v2.1/servers/{server_id}/metadata/env \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+curl -s -X PUT http://localhost:8774/v2.1/servers/{server_id}/metadata/env \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"meta": {"env": "prod"}}' | jq
+
+curl -s -X DELETE http://localhost:8774/v2.1/servers/{server_id}/metadata/env \
+  -H "X-Auth-Token: $TOKEN"
+```
+
 ### Flavors
 
 ```bash
