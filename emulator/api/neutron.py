@@ -583,10 +583,20 @@ async def list_routers(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
     name: str | None = Query(None),
     status: str | None = Query(None),
+    tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
 ) -> dict[str, Any]:
-    """List routers."""
-    project_id = _lookup_project_id(x_auth_token)
-    routers = db.list_routers(project_id=project_id, name=name, status=status)
+    """List routers.
+
+    An explicit ``tenant_id``/``project_id`` filters to that project; otherwise
+    the token's project is used (admin tokens see all projects). Neutron treats
+    the owning project as a standard list filter, so an admin listing
+    ``?tenant_id=<id>`` gets that project's routers rather than the whole cloud
+    — without this, ``delete_tenant_routers``-shaped code driven by an admin
+    session would sweep every router here and still look correct.
+    """
+    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
+    routers = db.list_routers(project_id=effective_project, name=name, status=status)
     return {"routers": [r.to_dict() for r in routers]}
 
 

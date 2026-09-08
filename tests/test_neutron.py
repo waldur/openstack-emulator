@@ -774,6 +774,155 @@ class TestRouters:
         data = response.json()
         assert data["subnet_id"] == subnet["id"]
 
+    def test_add_router_interface_creates_a_port_owned_by_the_router(self):
+        """The interface is backed by a real port, as in Neutron.
+
+        ``_add_interface_by_subnet`` creates a port with the router as
+        ``device_id`` and ``network:router_interface`` as ``device_owner``,
+        owned by the router's project. Clients read the interface back out of
+        the port list -- waldur-mastermind's ``pull_tenant_routers`` builds a
+        router's whole port set from ``list_ports(device_id=<router>)`` -- so
+        asserting only the 200 leaves the part they depend on untested.
+        """
+        token = scoped_token(project_name="iface-port-proj", project_id="iface-port-proj").id
+        headers = {"X-Auth-Token": token}
+
+        network_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "iface-port-net"}},
+            headers=headers,
+        ).json()["network"]["id"]
+        subnet_id = client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "network_id": network_id,
+                    "cidr": "192.168.77.0/24",
+                    "ip_version": 4,
+                }
+            },
+            headers=headers,
+        ).json()["subnet"]["id"]
+        router_id = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": "iface-port-router"}},
+            headers=headers,
+        ).json()["router"]["id"]
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}/add_router_interface",
+            json={"subnet_id": subnet_id},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+
+        ports = client.get(f"/v2.0/ports?device_id={router_id}", headers=headers).json()["ports"]
+        assert len(ports) == 1, ports
+        (port,) = ports
+        assert port["device_owner"] == "network:router_interface"
+        assert port["device_id"] == router_id
+        assert port["tenant_id"] == "iface-port-proj"
+        assert [ip["subnet_id"] for ip in port["fixed_ips"]] == [subnet_id]
+
+    def test_remove_router_interface_drops_the_port(self):
+        """Detaching the interface removes its port, so the address is freed."""
+        token = scoped_token(project_name="iface-drop-proj", project_id="iface-drop-proj").id
+        headers = {"X-Auth-Token": token}
+
+        network_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "iface-drop-net"}},
+            headers=headers,
+        ).json()["network"]["id"]
+        subnet_id = client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "network_id": network_id,
+                    "cidr": "192.168.78.0/24",
+                    "ip_version": 4,
+                }
+            },
+            headers=headers,
+        ).json()["subnet"]["id"]
+        router_id = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": "iface-drop-router"}},
+            headers=headers,
+        ).json()["router"]["id"]
+        client.put(
+            f"/v2.0/routers/{router_id}/add_router_interface",
+            json={"subnet_id": subnet_id},
+            headers=headers,
+        )
+
+        response = client.put(
+            f"/v2.0/routers/{router_id}/remove_router_interface",
+            json={"subnet_id": subnet_id},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["subnet_id"] == subnet_id
+
+        ports = client.get(f"/v2.0/ports?device_id={router_id}", headers=headers).json()["ports"]
+        assert ports == []
+
+
+class TestRouterProjectFilter:
+    """``GET /v2.0/routers`` scoped by an explicit project.
+
+    Neutron treats the owning project as a standard list filter, so an admin
+    listing ``?tenant_id=<id>`` gets that project's routers and not the whole
+    cloud. Verified against a real overcloud: an unfiltered admin list returned
+    routers from every project, and each ``?tenant_id=<id>`` returned only that
+    project's.
+    """
+
+    @staticmethod
+    def _router_in(project: str, name: str) -> str:
+        token = scoped_token(project_name=project, project_id=project).id
+        response = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": name}},
+            headers={"X-Auth-Token": token},
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["router"]["id"]
+
+    @staticmethod
+    def _admin_token() -> str:
+        return scoped_token(project_name="admin", project_id="admin", role_name="admin").id
+
+    def test_admin_can_filter_routers_by_tenant_id(self):
+        first = self._router_in("router-filter-a", "router-filter-a-rtr")
+        second = self._router_in("router-filter-b", "router-filter-b-rtr")
+        headers = {"X-Auth-Token": self._admin_token()}
+
+        unfiltered = client.get("/v2.0/routers", headers=headers).json()["routers"]
+        unfiltered_ids = {r["id"] for r in unfiltered}
+        assert {first, second} <= unfiltered_ids
+
+        filtered = client.get("/v2.0/routers?tenant_id=router-filter-a", headers=headers).json()
+        assert [r["id"] for r in filtered["routers"]] == [first]
+
+    def test_project_id_is_an_equivalent_alias(self):
+        router_id = self._router_in("router-filter-c", "router-filter-c-rtr")
+        headers = {"X-Auth-Token": self._admin_token()}
+
+        filtered = client.get("/v2.0/routers?project_id=router-filter-c", headers=headers).json()
+        assert [r["id"] for r in filtered["routers"]] == [router_id]
+
+    def test_an_unfiltered_tenant_token_still_sees_only_its_own(self):
+        """No filter means the token's project, as before this change."""
+        mine = self._router_in("router-filter-d", "router-filter-d-rtr")
+        other = self._router_in("router-filter-e", "router-filter-e-rtr")
+        token = scoped_token(project_name="router-filter-d", project_id="router-filter-d").id
+
+        listed = client.get("/v2.0/routers", headers={"X-Auth-Token": token}).json()
+        listed_ids = {r["id"] for r in listed["routers"]}
+        assert mine in listed_ids
+        assert other not in listed_ids
+
 
 class TestFloatingIPs:
     """Test floating IP operations."""
