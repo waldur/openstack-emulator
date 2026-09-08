@@ -4,11 +4,19 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.4.4] - 2026-09-08
 
 ### Added
-- Serve the Nova server metadata sub-resource: merging POST, per-key GET, PUT and DELETE
-- Enforce the metadata_items quota and Nova's key/value limits on metadata writes and at boot
+- Serve the Nova server metadata sub-resource
+- Publish a chart landing page alongside the Helm repository index
+
+### Changed
+- Roll the deployment pod when the preset ConfigMap changes
+- Wire the dependency licence gate into CI
+
+### Fixed
+- Honour the `tenant_id`/`project_id` filter when listing Neutron routers
+- Fix two latent faults in the chart publish job
 
 ## [0.4.3] - 2026-08-17
 
