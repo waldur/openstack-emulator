@@ -4,6 +4,13 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] - 2026-09-10
+
+### Fixed
+- Fix Neutron router deletion so a missing router, or one owned by another project, returns 404 `RouterNotFound` instead of a 409
+- Fix Neutron router deletion to return 409 `RouterInUse` ("Router <id> still has ports") when the router still has interfaces attached
+- Fix router deletion being blocked by an external gateway port, which is now released along with the router, as Neutron does
+
 ## [0.4.4] - 2026-09-08
 
 ### Added
