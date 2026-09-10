@@ -748,6 +748,89 @@ class TestRouters:
         get_response = client.get(f"/v2.0/routers/{router_id}")
         assert get_response.status_code == 404
 
+    def test_delete_router_that_is_not_there(self):
+        """Neutron answers RouterNotFound, and a 404 rather than a 409.
+
+        This used to be the same 409 "Cannot delete router (may have
+        interfaces)" as a router in use, so a client could not tell an
+        already-deleted router from one it must detach first -- and
+        python-neutronclient raised Conflict for both.
+        """
+        response = client.delete("/v2.0/routers/00000000-0000-0000-0000-000000000000")
+
+        assert response.status_code == 404, response.text
+        error = response.json()["NeutronError"]
+        assert error["type"] == "RouterNotFound"
+        assert "could not be found" in error["message"]
+
+    def test_delete_router_holding_an_interface(self):
+        """Real Neutron: 409 RouterInUse, "Router <id> still has ports"."""
+        router_id = client.post(
+            "/v2.0/routers",
+            json={"router": {"name": "in-use-router"}},
+        ).json()["router"]["id"]
+        subnet_id = client.get("/v2.0/subnets").json()["subnets"][0]["id"]
+        assert (
+            client.put(
+                f"/v2.0/routers/{router_id}/add_router_interface",
+                json={"subnet_id": subnet_id},
+            ).status_code
+            == 200
+        )
+
+        response = client.delete(f"/v2.0/routers/{router_id}")
+
+        assert response.status_code == 409, response.text
+        error = response.json()["NeutronError"]
+        assert error["type"] == "RouterInUse"
+        assert error["message"] == f"Router {router_id} still has ports"
+
+        # And it goes once the interface does.
+        client.put(
+            f"/v2.0/routers/{router_id}/remove_router_interface",
+            json={"subnet_id": subnet_id},
+        )
+        assert client.delete(f"/v2.0/routers/{router_id}").status_code == 204
+
+    def test_delete_router_whose_only_port_is_the_gateway(self):
+        """A gateway is not an interface: Neutron releases that port itself and
+        deletes the router. Blocking on every port with `device_id == router_id`
+        refused a deletion a real cloud accepts."""
+        external_id = client.post(
+            "/v2.0/networks",
+            json={"network": {"name": "gw-ext-net", "router:external": True}},
+        ).json()["network"]["id"]
+        client.post(
+            "/v2.0/subnets",
+            json={
+                "subnet": {
+                    "network_id": external_id,
+                    "cidr": "198.51.100.0/24",
+                    "ip_version": 4,
+                }
+            },
+        )
+        router_id = client.post(
+            "/v2.0/routers",
+            json={
+                "router": {
+                    "name": "gateway-only-router",
+                    "external_gateway_info": {"network_id": external_id},
+                }
+            },
+        ).json()["router"]["id"]
+        # Read through the database, as the gateway test above does: a gateway
+        # port carries no project of its own -- in the emulator and in Neutron --
+        # so a project-scoped listing does not show it.
+        assert [port.device_owner for port in db.list_ports(device_id=router_id)] == [
+            "network:router_gateway"
+        ]
+
+        response = client.delete(f"/v2.0/routers/{router_id}")
+
+        assert response.status_code == 204, response.text
+        assert db.list_ports(device_id=router_id) == []
+
     def test_add_router_interface(self):
         """Test adding interface to a router."""
         # Create a router

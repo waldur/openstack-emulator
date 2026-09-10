@@ -5370,30 +5370,46 @@ class Database:
                 self.save()
             return router
 
-    def delete_router(self, router_id: str, project_id: str | None = None) -> bool:
-        """Delete a router.
+    def delete_router(self, router_id: str, project_id: str | None = None) -> str:
+        """Delete a router, the way Neutron does.
+
+        Neutron distinguishes three answers here, and a caller acts on each
+        differently -- a client that treats "already gone" as a failure erreds a
+        resource it should have considered deleted:
+
+        * the router is not there (or belongs to someone else): ``RouterNotFound``, 404;
+        * it still holds an *interface*: ``RouterInUse``, 409;
+        * otherwise it goes, and its external gateway port goes with it. A
+          router whose only port is ``network:router_gateway`` deletes cleanly on
+          a real cloud -- Neutron releases that port itself -- so blocking on
+          every port with ``device_id == router_id`` refused a deletion that
+          OpenStack accepts.
 
         Args:
             router_id: The router ID to delete.
             project_id: If provided, verify ownership before deleting.
 
         Returns:
-            True if deleted, False if not found, not owned, or has interfaces.
+            ``"deleted"``, ``"not_found"`` or ``"in_use"``.
         """
         with self._lock:
             router = self._routers.get(router_id)
             if not router:
-                return False
+                return "not_found"
             if project_id is not None and router.project_id != project_id:
-                return False
-            # Check for interfaces
+                # Neutron does not distinguish "not yours" from "not there".
+                return "not_found"
             for port in self._ports.values():
-                if port.device_id == router_id:
-                    return False
+                if (
+                    port.device_id == router_id
+                    and port.device_owner == DEVICE_OWNER_ROUTER_INTERFACE
+                ):
+                    return "in_use"
+            self._release_router_gateway_port(router_id)
             del self._routers[router_id]
             if self.auto_save:
                 self.save()
-            return True
+            return "deleted"
 
     def add_router_interface(
         self,
