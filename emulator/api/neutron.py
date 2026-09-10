@@ -737,9 +737,22 @@ async def delete_router(
     Only allows deleting routers owned by the requesting tenant.
     """
     project_id = _lookup_project_id(x_auth_token)
-    success = db.delete_router(router_id, project_id=project_id)
-    if not success:
-        raise HTTPException(status_code=409, detail="Cannot delete router (may have interfaces)")
+    outcome = db.delete_router(router_id, project_id=project_id)
+    if outcome == "not_found":
+        # Was a 409 "Cannot delete router (may have interfaces)" for this too,
+        # so a client could not tell an already-deleted router from one that is
+        # still in use, and got the wrong exception class for both.
+        raise NeutronAPIError(
+            status_code=404,
+            neutron_type="RouterNotFound",
+            message=f"Router {router_id} could not be found",
+        )
+    if outcome == "in_use":
+        raise NeutronAPIError(
+            status_code=409,
+            neutron_type="RouterInUse",
+            message=f"Router {router_id} still has ports",
+        )
     return Response(status_code=204)
 
 

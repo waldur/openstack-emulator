@@ -5221,7 +5221,7 @@ async def api_delete_router(
     """Delete a router."""
     require_auth(auth_token)
 
-    if not db.delete_router(router_id):
+    if db.delete_router(router_id) != "deleted":
         raise HTTPException(status_code=404, detail="Router not found")
 
     return {"message": "Router deleted"}
