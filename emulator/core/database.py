@@ -13,9 +13,14 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from emulator.core import persistence
 from emulator.core.exceptions import (
+    AutoAddressSubnetError,
     FixedIPAlreadyInUseError,
+    InvalidAllowedAddressPairError,
     InvalidFixedIPError,
+    InvalidIpv6ModeError,
+    InvalidSubnetIpVersionError,
     IpAddressGenerationFailureError,
+    Ipv6PrefixLengthError,
     PortInUseError,
     PortNotFoundError,
     ScopeUnauthorizedError,
@@ -140,6 +145,58 @@ logger = logging.getLogger(__name__)
 DEVICE_OWNER_FLOATINGIP = "network:floatingip"
 DEVICE_OWNER_ROUTER_INTERFACE = "network:router_interface"
 DEVICE_OWNER_ROUTER_GATEWAY = "network:router_gateway"
+
+# Neutron IPv6 address modes.
+IPV6_MODES = ("slaac", "dhcpv6-stateful", "dhcpv6-stateless")
+# SLAAC and stateless DHCPv6 both build the host half of an address from the
+# prefix. That is what separates them from dhcpv6-stateful everywhere below:
+# Neutron will not let a caller pin an address on such a subnet, and derives one
+# instead, so a client that asks for a port there sends only a subnet_id.
+IPV6_MODES_FROM_PREFIX = ("slaac", "dhcpv6-stateless")
+
+# Multicast ranges. An allowed address pair may name neither one of these nor a
+# prefix wide enough to cover one, which is why ``::/0`` is refused while almost
+# every ordinary prefix is accepted.
+MULTICAST_RANGES = (
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("ff00::/8"),
+)
+
+
+def subnet_addresses_come_from_prefix(subnet: Subnet) -> bool:
+    """Whether the subnet hands out addresses derived from its prefix."""
+    return subnet.ip_version == 6 and (
+        subnet.ipv6_ra_mode in IPV6_MODES_FROM_PREFIX
+        or subnet.ipv6_address_mode in IPV6_MODES_FROM_PREFIX
+    )
+
+
+def eui64_address(cidr: str, mac_address: str) -> str:
+    """Derive the address a host builds for itself from a prefix and its MAC.
+
+    This is the modified EUI-64 of RFC 4291: the MAC is split in half around
+    ``ff:fe`` and the universal/local bit of the first octet is flipped. A real
+    SLAAC host may pick a privacy address instead, but deriving it keeps the
+    result deterministic, which is what lets a test assert the address a port
+    was given rather than merely that it got one.
+    """
+    network = ipaddress.ip_network(cidr, strict=False)
+    octets = [int(part, 16) for part in mac_address.split(":")]
+    octets[0] ^= 0x02
+    interface_id = bytes(octets[:3] + [0xFF, 0xFE] + octets[3:])
+    return str(
+        ipaddress.ip_address(int(network.network_address) | int.from_bytes(interface_id, "big"))
+    )
+
+
+def overlaps_multicast(value: str) -> bool:
+    """Whether an address or prefix is, or covers, a multicast range."""
+    candidate = ipaddress.ip_network(value, strict=False)
+    return any(
+        candidate.overlaps(reserved)
+        for reserved in MULTICAST_RANGES
+        if reserved.version == candidate.version
+    )
 
 
 def default_resource_id(name: str) -> str:
@@ -1150,10 +1207,15 @@ class Database:
             key = network.name if network else interface.net_id
             entries = addresses.setdefault(key, [])
             for fixed_ip in interface.fixed_ips:
+                address = fixed_ip.get("ip_address", "")
+                try:
+                    version = ipaddress.ip_address(address).version
+                except ValueError:
+                    version = 4
                 entries.append(
                     {
-                        "addr": fixed_ip.get("ip_address", ""),
-                        "version": 4,
+                        "addr": address,
+                        "version": version,
                         "OS-EXT-IPS:type": "fixed",
                         "OS-EXT-IPS-MAC:mac_addr": interface.mac_addr,
                     }
@@ -4438,9 +4500,6 @@ class Database:
             return None
 
         pool = subnet.allocation_pools[0]
-        # Simple IP allocation - just increment
-        start_parts = pool.start.split(".")
-        end_parts = pool.end.split(".")
 
         # Get all used IPs in this subnet
         used_ips = set()
@@ -4448,6 +4507,24 @@ class Database:
             for fixed_ip in port.fixed_ips:
                 if fixed_ip.subnet_id == subnet.id:
                     used_ips.add(fixed_ip.ip_address)
+
+        if subnet.ip_version == 6:
+            # A /64 holds more addresses than could ever be enumerated, so walk
+            # the pool numerically instead of materialising it. ``range`` is
+            # lazy, so this stops at the first free address rather than building
+            # the span. IPv6Address is named explicitly because ip_address()
+            # hands back an IPv4Address for any value that fits in 32 bits.
+            start = int(ipaddress.IPv6Address(pool.start))
+            end = int(ipaddress.IPv6Address(pool.end))
+            for value in range(start, end + 1):
+                candidate = str(ipaddress.IPv6Address(value))
+                if candidate not in used_ips:
+                    return candidate
+            return None
+
+        # Simple IP allocation - just increment
+        start_parts = pool.start.split(".")
+        end_parts = pool.end.split(".")
 
         # Find first available IP
         base = ".".join(start_parts[:3])
@@ -4718,12 +4795,22 @@ class Database:
         dns_nameservers: list[str] | None = None,
         host_routes: list[dict[str, str]] | None = None,
         enable_dhcp: bool = True,
+        ipv6_ra_mode: str | None = None,
+        ipv6_address_mode: str | None = None,
     ) -> Subnet | None:
-        """Create a new subnet."""
+        """Create a new subnet.
+
+        Raises:
+            InvalidSubnetIpVersionError: An IPv6 mode was set on an IPv4 subnet.
+            InvalidIpv6ModeError: A mode is not one of the values Neutron takes.
+            Ipv6PrefixLengthError: SLAAC or stateless was asked for without a /64.
+        """
         with self._lock:
             network = self._networks.get(network_id)
             if not network:
                 return None
+
+            self._validate_ipv6_modes(cidr, ip_version, ipv6_ra_mode, ipv6_address_mode)
 
             # Parse allocation pools
             pools = []
@@ -4733,21 +4820,14 @@ class Database:
 
             # Auto-generate gateway if not provided
             if gateway_ip is None:
-                parts = cidr.split("/")[0].split(".")
-                gateway_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.1"
+                gateway_ip = self._default_gateway_ip(cidr, ip_version)
 
             # Neutron always gives a subnet an allocation pool, derived from the
             # CIDR minus the network address and the gateway, so ports created
             # on it get an address. Without one nothing here ever allocated, and
             # every port came back with an empty ip_address.
             if not pools:
-                network_obj = ipaddress.ip_network(cidr, strict=False)
-                hosts = list(network_obj.hosts())
-                if hosts:
-                    first = hosts[0]
-                    if str(first) == gateway_ip and len(hosts) > 1:
-                        first = hosts[1]
-                    pools = [AllocationPool(start=str(first), end=str(hosts[-1]))]
+                pools = self._default_allocation_pools(cidr, ip_version, gateway_ip)
 
             subnet = Subnet(
                 id=str(uuid4()),
@@ -4762,12 +4842,89 @@ class Database:
                 host_routes=host_routes or [],
                 enable_dhcp=enable_dhcp,
                 project_id=project_id,
+                ipv6_ra_mode=ipv6_ra_mode,
+                ipv6_address_mode=ipv6_address_mode,
             )
             self._subnets[subnet.id] = subnet
             network.subnets.append(subnet.id)
             if self.auto_save:
                 self.save()
             return subnet
+
+    @staticmethod
+    def _validate_ipv6_modes(
+        cidr: str,
+        ip_version: int,
+        ipv6_ra_mode: str | None,
+        ipv6_address_mode: str | None,
+    ) -> None:
+        """Apply the subnet checks Neutron makes before creating an IPv6 subnet."""
+        for attribute, value in (
+            ("ipv6_ra_mode", ipv6_ra_mode),
+            ("ipv6_address_mode", ipv6_address_mode),
+        ):
+            if value is None:
+                continue
+            if ip_version != 6:
+                raise InvalidSubnetIpVersionError(attribute)
+            if value not in IPV6_MODES:
+                raise InvalidIpv6ModeError(attribute, value)
+
+        if ip_version != 6 or not cidr:
+            return
+        # SLAAC and stateless DHCPv6 build a 64-bit interface identifier, so the
+        # prefix has to leave exactly 64 bits for it. dhcpv6-stateful hands out
+        # addresses from a pool and carries no such constraint.
+        if ipv6_ra_mode in IPV6_MODES_FROM_PREFIX or ipv6_address_mode in IPV6_MODES_FROM_PREFIX:
+            if ipaddress.ip_network(cidr, strict=False).prefixlen != 64:
+                raise Ipv6PrefixLengthError(cidr)
+
+    @staticmethod
+    def _default_gateway_ip(cidr: str, ip_version: int) -> str:
+        """The gateway Neutron picks when the caller names none."""
+        if ip_version == 6:
+            return str(ipaddress.ip_network(cidr, strict=False).network_address + 1)
+        parts = cidr.split("/")[0].split(".")
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.1"
+
+    @staticmethod
+    def _default_allocation_pools(
+        cidr: str, ip_version: int, gateway_ip: str | None
+    ) -> list[AllocationPool]:
+        """The pool Neutron derives from a CIDR, minus network and gateway."""
+        network_obj = ipaddress.ip_network(cidr, strict=False)
+        if ip_version == 6:
+            # ``hosts()`` on a /64 is unbounded, so derive the bounds
+            # arithmetically rather than listing them.
+            first = network_obj.network_address + 1
+            if str(first) == gateway_ip:
+                first += 1
+            last = network_obj.network_address + (network_obj.num_addresses - 1)
+            return [AllocationPool(start=str(first), end=str(last))]
+
+        hosts = list(network_obj.hosts())
+        if not hosts:
+            return []
+        first_host = hosts[0]
+        if str(first_host) == gateway_ip and len(hosts) > 1:
+            first_host = hosts[1]
+        return [AllocationPool(start=str(first_host), end=str(hosts[-1]))]
+
+    @staticmethod
+    def _ipv4_fixed_ip(port: Port) -> str | None:
+        """The port's IPv4 fixed address, if it has one.
+
+        A floating IP maps to a single IPv4 address, so on a dual-stack port
+        Neutron picks that family itself rather than taking the first entry —
+        which on such a port may well be the IPv6 one.
+        """
+        for fixed_ip in port.fixed_ips:
+            try:
+                if ipaddress.ip_address(fixed_ip.ip_address).version == 4:
+                    return fixed_ip.ip_address
+            except ValueError:
+                continue
+        return None
 
     def get_subnet(self, subnet_id: str, project_id: str | None = None) -> Subnet | None:
         """Get a subnet by ID.
@@ -4885,6 +5042,117 @@ class Database:
             return True
 
     # Port operations
+    def _resolve_fixed_ips(
+        self,
+        network: Network,
+        network_id: str,
+        requested: list[dict[str, str]],
+        mac_address: str,
+        validate_fixed_ips: bool,
+        existing: list[FixedIP] | None = None,
+    ) -> list[FixedIP]:
+        """Turn a requested ``fixed_ips`` list into the addresses a port holds.
+
+        Shared by create and update, because Neutron applies the same rules to
+        both: an update replaces the whole list, so an entry that survives a
+        round trip has to be accepted on the way back in.
+        """
+        current = {ip.subnet_id: ip.ip_address for ip in existing or []}
+        resolved: list[FixedIP] = []
+        for fip in requested:
+            subnet_id = fip.get("subnet_id", "")
+            ip_address = fip.get("ip_address", "")
+            named_subnet = self._subnets.get(subnet_id) if subnet_id else None
+
+            if named_subnet is not None and subnet_addresses_come_from_prefix(named_subnet):
+                derived = current.get(named_subnet.id) or eui64_address(
+                    named_subnet.cidr, mac_address
+                )
+                if ip_address:
+                    # Neutron refuses an address of the caller's choosing here:
+                    # the address is a function of the prefix and the MAC. The
+                    # one exception is the address the port already holds, so a
+                    # client that re-sends the list it just read back is not
+                    # told it is changing something. Internal callers (a router
+                    # interface binding the subnet's gateway) are not subject to
+                    # this, exactly as they are not to the checks below.
+                    if validate_fixed_ips and ip_address != current.get(named_subnet.id):
+                        raise AutoAddressSubnetError(ip_address, named_subnet.id)
+                    resolved.append(FixedIP(subnet_id=named_subnet.id, ip_address=ip_address))
+                    continue
+                resolved.append(FixedIP(subnet_id=named_subnet.id, ip_address=derived))
+                continue
+
+            if validate_fixed_ips and ip_address:
+                subnet = self._find_subnet_for_ip(network, ip_address)
+                if subnet is None:
+                    raise InvalidFixedIPError(ip_address, network_id)
+                if ip_address != current.get(subnet.id) and self._is_fixed_ip_in_use(
+                    network_id, ip_address
+                ):
+                    raise FixedIPAlreadyInUseError(ip_address, network_id, subnet.id)
+                if not subnet_id:
+                    subnet_id = subnet.id
+            if not ip_address and subnet_id:
+                # Asking for a subnet without naming an address is a
+                # request for Neutron to pick one; it does not mean "no
+                # address". This is the shape clients use when they want
+                # a port on a particular subnet.
+                subnet = self._subnets.get(subnet_id)
+                if subnet is not None:
+                    ip_address = current.get(subnet_id) or (
+                        self._allocate_ip_from_subnet(subnet) or ""
+                    )
+            resolved.append(FixedIP(subnet_id=subnet_id, ip_address=ip_address))
+        return resolved
+
+    def _auto_allocate_fixed_ips(self, network: Network, mac_address: str) -> list[FixedIP]:
+        """Allocate a port's addresses when the caller named no fixed_ips.
+
+        One address per family, as Neutron does: stopping at the first subnet
+        outright would leave a port on a dual-stack network holding only its
+        IPv4 address.
+        """
+        allocated: list[FixedIP] = []
+        families: set[int] = set()
+        for subnet_id in network.subnets:
+            subnet = self._subnets.get(subnet_id)
+            if subnet is None or subnet.ip_version in families:
+                continue
+            if subnet_addresses_come_from_prefix(subnet):
+                families.add(subnet.ip_version)
+                allocated.append(
+                    FixedIP(
+                        subnet_id=subnet_id,
+                        ip_address=eui64_address(subnet.cidr, mac_address),
+                    )
+                )
+                continue
+            ip = self._allocate_ip_from_subnet(subnet)
+            if ip:
+                families.add(subnet.ip_version)
+                allocated.append(FixedIP(subnet_id=subnet_id, ip_address=ip))
+        return allocated
+
+    @staticmethod
+    def _validate_allowed_address_pairs(pairs: list[dict[str, str]]) -> None:
+        """Refuse the address pairs Neutron refuses.
+
+        Neutron's own check is narrow — it rejects a multicast address, and so
+        any prefix wide enough to cover one. That is why ``::/0`` is refused
+        while an ordinary wide prefix is accepted: callers legitimately use
+        these for VRRP failover and container networks.
+        """
+        for pair in pairs:
+            ip_address = pair.get("ip_address", "")
+            if not ip_address:
+                continue
+            try:
+                if overlaps_multicast(ip_address):
+                    raise InvalidAllowedAddressPairError(ip_address)
+            except ValueError as exc:
+                raise InvalidAllowedAddressPairError(ip_address) from exc
+
     def create_port(
         self,
         network_id: str,
@@ -4899,6 +5167,7 @@ class Database:
         security_groups: list[str] | None = None,
         port_security_enabled: bool = True,
         validate_fixed_ips: bool = False,
+        allowed_address_pairs: list[dict[str, str]] | None = None,
     ) -> Port | None:
         """Create a new port.
 
@@ -4911,6 +5180,9 @@ class Database:
         Raises:
             InvalidFixedIPError: If a validated IP is in no subnet of the network.
             FixedIPAlreadyInUseError: If a validated IP is held by another port.
+            AutoAddressSubnetError: If an address is pinned on a SLAAC or
+                stateless DHCPv6 subnet, whose addresses come from the prefix.
+            InvalidAllowedAddressPairError: If a pair names a multicast range.
         """
         with self._lock:
             network = self._networks.get(network_id)
@@ -4921,38 +5193,16 @@ class Database:
             if not mac_address:
                 mac_address = self._generate_mac_address()
 
+            if allowed_address_pairs:
+                self._validate_allowed_address_pairs(allowed_address_pairs)
+
             # Allocate IPs if not provided
-            port_fixed_ips = []
             if fixed_ips:
-                for fip in fixed_ips:
-                    subnet_id = fip.get("subnet_id", "")
-                    ip_address = fip.get("ip_address", "")
-                    if validate_fixed_ips and ip_address:
-                        subnet = self._find_subnet_for_ip(network, ip_address)
-                        if subnet is None:
-                            raise InvalidFixedIPError(ip_address, network_id)
-                        if self._is_fixed_ip_in_use(network_id, ip_address):
-                            raise FixedIPAlreadyInUseError(ip_address, network_id, subnet.id)
-                        if not subnet_id:
-                            subnet_id = subnet.id
-                    if not ip_address and subnet_id:
-                        # Asking for a subnet without naming an address is a
-                        # request for Neutron to pick one; it does not mean "no
-                        # address". This is the shape clients use when they want
-                        # a port on a particular subnet.
-                        subnet = self._subnets.get(subnet_id)
-                        if subnet is not None:
-                            ip_address = self._allocate_ip_from_subnet(subnet) or ""
-                    port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip_address))
+                port_fixed_ips = self._resolve_fixed_ips(
+                    network, network_id, fixed_ips, mac_address, validate_fixed_ips
+                )
             else:
-                # Auto-allocate from first subnet
-                for subnet_id in network.subnets:
-                    subnet = self._subnets.get(subnet_id)
-                    if subnet:
-                        ip = self._allocate_ip_from_subnet(subnet)
-                        if ip:
-                            port_fixed_ips.append(FixedIP(subnet_id=subnet_id, ip_address=ip))
-                            break
+                port_fixed_ips = self._auto_allocate_fixed_ips(network, mac_address)
 
             port = Port(
                 id=str(uuid4()),
@@ -4967,6 +5217,7 @@ class Database:
                 project_id=project_id,
                 security_groups=security_groups or [],
                 port_security_enabled=port_security_enabled,
+                allowed_address_pairs=allowed_address_pairs or [],
             )
             self._ports[port.id] = port
             if self.auto_save:
@@ -5046,8 +5297,15 @@ class Database:
         device_owner: str | None = None,
         security_groups: list[str] | None = None,
         port_security_enabled: bool | None = None,
+        fixed_ips: list[dict[str, str]] | None = None,
+        allowed_address_pairs: list[dict[str, str]] | None = None,
     ) -> Port | None:
         """Update a port.
+
+        ``fixed_ips`` replaces the whole list, as in Neutron — an address left
+        out of it is released. Clients therefore read the current list, change
+        one entry and send it all back, so a re-sent entry has to be accepted
+        as unchanged rather than treated as a new request for that address.
 
         Args:
             port_id: The port ID to update.
@@ -5056,6 +5314,13 @@ class Database:
 
         Returns:
             The updated port if found and owned, else None.
+
+        Raises:
+            InvalidFixedIPError: If an IP is in no subnet of the network.
+            FixedIPAlreadyInUseError: If an IP is held by another port.
+            AutoAddressSubnetError: If an address is pinned on a SLAAC or
+                stateless DHCPv6 subnet.
+            InvalidAllowedAddressPairError: If a pair names a multicast range.
         """
         with self._lock:
             port = self._ports.get(port_id)
@@ -5063,6 +5328,20 @@ class Database:
                 return None
             if project_id is not None and port.project_id != project_id:
                 return None
+            if fixed_ips is not None:
+                network = self._networks.get(port.network_id)
+                if network is not None:
+                    port.fixed_ips = self._resolve_fixed_ips(
+                        network,
+                        port.network_id,
+                        fixed_ips,
+                        port.mac_address,
+                        validate_fixed_ips=True,
+                        existing=port.fixed_ips,
+                    )
+            if allowed_address_pairs is not None:
+                self._validate_allowed_address_pairs(allowed_address_pairs)
+                port.allowed_address_pairs = allowed_address_pairs
             if name is not None:
                 port.name = name
             if description is not None:
@@ -5166,17 +5445,33 @@ class Database:
                     self._resolve_fixed_ip_subnet(network, fixed_ip) for fixed_ip in fixed_ips
                 ]
         else:
-            subnet = None
-            if network:
-                subnet = next(
-                    (
-                        self._subnets[subnet_id]
-                        for subnet_id in network.subnets
-                        if subnet_id in self._subnets
-                    ),
-                    None,
-                )
-            if subnet:
+            # One address per family. A dual-stack external network gives the
+            # gateway port both, which is what a client reads back out of
+            # external_fixed_ips to learn the router's addresses.
+            gateway_mac = self._generate_mac_address()
+            fixed_ips = []
+            for family in (4, 6):
+                subnet = None
+                if network:
+                    subnet = next(
+                        (
+                            self._subnets[subnet_id]
+                            for subnet_id in network.subnets
+                            if subnet_id in self._subnets
+                            and self._subnets[subnet_id].ip_version == family
+                        ),
+                        None,
+                    )
+                if not subnet:
+                    continue
+                if subnet_addresses_come_from_prefix(subnet):
+                    fixed_ips.append(
+                        FixedIP(
+                            subnet_id=subnet.id,
+                            ip_address=eui64_address(subnet.cidr, gateway_mac),
+                        )
+                    )
+                    continue
                 ip_address = self._allocate_ip_from_subnet(subnet)
                 if not ip_address:
                     # A subnet exists but has nothing left. Neutron surfaces this
@@ -5184,7 +5479,7 @@ class Database:
                     # gateway is not set. Only a network with no subnets at all
                     # yields a gateway port with no address - see below.
                     raise IpAddressGenerationFailureError(network_id)
-                fixed_ips = [FixedIP(subnet_id=subnet.id, ip_address=ip_address)]
+                fixed_ips.append(FixedIP(subnet_id=subnet.id, ip_address=ip_address))
             # No subnet at all: fall through with an empty fixed_ips. Neutron
             # calls this "not an error" (Subnet.network_has_no_subnet) and
             # _create_router_gw_port merely logs "No IPs available for external
@@ -5552,7 +5847,10 @@ class Database:
             if not floating_ip_address:
                 for sid in network.subnets:
                     external_subnet = self._subnets.get(sid)
-                    if external_subnet is None:
+                    # Floating IPs are IPv4 only. An IPv6 subnet on the external
+                    # network is routed rather than floated, so it is not a
+                    # source of floating addresses.
+                    if external_subnet is None or external_subnet.ip_version != 4:
                         continue
                     floating_ip_address = self._allocate_ip_from_subnet(external_subnet)
                     if floating_ip_address:
@@ -5624,7 +5922,7 @@ class Database:
                 fip.status = FloatingIPStatus.ACTIVE
                 internal_port = self._ports.get(port_id)
                 if internal_port and internal_port.fixed_ips:
-                    fip.fixed_ip_address = internal_port.fixed_ips[0].ip_address
+                    fip.fixed_ip_address = self._ipv4_fixed_ip(internal_port)
 
             self._floating_ips[fip.id] = fip
             if self.auto_save:
@@ -5702,7 +6000,7 @@ class Database:
                 if port_id:
                     port = self._ports.get(port_id)
                     if port and port.fixed_ips:
-                        fip.fixed_ip_address = port.fixed_ips[0].ip_address
+                        fip.fixed_ip_address = self._ipv4_fixed_ip(port)
                     fip.status = FloatingIPStatus.ACTIVE
                 else:
                     fip.fixed_ip_address = None
@@ -6877,10 +7175,16 @@ class Database:
         with self._lock:
             lb_id = str(uuid4())
 
-            # Generate VIP address if not provided
+            # Generate VIP address if not provided. Octavia allocates it from
+            # the VIP subnet, so an IPv6 VIP subnet yields an IPv6 VIP — the
+            # caller names no address and gets whichever family the subnet is.
             if not vip_address:
-                vip_address = f"192.168.100.{self._next_lb_vip}"
-                self._next_lb_vip += 1
+                vip_subnet = self._subnets.get(vip_subnet_id or "")
+                if vip_subnet is not None:
+                    vip_address = self._allocate_ip_from_subnet(vip_subnet)
+                if not vip_address:
+                    vip_address = f"192.168.100.{self._next_lb_vip}"
+                    self._next_lb_vip += 1
 
             # Create a VIP port
             vip_port_id = str(uuid4())

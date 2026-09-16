@@ -651,10 +651,13 @@ class PresetLoader:
                 cidr=cfg.cidr,
                 project_id=project_id,
                 name=cfg.name,
+                ip_version=cfg.ip_version,
                 gateway_ip=cfg.gateway,
                 allocation_pools=allocation_pools,
                 dns_nameservers=cfg.dns_nameservers if cfg.dns_nameservers else None,
                 enable_dhcp=cfg.enable_dhcp,
+                ipv6_ra_mode=cfg.ipv6_ra_mode,
+                ipv6_address_mode=cfg.ipv6_address_mode,
             )
             if subnet:
                 self._resource_map["subnets"][cfg.name] = subnet.id

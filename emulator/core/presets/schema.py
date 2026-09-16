@@ -33,6 +33,9 @@ class SubnetConfig(BaseModel):
     enable_dhcp: bool = True
     dns_nameservers: list[str] = Field(default_factory=list)
     allocation_pools: list[dict[str, str]] = Field(default_factory=list)
+    ip_version: int = 4
+    ipv6_ra_mode: str | None = None
+    ipv6_address_mode: str | None = None
 
 
 class NetworkConfig(BaseModel):
