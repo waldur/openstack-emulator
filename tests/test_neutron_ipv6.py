@@ -96,7 +96,14 @@ class TestIpv6Subnets:
         assert response.status_code == 400, response.text
         error = response.json()["NeutronError"]
         assert error["type"] == "InvalidInput"
-        assert "/64" in error["message"]
+        # Pinned to Neutron's wording. This check is raised straight from
+        # _validate_subnet, so it carries no "Invalid input for ..." wrapper --
+        # unlike the mode-value check below, which goes through an attribute
+        # validator and does.
+        assert error["message"] == (
+            "Invalid CIDR 2001:db8:3::/56 for IPv6 address mode. "
+            "OpenStack uses the EUI-64 address format, which requires the prefix to be /64"
+        )
 
     def test_mode_on_an_ipv4_subnet_is_rejected(self):
         """The modes are meaningless for IPv4 and Neutron says so."""
@@ -109,12 +116,24 @@ class TestIpv6Subnets:
         assert error["message"] == "ipv6_ra_mode is not valid when ip_version is 4"
 
     def test_unknown_mode_is_rejected(self):
-        """dhcpv6-pd and friends are not among the accepted values."""
+        """dhcpv6-pd and friends are not among the accepted values.
+
+        Unlike the checks in _validate_subnet, this one is an API-layer
+        ``type:values`` validator, so Neutron wraps the validator's message.
+        The permitted modes do not appear in it: ``validate_values`` renders
+        ``valid_values_display``, which defaults to the literal string. Pinned
+        exactly, because asserting only the status is what let this message
+        drift from upstream in the first place.
+        """
         network_id = make_network("v6-badmode-net")
         response = make_subnet(V6_CIDR and network_id, V6_CIDR, ipv6_ra_mode="dhcpv6-pd")
 
         assert response.status_code == 400, response.text
-        assert response.json()["NeutronError"]["type"] == "InvalidInput"
+        error = response.json()["NeutronError"]
+        assert error["type"] == "InvalidInput"
+        assert error["message"] == (
+            "Invalid input for ipv6_ra_mode. Reason: dhcpv6-pd is not in valid_values."
+        )
 
     @pytest.mark.parametrize("attribute", ["ipv6_ra_mode", "ipv6_address_mode"])
     def test_modes_are_immutable(self, attribute):
@@ -203,7 +222,13 @@ class TestPrefixDerivedPorts:
         assert response.status_code == 400, response.text
         error = response.json()["NeutronError"]
         assert error["type"] == "InvalidInput"
-        assert "configured for automatic addresses" in error["message"]
+        # Pinned to Neutron's IPAM wording. This one is raised from the
+        # allocation path rather than an attribute validator, so it carries no
+        # "Invalid input for ..." wrapper.
+        assert error["message"] == (
+            "IPv6 address 2001:db8:1::99 cannot be directly assigned to a port "
+            f"on subnet {subnet['id']} as the subnet is configured for automatic addresses"
+        )
 
     def test_pinning_an_address_on_a_stateful_subnet_is_allowed(self):
         """dhcpv6-stateful allocates from a pool, so an address may be chosen."""
@@ -447,10 +472,16 @@ class TestIpv6AllowedAddressPairs:
         return client.post("/v2.0/ports", json={"port": {"network_id": network_id}}).json()["port"]
 
     @pytest.mark.parametrize(
-        "value", ["fd00:1::/64", "2001:db8:9::10", "fc00::/7", "192.168.250.0/24"]
+        "value",
+        ["fd00:1::/64", "2001:db8:9::10", "fc00::/7", "192.168.250.0/24", "0.0.0.0/0"],
     )
     def test_ordinary_pairs_are_accepted(self, value):
-        """Almost everything is allowed: Neutron's own check is narrow."""
+        """Almost everything is allowed: Neutron's own check is narrow.
+
+        ``0.0.0.0/0`` is here on purpose. It overlaps ``224.0.0.0/4``, so a
+        naive overlap test refuses it, but Neutron exempts the IPv4 default
+        route before the multicast check runs.
+        """
         port = self._port(f"aap-ok-{abs(hash(value))}")
         response = client.put(
             f"/v2.0/ports/{port['id']}",
@@ -459,16 +490,40 @@ class TestIpv6AllowedAddressPairs:
         assert response.status_code == 200, response.text
         assert response.json()["port"]["allowed_address_pairs"] == [{"ip_address": value}]
 
-    @pytest.mark.parametrize("value", ["ff02::1", "ff00::/8", "::/0", "224.0.0.1"])
-    def test_multicast_and_anything_covering_it_is_refused(self, value):
-        """``::/0`` is refused precisely because it covers ff00::/8."""
+    @pytest.mark.parametrize(
+        ("value", "reason"),
+        [
+            ("ff02::1", "IP ff02::1 is a multicast address, which is not supported."),
+            ("224.0.0.1", "IP 224.0.0.1 is a multicast address, which is not supported."),
+            (
+                "ff00::/8",
+                "Subnet ff00::/8 overlaps with multicast range ff00::/8, which is not supported.",
+            ),
+            (
+                "::/0",
+                "Subnet ::/0 overlaps with multicast range ff00::/8, which is not supported.",
+            ),
+        ],
+    )
+    def test_multicast_and_anything_covering_it_is_refused(self, value, reason):
+        """``::/0`` is refused precisely because it collapses onto ff00::/8.
+
+        The messages are asserted exactly, because matching Neutron's wording is
+        the point of emulating it: a client that reads the message must not see
+        one thing here and another from a real cloud. An address and a prefix
+        fail different validators and so carry different messages, and the API
+        layer wraps both -- appending a full stop to a reason that already has
+        one, as upstream does.
+        """
         port = self._port(f"aap-bad-{abs(hash(value))}")
         response = client.put(
             f"/v2.0/ports/{port['id']}",
             json={"port": {"allowed_address_pairs": [{"ip_address": value}]}},
         )
         assert response.status_code == 400, response.text
-        assert response.json()["NeutronError"]["type"] == "InvalidInput"
+        error = response.json()["NeutronError"]
+        assert error["type"] == "InvalidInput"
+        assert error["message"] == f"Invalid input for allowed_address_pairs. Reason: {reason}."
 
         unchanged = client.get(f"/v2.0/ports/{port['id']}").json()["port"]
         assert unchanged["allowed_address_pairs"] == []

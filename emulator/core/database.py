@@ -154,13 +154,12 @@ IPV6_MODES = ("slaac", "dhcpv6-stateful", "dhcpv6-stateless")
 # instead, so a client that asks for a port there sends only a subnet_id.
 IPV6_MODES_FROM_PREFIX = ("slaac", "dhcpv6-stateless")
 
-# Multicast ranges. An allowed address pair may name neither one of these nor a
-# prefix wide enough to cover one, which is why ``::/0`` is refused while almost
-# every ordinary prefix is accepted.
-MULTICAST_RANGES = (
-    ipaddress.ip_network("224.0.0.0/4"),
-    ipaddress.ip_network("ff00::/8"),
-)
+# Multicast ranges, one per family, picked the way Neutron's validators pick
+# them. An allowed address pair may name neither one of these nor a prefix that
+# collapses onto one -- which is why ``::/0`` is refused while ``0.0.0.0/0`` is
+# not: Neutron exempts the IPv4 default route outright.
+MULTICAST_V4 = ipaddress.ip_network("224.0.0.0/4")
+MULTICAST_V6 = ipaddress.ip_network("ff00::/8")
 
 
 def subnet_addresses_come_from_prefix(subnet: Subnet) -> bool:
@@ -189,14 +188,35 @@ def eui64_address(cidr: str, mac_address: str) -> str:
     )
 
 
-def overlaps_multicast(value: str) -> bool:
-    """Whether an address or prefix is, or covers, a multicast range."""
-    candidate = ipaddress.ip_network(value, strict=False)
-    return any(
-        candidate.overlaps(reserved)
-        for reserved in MULTICAST_RANGES
-        if reserved.version == candidate.version
-    )
+def multicast_rejection_reason(value: str) -> str | None:
+    """Neutron's reason for refusing an address pair, or None if it accepts it.
+
+    Mirrors the two validators Neutron runs over an allowed address pair: a bare
+    address is refused when it *is* multicast, a prefix when cutting both it and
+    the multicast range to the shorter of the two makes them equal. The two
+    carry different messages, so which one applies is decided the way Neutron
+    decides it -- by whether the value names a prefix.
+
+    ``0.0.0.0/0`` is exempted before either check, exactly as upstream does, so
+    the IPv4 default route is accepted. ``::/0`` is not: cut to a zero-length
+    prefix it collapses onto ``ff00::/8``.
+    """
+    if "/" not in value:
+        address = ipaddress.ip_address(value)
+        if address.is_multicast:
+            return f"IP {value} is a multicast address, which is not supported."
+        return None
+
+    net = ipaddress.ip_network(value, strict=False)
+    if net == ipaddress.ip_network("0.0.0.0/0"):
+        return None
+    mcast = MULTICAST_V4 if net.version == 4 else MULTICAST_V6
+    min_prefix = min(net.prefixlen, mcast.prefixlen)
+    if ipaddress.ip_network(
+        f"{net.network_address}/{min_prefix}", strict=False
+    ) == ipaddress.ip_network(f"{mcast.network_address}/{min_prefix}", strict=False):
+        return f"Subnet {net} overlaps with multicast range {mcast}, which is not supported."
+    return None
 
 
 def default_resource_id(name: str) -> str:
@@ -5138,20 +5158,30 @@ class Database:
     def _validate_allowed_address_pairs(pairs: list[dict[str, str]]) -> None:
         """Refuse the address pairs Neutron refuses.
 
-        Neutron's own check is narrow — it rejects a multicast address, and so
-        any prefix wide enough to cover one. That is why ``::/0`` is refused
-        while an ordinary wide prefix is accepted: callers legitimately use
-        these for VRRP failover and container networks.
+        Neutron's own check is narrow — it rejects a multicast address, and a
+        prefix that collapses onto the multicast range. An ordinary wide prefix
+        is accepted, because callers legitimately use these for VRRP failover
+        and container networks, and so is ``0.0.0.0/0``: upstream exempts the
+        IPv4 default route before the check runs.
         """
         for pair in pairs:
             ip_address = pair.get("ip_address", "")
             if not ip_address:
                 continue
             try:
-                if overlaps_multicast(ip_address):
-                    raise InvalidAllowedAddressPairError(ip_address)
+                reason = multicast_rejection_reason(ip_address)
             except ValueError as exc:
-                raise InvalidAllowedAddressPairError(ip_address) from exc
+                # A malformed value fails the validator that runs before the
+                # multicast one, and an address and a prefix fail different
+                # validators, so the two carry different messages.
+                malformed = (
+                    f"'{ip_address}' is not a valid IP subnet"
+                    if "/" in ip_address
+                    else f"'{ip_address}' is not a valid IP address"
+                )
+                raise InvalidAllowedAddressPairError(ip_address, malformed) from exc
+            if reason is not None:
+                raise InvalidAllowedAddressPairError(ip_address, reason)
 
     def create_port(
         self,

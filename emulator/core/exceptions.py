@@ -84,12 +84,20 @@ class InvalidSubnetIpVersionError(Exception):
 
 
 class InvalidIpv6ModeError(Exception):
-    """An ipv6_ra_mode/ipv6_address_mode value is not one Neutron accepts."""
+    """An ipv6_ra_mode/ipv6_address_mode value is not one Neutron accepts.
+
+    Unlike the checks in ``_validate_subnet``, this one is an API-layer
+    attribute validator (``type:values``), so Neutron wraps the validator's
+    own message in "Invalid input for ... Reason: ...". The permitted modes
+    never appear in it: ``validate_values`` renders ``valid_values_display``,
+    which defaults to the literal string, so upstream really does say only
+    "is not in valid_values".
+    """
 
     def __init__(self, attribute: str, value: str) -> None:
         self.attribute = attribute
         self.value = value
-        super().__init__(f"Invalid value for {attribute}: {value}")
+        super().__init__(f"Invalid input for {attribute}. Reason: {value} is not in valid_values.")
 
 
 class Ipv6PrefixLengthError(Exception):
@@ -132,22 +140,28 @@ class AutoAddressSubnetError(Exception):
         self.ip = ip
         self.subnet_id = subnet_id
         super().__init__(
-            f"IPv6 address {ip} can not be configured on subnet {subnet_id} "
-            "which is configured for automatic addresses"
+            f"IPv6 address {ip} cannot be directly assigned to a port on subnet "
+            f"{subnet_id} as the subnet is configured for automatic addresses"
         )
 
 
 class InvalidAllowedAddressPairError(Exception):
     """An allowed address pair Neutron will not accept.
 
-    Neutron refuses a multicast address, and anything whose prefix covers the
-    multicast range — which is why ``::/0`` is refused here while almost every
-    other prefix is accepted.
+    Neutron refuses a multicast address, and any prefix that collapses onto the
+    multicast range — which is why ``::/0`` is refused while ``0.0.0.0/0``, the
+    IPv4 default route, is exempted outright.
+
+    These are API-layer attribute validators, so the validator's own message is
+    wrapped in "Invalid input for ... Reason: ...". The wrapper ends with a full
+    stop of its own, so a reason that already carries one yields two — as it
+    does upstream.
     """
 
-    def __init__(self, ip: str) -> None:
+    def __init__(self, ip: str, reason: str) -> None:
         self.ip = ip
-        super().__init__(f"Invalid input for allowed address pairs: mac_address/ip_address {ip}")
+        self.reason = reason
+        super().__init__(f"Invalid input for allowed_address_pairs. Reason: {reason}.")
 
 
 class ScopeUnauthorizedError(Exception):

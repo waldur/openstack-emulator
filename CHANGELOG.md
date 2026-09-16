@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Carry `ip_version` and the IPv6 address modes through preset subnets
 
 ### Fixed
+- Accept `0.0.0.0/0` as an allowed address pair, which Neutron exempts from the multicast check before it runs, while still refusing `::/0` because it collapses onto `ff00::/8`
+- Report Neutron's own message for a refused allowed address pair, an invalid IPv6 address mode and a fixed address on an auto-address subnet, rather than wording of our own — including the API layer's "Invalid input for ... Reason: ..." wrapper, which the first two reach through an attribute validator
 - Allocate IPv6 addresses arithmetically instead of enumerating a prefix, which made an IPv6 subnet unusable
 - Derive an IPv6 subnet's gateway and allocation pool from its prefix instead of parsing it as IPv4
 - Allocate floating IPs only from IPv4 subnets, and associate one with a port's IPv4 fixed IP rather than its first
