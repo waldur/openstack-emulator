@@ -10,9 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from emulator.core.database import db
 from emulator.core.exceptions import (
+    AutoAddressSubnetError,
     FixedIPAlreadyInUseError,
+    ImmutableIpv6ModeError,
+    InvalidAllowedAddressPairError,
     InvalidFixedIPError,
+    InvalidIpv6ModeError,
+    InvalidSubnetIpVersionError,
     IpAddressGenerationFailureError,
+    Ipv6PrefixLengthError,
     NeutronAPIError,
 )
 from emulator.core.simple_auth import validate_token_simple
@@ -50,6 +56,8 @@ class SubnetRequest(BaseModel):
     dns_nameservers: list[str] | None = None
     host_routes: list[dict[str, str]] | None = None
     enable_dhcp: bool = True
+    ipv6_ra_mode: str | None = None
+    ipv6_address_mode: str | None = None
 
 
 class PortRequest(BaseModel):
@@ -67,6 +75,7 @@ class PortRequest(BaseModel):
     device_owner: str | None = None
     security_groups: list[str] | None = None
     port_security_enabled: bool = True
+    allowed_address_pairs: list[dict[str, str]] | None = None
 
 
 class RouterRequest(BaseModel):
@@ -319,19 +328,32 @@ async def create_subnet(
     data = request.get("subnet", {})
     project_id = _resolve_project_id(data, x_auth_token)
 
-    subnet = db.create_subnet(
-        network_id=data.get("network_id", ""),
-        cidr=data.get("cidr", ""),
-        project_id=project_id,
-        name=data.get("name", ""),
-        description=data.get("description", ""),
-        ip_version=data.get("ip_version", 4),
-        gateway_ip=data.get("gateway_ip"),
-        allocation_pools=data.get("allocation_pools"),
-        dns_nameservers=data.get("dns_nameservers"),
-        host_routes=data.get("host_routes"),
-        enable_dhcp=data.get("enable_dhcp", True),
-    )
+    try:
+        subnet = db.create_subnet(
+            network_id=data.get("network_id", ""),
+            cidr=data.get("cidr", ""),
+            project_id=project_id,
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            ip_version=data.get("ip_version", 4),
+            gateway_ip=data.get("gateway_ip"),
+            allocation_pools=data.get("allocation_pools"),
+            dns_nameservers=data.get("dns_nameservers"),
+            host_routes=data.get("host_routes"),
+            enable_dhcp=data.get("enable_dhcp", True),
+            ipv6_ra_mode=data.get("ipv6_ra_mode"),
+            ipv6_address_mode=data.get("ipv6_address_mode"),
+        )
+    except (
+        InvalidSubnetIpVersionError,
+        InvalidIpv6ModeError,
+        Ipv6PrefixLengthError,
+    ) as exc:
+        raise NeutronAPIError(
+            status_code=400,
+            neutron_type="InvalidInput",
+            message=str(exc),
+        ) from exc
     if not subnet:
         raise HTTPException(status_code=404, detail="Network not found")
     return {"subnet": subnet.to_dict()}
@@ -366,6 +388,18 @@ async def update_subnet(
     """
     data = request.get("subnet", {})
     project_id = _lookup_project_id(x_auth_token)
+    # Both address modes are allow_put: False in Neutron's subnet API
+    # definition, so naming either one in a PUT is refused outright rather than
+    # quietly ignored — a client that thinks it retyped a subnet would
+    # otherwise carry on against one that never changed.
+    for attribute in ("ipv6_ra_mode", "ipv6_address_mode"):
+        if attribute in data:
+            exc = ImmutableIpv6ModeError(attribute)
+            raise NeutronAPIError(
+                status_code=400,
+                neutron_type="HTTPBadRequest",
+                message=str(exc),
+            )
     subnet = db.update_subnet(
         subnet_id=subnet_id,
         project_id=project_id,
@@ -488,7 +522,22 @@ async def create_port(
             security_groups=data.get("security_groups"),
             port_security_enabled=data.get("port_security_enabled", True),
             validate_fixed_ips=True,
+            allowed_address_pairs=data.get("allowed_address_pairs"),
         )
+    except AutoAddressSubnetError as exc:
+        # Neutron's IPAM refuses a caller-chosen address on a subnet whose
+        # addresses are derived from the prefix.
+        raise NeutronAPIError(
+            status_code=400,
+            neutron_type="InvalidInput",
+            message=str(exc),
+        ) from exc
+    except InvalidAllowedAddressPairError as exc:
+        raise NeutronAPIError(
+            status_code=400,
+            neutron_type="InvalidInput",
+            message=str(exc),
+        ) from exc
     except InvalidFixedIPError as exc:
         raise NeutronAPIError(
             status_code=400,
@@ -545,17 +594,43 @@ async def update_port(
     """
     data = request.get("port", {})
     project_id = _lookup_project_id(x_auth_token)
-    port = db.update_port(
-        port_id=port_id,
-        project_id=project_id,
-        name=data.get("name"),
-        description=data.get("description"),
-        admin_state_up=data.get("admin_state_up"),
-        device_id=data.get("device_id"),
-        device_owner=data.get("device_owner"),
-        security_groups=data.get("security_groups"),
-        port_security_enabled=data.get("port_security_enabled"),
-    )
+    try:
+        port = db.update_port(
+            port_id=port_id,
+            project_id=project_id,
+            name=data.get("name"),
+            description=data.get("description"),
+            admin_state_up=data.get("admin_state_up"),
+            device_id=data.get("device_id"),
+            device_owner=data.get("device_owner"),
+            security_groups=data.get("security_groups"),
+            port_security_enabled=data.get("port_security_enabled"),
+            fixed_ips=data.get("fixed_ips"),
+            allowed_address_pairs=data.get("allowed_address_pairs"),
+        )
+    except (AutoAddressSubnetError, InvalidAllowedAddressPairError) as exc:
+        raise NeutronAPIError(
+            status_code=400,
+            neutron_type="InvalidInput",
+            message=str(exc),
+        ) from exc
+    except InvalidFixedIPError as exc:
+        raise NeutronAPIError(
+            status_code=400,
+            neutron_type="InvalidIpForNetwork",
+            message=(
+                f"IP address {exc.ip} is not a valid IP for any of "
+                "the subnets on the specified network."
+            ),
+        ) from exc
+    except FixedIPAlreadyInUseError as exc:
+        raise NeutronAPIError(
+            status_code=409,
+            neutron_type="IpAddressAlreadyAllocated",
+            message=(
+                f"IP address {exc.ip} already allocated in subnet {exc.subnet_id or exc.network_id}"
+            ),
+        ) from exc
     if not port:
         raise HTTPException(status_code=404, detail="Port not found")
     return {"port": port.to_dict()}

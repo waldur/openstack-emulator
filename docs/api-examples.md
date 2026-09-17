@@ -487,10 +487,49 @@ curl -s -X POST "http://localhost:9696/v2.0/subnets" \
     }
   }' | jq
 
+# Create an IPv6 subnet. SLAAC and dhcpv6-stateless derive each port's address
+# from the prefix, so both need a /64; dhcpv6-stateful allocates from a pool and
+# does not.
+curl -s -X POST "http://localhost:9696/v2.0/subnets" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subnet": {
+      "name": "my-v6-subnet",
+      "network_id": "{network_id}",
+      "ip_version": 6,
+      "cidr": "2001:db8:1::/64",
+      "ipv6_ra_mode": "slaac",
+      "ipv6_address_mode": "slaac"
+    }
+  }' | jq
+
 # Delete subnet
 curl -s -X DELETE "http://localhost:9696/v2.0/subnets/{subnet_id}" \
   -H "X-Auth-Token: $TOKEN"
 ```
+
+Both address modes are read-only once the subnet exists, and the create call
+validates them:
+
+| Condition | Status | Message |
+|-----------|--------|---------|
+| A mode on an IPv4 subnet | 400 | `ipv6_ra_mode is not valid when ip_version is 4` |
+| A mode outside `slaac` / `dhcpv6-stateful` / `dhcpv6-stateless` | 400 | `Invalid value for <attribute>: <value>` |
+| `slaac` or `dhcpv6-stateless` without a /64 | 400 | `Invalid CIDR <cidr> for IPv6 address mode…` |
+| Either mode named in a `PUT` | 400 | `Cannot update read-only attribute <attribute>` |
+
+A subnet with no `gateway_ip` of its own gets one derived from the prefix
+(`2001:db8:1::1`), along with an allocation pool covering the rest of it — a
+client that will not attach a router to a gateway-less subnet therefore behaves
+the same here as on a real cloud.
+
+On a SLAAC or stateless subnet a port's address is the modified EUI-64 of its
+MAC, so ask for the subnet and let Neutron fill it in
+(`"fixed_ips": [{"subnet_id": "{subnet_id}"}]`). Naming an address there is
+refused with `400 InvalidInput` — except the address the port already holds,
+so a client may read the list, change one entry and send the whole list back.
+A port on a dual-stack network gets one address per family.
 
 ### Ports
 
