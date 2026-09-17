@@ -70,6 +70,100 @@ class IpAddressGenerationFailureError(Exception):
         super().__init__(f"No more IP addresses available on network {network_id}.")
 
 
+class InvalidSubnetIpVersionError(Exception):
+    """An IPv6 attribute was set on a subnet that is not IPv6.
+
+    Neutron validates this in ``_validate_subnet``: ``ipv6_ra_mode`` and
+    ``ipv6_address_mode`` are only meaningful for ``ip_version`` 6 and it
+    answers 400 when either is supplied for an IPv4 subnet.
+    """
+
+    def __init__(self, attribute: str) -> None:
+        self.attribute = attribute
+        super().__init__(f"{attribute} is not valid when ip_version is 4")
+
+
+class InvalidIpv6ModeError(Exception):
+    """An ipv6_ra_mode/ipv6_address_mode value is not one Neutron accepts.
+
+    Unlike the checks in ``_validate_subnet``, this one is an API-layer
+    attribute validator (``type:values``), so Neutron wraps the validator's
+    own message in "Invalid input for ... Reason: ...". The permitted modes
+    never appear in it: ``validate_values`` renders ``valid_values_display``,
+    which defaults to the literal string, so upstream really does say only
+    "is not in valid_values".
+    """
+
+    def __init__(self, attribute: str, value: str) -> None:
+        self.attribute = attribute
+        self.value = value
+        super().__init__(f"Invalid input for {attribute}. Reason: {value} is not in valid_values.")
+
+
+class Ipv6PrefixLengthError(Exception):
+    """A SLAAC or stateless subnet was created with a prefix that is not /64.
+
+    Neutron's ``_validate_subnet`` refuses this outright: stateless address
+    autoconfiguration derives a 64-bit interface identifier, so the prefix has
+    to leave exactly 64 bits for it.
+    """
+
+    def __init__(self, cidr: str) -> None:
+        self.cidr = cidr
+        super().__init__(
+            f"Invalid CIDR {cidr} for IPv6 address mode. "
+            "OpenStack uses the EUI-64 address format, which requires the prefix to be /64"
+        )
+
+
+class ImmutableIpv6ModeError(Exception):
+    """An attempt to change an address mode after the subnet was created.
+
+    Both modes are ``allow_put: False`` in Neutron's subnet API definition, so
+    a PUT naming either one is refused rather than silently ignored.
+    """
+
+    def __init__(self, attribute: str) -> None:
+        self.attribute = attribute
+        super().__init__(f"Cannot update read-only attribute {attribute}")
+
+
+class AutoAddressSubnetError(Exception):
+    """A fixed address was requested on a SLAAC/stateless subnet.
+
+    Neutron's IPAM refuses to honour a caller-chosen address on a subnet whose
+    addresses are derived from the prefix — the port gets its address from the
+    prefix and its MAC, and nothing else is allocatable there.
+    """
+
+    def __init__(self, ip: str, subnet_id: str) -> None:
+        self.ip = ip
+        self.subnet_id = subnet_id
+        super().__init__(
+            f"IPv6 address {ip} cannot be directly assigned to a port on subnet "
+            f"{subnet_id} as the subnet is configured for automatic addresses"
+        )
+
+
+class InvalidAllowedAddressPairError(Exception):
+    """An allowed address pair Neutron will not accept.
+
+    Neutron refuses a multicast address, and any prefix that collapses onto the
+    multicast range — which is why ``::/0`` is refused while ``0.0.0.0/0``, the
+    IPv4 default route, is exempted outright.
+
+    These are API-layer attribute validators, so the validator's own message is
+    wrapped in "Invalid input for ... Reason: ...". The wrapper ends with a full
+    stop of its own, so a reason that already carries one yields two — as it
+    does upstream.
+    """
+
+    def __init__(self, ip: str, reason: str) -> None:
+        self.ip = ip
+        self.reason = reason
+        super().__init__(f"Invalid input for allowed_address_pairs. Reason: {reason}.")
+
+
 class ScopeUnauthorizedError(Exception):
     """A token was requested for a scope the user holds no role on.
 

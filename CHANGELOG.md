@@ -4,6 +4,26 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Accept `ipv6_ra_mode` and `ipv6_address_mode` on subnet create, and refuse a mode on an IPv4 subnet, an unknown mode value, or SLAAC/stateless without a /64
+- Refuse changing either address mode after a subnet is created, as Neutron's read-only attributes do
+- Derive a port's address from the prefix and its MAC on SLAAC and stateless DHCPv6 subnets, and refuse a caller-chosen address there
+- Accept `fixed_ips` and `allowed_address_pairs` on port update, replacing the whole list as Neutron does, so a re-sent entry counts as unchanged
+- Refuse an allowed address pair that names or covers a multicast range (which is why `::/0` is refused)
+- Allocate one address per family, so a port and a router gateway on a dual-stack network hold both
+- Allocate an Octavia VIP from its VIP subnet, so an IPv6 VIP subnet yields an IPv6 VIP
+- Carry `ip_version` and the IPv6 address modes through preset subnets
+
+### Fixed
+- Accept `0.0.0.0/0` as an allowed address pair, which Neutron exempts from the multicast check before it runs, while still refusing `::/0` because it collapses onto `ff00::/8`
+- Report Neutron's own message for a refused allowed address pair, an invalid IPv6 address mode and a fixed address on an auto-address subnet, rather than wording of our own — including the API layer's "Invalid input for ... Reason: ..." wrapper, which the first two reach through an attribute validator
+- Allocate IPv6 addresses arithmetically instead of enumerating a prefix, which made an IPv6 subnet unusable
+- Derive an IPv6 subnet's gateway and allocation pool from its prefix instead of parsing it as IPv4
+- Allocate floating IPs only from IPv4 subnets, and associate one with a port's IPv4 fixed IP rather than its first
+- Report a server address's `version` from the address itself instead of always 4
+
 ## [0.5.0] - 2026-09-10
 
 ### Fixed
