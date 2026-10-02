@@ -4,6 +4,12 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- Fix Nova `os-security-groups` to report the union of the server's ports' security groups, as Nova does with Neutron, instead of only the groups named at server create
+- Fix `addSecurityGroup` and `removeSecurityGroup` to accept a group ID as well as a name and to change the server's ports
+
 ## [0.6.0] - 2026-09-17
 
 ### Added

@@ -232,3 +232,87 @@ class TestNoNetworkRequest:
             f"/v2.1/servers/{response.json()['server']['id']}", headers=headers
         ).json()["server"]
         assert detail["addresses"]
+
+
+class TestServerSecurityGroupsFollowPorts:
+    """With Neutron, a server's security groups are its ports' groups.
+
+    A client that sets groups on the port it boots with (as Waldur does) must
+    see them in ``os-security-groups``, and ``addSecurityGroup`` /
+    ``removeSecurityGroup`` must change the ports, which take a name or an ID.
+    """
+
+    def _boot_with_groups(self, apps, headers, image_id, network, project_id, groups):
+        port = db.create_port(
+            network_id=network.id,
+            project_id=project_id,
+            security_groups=[g.id for g in groups],
+        )
+        client = TestClient(apps["nova"])
+        server_id = _boot(client, headers, image_id, [{"port": port.id}]).json()["server"]["id"]
+        return client, server_id, port
+
+    def _listed(self, client, headers, server_id):
+        response = client.get(f"/v2.1/servers/{server_id}/os-security-groups", headers=headers)
+        assert response.status_code == 200, response.text
+        return sorted(g["name"] for g in response.json()["security_groups"])
+
+    def test_groups_set_on_the_port_are_listed(self, apps, headers, image_id, network, project_id):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        client, server_id, _ = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh, web]
+        )
+
+        assert self._listed(client, headers, server_id) == ["ssh", "web"]
+
+    def test_add_by_id_changes_the_port(self, apps, headers, image_id, network, project_id):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        client, server_id, port = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh]
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"addSecurityGroup": {"name": web.id}},
+        )
+
+        assert response.status_code == 202, response.text
+        assert set(db.get_port(port.id).security_groups) == {ssh.id, web.id}
+        assert self._listed(client, headers, server_id) == ["ssh", "web"]
+
+    def test_remove_by_id_changes_the_port(self, apps, headers, image_id, network, project_id):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        client, server_id, port = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh, web]
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"removeSecurityGroup": {"name": ssh.id}},
+        )
+
+        assert response.status_code == 202, response.text
+        assert db.get_port(port.id).security_groups == [web.id]
+        assert self._listed(client, headers, server_id) == ["web"]
+
+    def test_removing_a_group_the_server_lacks_is_404(
+        self, apps, headers, image_id, network, project_id
+    ):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        client, server_id, _ = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh]
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"removeSecurityGroup": {"name": web.id}},
+        )
+
+        assert response.status_code == 404

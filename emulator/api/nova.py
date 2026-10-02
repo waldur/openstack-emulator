@@ -13,7 +13,7 @@ from emulator.core.exceptions import (
     PortInUseError,
     PortNotFoundError,
 )
-from emulator.core.models import Server
+from emulator.core.models import SecurityGroup, Server
 from emulator.core.simple_auth import TokenInfo, validate_token_simple
 
 logger = logging.getLogger(__name__)
@@ -483,8 +483,14 @@ async def server_action(
         sg_name = sg_data.get("name")
         if not sg_name:
             raise HTTPException(status_code=400, detail="Security group name required")
-        # Add security group to server
-        if not any(sg["name"] == sg_name for sg in server.security_groups):
+        # Nova accepts a name or an ID and applies the group to every port.
+        sg = _resolve_security_group(server.tenant_id, sg_name)
+        if sg is not None:
+            sg_name = sg.name
+            for port in db.list_ports(device_id=server.id):
+                if sg.id not in port.security_groups:
+                    db.update_port(port.id, security_groups=[*port.security_groups, sg.id])
+        if not any(existing["name"] == sg_name for existing in server.security_groups):
             server.security_groups.append({"name": sg_name})
         return Response(status_code=202)
 
@@ -493,10 +499,22 @@ async def server_action(
         sg_name = sg_data.get("name")
         if not sg_name:
             raise HTTPException(status_code=400, detail="Security group name required")
-        # Remove security group from server
+        removed = False
+        sg = _resolve_security_group(server.tenant_id, sg_name)
+        if sg is not None:
+            sg_name = sg.name
+            for port in db.list_ports(device_id=server.id):
+                if sg.id in port.security_groups:
+                    db.update_port(
+                        port.id,
+                        security_groups=[i for i in port.security_groups if i != sg.id],
+                    )
+                    removed = True
         original_len = len(server.security_groups)
-        server.security_groups = [sg for sg in server.security_groups if sg["name"] != sg_name]
-        if len(server.security_groups) == original_len:
+        server.security_groups = [
+            existing for existing in server.security_groups if existing["name"] != sg_name
+        ]
+        if not removed and len(server.security_groups) == original_len:
             raise HTTPException(
                 status_code=404, detail=f"Security group {sg_name} not found on server"
             )
@@ -544,6 +562,15 @@ async def server_action(
         raise HTTPException(status_code=400, detail=f"Unknown action: {list(body.keys())}")
 
 
+def _resolve_security_group(project_id: str, name_or_id: str) -> SecurityGroup | None:
+    """Find a project's security group by ID or, failing that, by name."""
+    sg = db.get_security_group(name_or_id, project_id=project_id)
+    if sg is not None:
+        return sg
+    matches = db.list_security_groups(project_id=project_id, name=name_or_id)
+    return matches[0] if matches else None
+
+
 # Security Groups Support
 @router.get("/v2.1/servers/{server_id}/os-security-groups")
 async def list_server_security_groups(
@@ -560,6 +587,24 @@ async def list_server_security_groups(
     # Ensure default security group exists for this tenant
     project_id = server.tenant_id if token.is_admin else token.project_id
     db.get_or_create_default_security_group(project_id)
+
+    # Like Nova with Neutron, a server with ports has the union of its ports'
+    # groups: groups set on a port at create time or changed later through
+    # Neutron show up here.
+    ports = db.list_ports(device_id=server.id)
+    if ports:
+        sg_ids: list[str] = []
+        for port in ports:
+            sg_ids.extend(i for i in port.security_groups if i not in sg_ids)
+        port_sgs = []
+        for sg_id in sg_ids:
+            port_sg = db.get_security_group(sg_id)
+            if port_sg is not None:
+                sg_dict = port_sg.to_dict().copy()
+                if "security_group_rules" in sg_dict:
+                    sg_dict["rules"] = sg_dict.pop("security_group_rules")
+                port_sgs.append(sg_dict)
+        return {"security_groups": port_sgs}
 
     # Get full security group details
     # Server only stores names: [{"name": "default"}]
