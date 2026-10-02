@@ -508,6 +508,18 @@ async def create_port(
     project_id = _resolve_project_id(data, x_auth_token)
     _enforce_fixed_ip_policy(data, x_auth_token)
 
+    # Neutron puts a port that names no security groups in the project's
+    # default group, unless port security is off or the port belongs to a
+    # network service (router, DHCP, ...). An explicit empty list is kept.
+    security_groups = data.get("security_groups")
+    if (
+        security_groups is None
+        and data.get("port_security_enabled", True) is not False
+        and not str(data.get("device_owner", "")).startswith("network:")
+        and db.get_network(data.get("network_id", "")) is not None
+    ):
+        security_groups = [db.get_or_create_default_security_group(project_id).id]
+
     try:
         port = db.create_port(
             network_id=data.get("network_id", ""),
@@ -519,7 +531,7 @@ async def create_port(
             fixed_ips=data.get("fixed_ips"),
             device_id=data.get("device_id", ""),
             device_owner=data.get("device_owner", ""),
-            security_groups=data.get("security_groups"),
+            security_groups=security_groups,
             port_security_enabled=data.get("port_security_enabled", True),
             validate_fixed_ips=True,
             allowed_address_pairs=data.get("allowed_address_pairs"),

@@ -1192,11 +1192,17 @@ class Database:
                 fixed_ips = (
                     [{"ip_address": request["fixed_ip"]}] if request.get("fixed_ip") else None
                 )
+                # Nova creates the port with the server's security groups, and
+                # Neutron falls back to the project's default group, so a port
+                # never comes out of a network boot without one.
                 port = self.create_port(
                     network_id=network_id,
                     project_id=server.tenant_id,
                     fixed_ips=fixed_ips,
                     validate_fixed_ips=bool(fixed_ips),
+                    security_groups=self._resolve_server_security_group_ids(
+                        server.tenant_id, server.security_groups
+                    ),
                 )
                 if port is None:
                     raise PortNotFoundError(network_id)
@@ -1213,6 +1219,37 @@ class Database:
                 )
             )
         return interfaces
+
+    def _resolve_server_security_group_ids(
+        self, project_id: str, refs: list[dict[str, str]]
+    ) -> list[str]:
+        """Resolve a server's ``[{"name": <name or id>}]`` groups to IDs.
+
+        A reference matches a group ID first, then a group name in the project.
+        Unresolvable references are skipped (the API rejects them up front);
+        when nothing resolves the project's default group is used.
+        """
+        with self._lock:
+            ids: list[str] = []
+            for ref in refs:
+                name_or_id = ref.get("name", "")
+                sg = self._security_groups.get(name_or_id)
+                if sg is None or sg.project_id != project_id:
+                    sg = next(
+                        (
+                            s
+                            for s in self._security_groups.values()
+                            if s.project_id == project_id and s.name == name_or_id
+                        ),
+                        None,
+                    )
+                    if sg is None and name_or_id == "default":
+                        sg = self.get_or_create_default_security_group(project_id)
+                if sg is not None and sg.id not in ids:
+                    ids.append(sg.id)
+            if not ids:
+                ids.append(self.get_or_create_default_security_group(project_id).id)
+            return ids
 
     def _addresses_from_interfaces(
         self, interfaces: list[ServerNetworkInterface]

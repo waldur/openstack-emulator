@@ -679,6 +679,33 @@ curl -s -X DELETE "http://localhost:9696/v2.0/security-groups/{security_group_id
   -H "X-Auth-Token: $TOKEN"
 ```
 
+#### A server's security groups
+
+As in Nova with Neutron, a server's groups are its ports' groups. A port Nova
+creates for a `networks: [{"uuid": ...}]` boot gets the groups named in
+`security_groups` (or the project's `default`), and a port created through
+Neutron without `security_groups` also lands in `default`. Changing a port's
+groups through Neutron shows up in both views below.
+
+```bash
+# Groups of a server (one entry per port and group, as Nova returns them)
+curl -s "http://localhost:8774/v2.1/servers/{server_id}/os-security-groups" \
+  -H "X-Auth-Token: $TOKEN" | jq
+
+# Add a group to every port of the server (name or ID; 404 if unknown,
+# 409 if the name is ambiguous, 400 if a port has port security disabled)
+curl -s -X POST "http://localhost:8774/v2.1/servers/{server_id}/action" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"addSecurityGroup": {"name": "web-servers"}}'
+
+# Remove it again (404 if no port of the server has it)
+curl -s -X POST "http://localhost:8774/v2.1/servers/{server_id}/action" \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"removeSecurityGroup": {"name": "web-servers"}}'
+```
+
 ## Placement (Resource Providers)
 
 ```bash
