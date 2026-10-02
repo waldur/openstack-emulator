@@ -4,14 +4,16 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.6.1] - 2026-10-02
+
+### Changed
+- Derive a server's security groups from its ports, as Nova does: the server detail shows one entry per port binding (the key is left out when there are none), and `os-security-groups` lists the groups sorted by tenant and name
+- Default Neutron ports created without `security_groups` to the project's default group, except ports with port security disabled and `network:*` ports
 
 ### Fixed
-- Fix Nova `os-security-groups` to report the union of the server's ports' security groups, as Nova does with Neutron, instead of only the groups named at server create
-- Fix `addSecurityGroup` and `removeSecurityGroup` to accept a group ID as well as a name and to change the server's ports; an unknown group is a 404, an ambiguous name a 409, and adding to a port without port security a 400, as in Nova
-- Fix the `security_groups` field of the server detail to follow the server's ports, so it agrees with `os-security-groups`
-- Fix ports Nova creates for a network boot to carry the requested security groups, or the project's `default` group, instead of none; reject a boot that names an unknown group (400) or an ambiguous name (409)
-- Fix Neutron `POST /v2.0/ports` to put a port that names no security groups in the project's `default` group, as Neutron does, unless port security is off or the port belongs to a network service
+- Fix ports created for network-booted servers having no security groups: they now get the requested groups or the project default
+- Return 400 for an unknown security group and 409 for an ambiguous group name when booting a server
+- Match Nova's errors for `addSecurityGroup` and `removeSecurityGroup`: 404 for an unknown group, 409 for an ambiguous name, 400 for a port without port security or an IP, and 404 when removing a group no port has
 
 ## [0.6.0] - 2026-09-17
 
