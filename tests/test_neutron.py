@@ -443,6 +443,34 @@ class TestPorts:
         assert response.json()["port"]["fixed_ips"][0]["subnet_id"] == sub["id"]
 
 
+class TestPortDefaultSecurityGroup:
+    """Neutron puts a port that names no groups in the project's default group.
+
+    ``_ensure_default_security_group_on_port`` in neutron/db/securitygroups_db.py
+    skips trusted ``network:*`` ports and keeps an explicitly empty list.
+    """
+
+    def _create(self, **port):
+        network = next(n for n in client.get("/v2.0/networks").json()["networks"] if n["subnets"])
+        response = client.post("/v2.0/ports", json={"port": {"network_id": network["id"], **port}})
+        assert response.status_code == 201, response.text
+        return response.json()["port"]
+
+    def test_port_without_groups_gets_the_default_group(self):
+        port = self._create()
+        default = db.get_or_create_default_security_group(port["project_id"])
+        assert port["security_groups"] == [default.id]
+
+    def test_explicit_empty_list_is_kept(self):
+        assert self._create(security_groups=[])["security_groups"] == []
+
+    def test_port_security_disabled_gets_no_group(self):
+        assert self._create(port_security_enabled=False)["security_groups"] == []
+
+    def test_network_owned_port_gets_no_group(self):
+        assert self._create(device_owner="network:dhcp")["security_groups"] == []
+
+
 class TestRouters:
     """Test router CRUD operations."""
 

@@ -8,7 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - Fix Nova `os-security-groups` to report the union of the server's ports' security groups, as Nova does with Neutron, instead of only the groups named at server create
-- Fix `addSecurityGroup` and `removeSecurityGroup` to accept a group ID as well as a name and to change the server's ports
+- Fix `addSecurityGroup` and `removeSecurityGroup` to accept a group ID as well as a name and to change the server's ports; an unknown group is a 404, an ambiguous name a 409, and adding to a port without port security a 400, as in Nova
+- Fix the `security_groups` field of the server detail to follow the server's ports, so it agrees with `os-security-groups`
+- Fix ports Nova creates for a network boot to carry the requested security groups, or the project's `default` group, instead of none; reject a boot that names an unknown group (400) or an ambiguous name (409)
+- Fix Neutron `POST /v2.0/ports` to put a port that names no security groups in the project's `default` group, as Neutron does, unless port security is off or the port belongs to a network service
 
 ## [0.6.0] - 2026-09-17
 

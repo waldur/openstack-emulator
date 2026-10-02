@@ -316,3 +316,194 @@ class TestServerSecurityGroupsFollowPorts:
         )
 
         assert response.status_code == 404
+
+    def _boot_on_network(self, apps, headers, image_id, network, security_groups=None):
+        body = {
+            "server": {
+                "name": "vm",
+                "flavorRef": "1",
+                "imageRef": image_id,
+                "networks": [{"uuid": network.id}],
+            }
+        }
+        if security_groups is not None:
+            body["server"]["security_groups"] = security_groups
+        client = TestClient(apps["nova"])
+        return client, client.post("/v2.1/servers", headers=headers, json=body)
+
+    def _detail_groups(self, client, headers, server_id):
+        server = client.get(f"/v2.1/servers/{server_id}", headers=headers).json()["server"]
+        return sorted(g["name"] for g in server.get("security_groups", []))
+
+    def test_network_boot_puts_requested_groups_on_the_port(
+        self, apps, headers, image_id, network, project_id
+    ):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        client, response = self._boot_on_network(
+            apps, headers, image_id, network, [{"name": "ssh"}]
+        )
+        assert response.status_code == 202, response.text
+        server_id = response.json()["server"]["id"]
+
+        (port,) = db.list_ports(device_id=server_id)
+        assert port.security_groups == [ssh.id]
+        assert self._listed(client, headers, server_id) == ["ssh"]
+        assert self._detail_groups(client, headers, server_id) == ["ssh"]
+
+    def test_network_boot_without_groups_uses_default(
+        self, apps, headers, image_id, network, project_id
+    ):
+        client, response = self._boot_on_network(apps, headers, image_id, network)
+        server_id = response.json()["server"]["id"]
+
+        default = db.get_or_create_default_security_group(project_id)
+        (port,) = db.list_ports(device_id=server_id)
+        assert port.security_groups == [default.id]
+        assert self._listed(client, headers, server_id) == ["default"]
+        assert self._detail_groups(client, headers, server_id) == ["default"]
+
+    def test_network_boot_with_unknown_group_is_400(self, apps, headers, image_id, network):
+        _, response = self._boot_on_network(
+            apps, headers, image_id, network, [{"name": "no-such-group"}]
+        )
+        assert response.status_code == 400
+
+    def test_network_boot_with_ambiguous_group_name_is_409(
+        self, apps, headers, image_id, network, project_id
+    ):
+        db.create_security_group(name="dup", project_id=project_id)
+        db.create_security_group(name="dup", project_id=project_id)
+        _, response = self._boot_on_network(apps, headers, image_id, network, [{"name": "dup"}])
+        assert response.status_code == 409
+
+    def test_create_response_echoes_requested_groups(
+        self, apps, headers, image_id, network, project_id
+    ):
+        """Nova's create view echoes the request, not the ports."""
+        db.create_security_group(name="ssh", project_id=project_id)
+        _, response = self._boot_on_network(apps, headers, image_id, network, [{"name": "ssh"}])
+        assert response.json()["server"]["security_groups"] == [{"name": "ssh"}]
+
+    def test_group_set_through_neutron_shows_in_server_detail(
+        self, apps, headers, image_id, network, project_id
+    ):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        client, server_id, port = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh]
+        )
+
+        neutron = TestClient(apps["neutron"])
+        response = neutron.put(
+            f"/v2.0/ports/{port.id}",
+            headers=headers,
+            json={"port": {"security_groups": [ssh.id, web.id]}},
+        )
+        assert response.status_code == 200, response.text
+
+        assert self._detail_groups(client, headers, server_id) == ["ssh", "web"]
+
+    def test_server_detail_omits_groups_when_ports_have_none(
+        self, apps, headers, image_id, network, project_id
+    ):
+        """Nova only sets ``security_groups`` when the ports have some."""
+        client, server_id, _ = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, []
+        )
+        server = client.get(f"/v2.1/servers/{server_id}", headers=headers).json()["server"]
+        assert "security_groups" not in server
+
+    def test_group_on_two_ports_is_listed_per_port(
+        self, apps, headers, image_id, network, project_id
+    ):
+        """Nova returns one entry per port binding, so duplicates are real."""
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        ports = [
+            db.create_port(network_id=network.id, project_id=project_id, security_groups=[ssh.id])
+            for _ in range(2)
+        ]
+        client = TestClient(apps["nova"])
+        server_id = _boot(client, headers, image_id, [{"port": p.id} for p in ports]).json()[
+            "server"
+        ]["id"]
+
+        assert self._listed(client, headers, server_id) == ["ssh", "ssh"]
+
+    def test_add_unknown_group_is_404(self, apps, headers, image_id, network, project_id):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        client, server_id, port = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, [ssh]
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"addSecurityGroup": {"name": "no-such-group"}},
+        )
+
+        assert response.status_code == 404
+        assert db.get_port(port.id).security_groups == [ssh.id]
+
+    def test_add_to_port_without_port_security_is_400(
+        self, apps, headers, image_id, network, project_id
+    ):
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        port = db.create_port(
+            network_id=network.id, project_id=project_id, port_security_enabled=False
+        )
+        client = TestClient(apps["nova"])
+        server_id = _boot(client, headers, image_id, [{"port": port.id}]).json()["server"]["id"]
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"addSecurityGroup": {"name": ssh.id}},
+        )
+
+        assert response.status_code == 400
+        assert db.get_port(port.id).security_groups == []
+
+    def test_add_ambiguous_group_name_is_409(self, apps, headers, image_id, network, project_id):
+        db.create_security_group(name="dup", project_id=project_id)
+        db.create_security_group(name="dup", project_id=project_id)
+        client, server_id, _ = self._boot_with_groups(
+            apps, headers, image_id, network, project_id, []
+        )
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"addSecurityGroup": {"name": "dup"}},
+        )
+
+        assert response.status_code == 409
+
+    def test_remove_group_named_at_boot_but_not_on_ports_is_404(
+        self, apps, headers, image_id, network, project_id
+    ):
+        """With ports, only the ports count: a stale boot-time name doesn't."""
+        ssh = db.create_security_group(name="ssh", project_id=project_id)
+        web = db.create_security_group(name="web", project_id=project_id)
+        port = db.create_port(
+            network_id=network.id, project_id=project_id, security_groups=[ssh.id]
+        )
+        client = TestClient(apps["nova"])
+        body = {
+            "server": {
+                "name": "vm",
+                "flavorRef": "1",
+                "imageRef": image_id,
+                "networks": [{"port": port.id}],
+                "security_groups": [{"name": "web"}],
+            }
+        }
+        server_id = client.post("/v2.1/servers", headers=headers, json=body).json()["server"]["id"]
+
+        response = client.post(
+            f"/v2.1/servers/{server_id}/action",
+            headers=headers,
+            json={"removeSecurityGroup": {"name": web.id}},
+        )
+
+        assert response.status_code == 404
+        assert db.get_port(port.id).security_groups == [ssh.id]
