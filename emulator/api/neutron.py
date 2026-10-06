@@ -20,6 +20,8 @@ from emulator.core.exceptions import (
     IpAddressGenerationFailureError,
     Ipv6PrefixLengthError,
     NeutronAPIError,
+    SecurityGroupCannotRemoveDefaultError,
+    SecurityGroupInUseError,
 )
 from emulator.core.simple_auth import validate_token_simple
 
@@ -1108,11 +1110,25 @@ async def delete_security_group(
 ) -> Response:
     """Delete a security group.
 
-    Only allows deleting security groups owned by the requesting tenant.
-    Cannot delete the default security group.
+    Only allows deleting security groups owned by the requesting tenant. As in
+    Neutron, a group bound to a port is refused for every caller
+    (``SecurityGroupInUse``), and the ``default`` group is refused only to a
+    non-admin caller (``SecurityGroupCannotRemoveDefault``): an admin token may
+    delete a project's default group, which is how project cleanup works.
     """
     project_id = _lookup_project_id(x_auth_token)
-    success = db.delete_security_group(security_group_id, project_id=project_id)
+    try:
+        success = db.delete_security_group(security_group_id, project_id=project_id)
+    except SecurityGroupInUseError as exc:
+        raise NeutronAPIError(
+            status_code=409, neutron_type="SecurityGroupInUse", message=str(exc)
+        ) from exc
+    except SecurityGroupCannotRemoveDefaultError as exc:
+        raise NeutronAPIError(
+            status_code=409,
+            neutron_type="SecurityGroupCannotRemoveDefault",
+            message=str(exc),
+        ) from exc
     if not success:
         raise HTTPException(status_code=409, detail="Cannot delete security group")
     return Response(status_code=204)

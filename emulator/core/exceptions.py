@@ -21,6 +21,30 @@ class PortInUseError(Exception):
         super().__init__(f"Port {port_id} is still in use.")
 
 
+class SecurityGroupInUseError(Exception):
+    """A security group is still bound to a port and cannot be deleted.
+
+    Neutron's ``delete_security_group`` checks the port bindings first and
+    raises ``SecurityGroupInUse`` (409) for any caller, admin included.
+    """
+
+    def __init__(self, security_group_id: str) -> None:
+        self.security_group_id = security_group_id
+        super().__init__(f"Security Group {security_group_id} in use.")
+
+
+class SecurityGroupCannotRemoveDefaultError(Exception):
+    """A non-admin caller tried to delete its project's default security group.
+
+    Neutron raises ``SecurityGroupCannotRemoveDefault`` (409) only when
+    ``not context.is_admin``; an admin may delete it, which is how a project's
+    resources are cleaned up before the project goes away.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Insufficient rights for removing default security group.")
+
+
 class PortNotFoundError(Exception):
     """A server was booted against a port or network that does not exist."""
 

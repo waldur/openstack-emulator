@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from emulator.core.database import db
-from emulator.core.exceptions import IpAddressGenerationFailureError
+from emulator.core.exceptions import IpAddressGenerationFailureError, SecurityGroupInUseError
 from emulator.core.models import (
     ImageVisibility,
     ServerStatus,
@@ -5330,7 +5330,11 @@ async def api_delete_security_group(
     if sg.name == "default":
         raise HTTPException(status_code=400, detail="Cannot delete default security group")
 
-    if not db.delete_security_group(security_group_id):
+    try:
+        deleted = db.delete_security_group(security_group_id)
+    except SecurityGroupInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail="Security group not found")
 
     return {"message": "Security group deleted"}
