@@ -323,6 +323,12 @@ infrastructure operations use the cloud **admin** session):
   required for admin operations on tenant-owned resources (external gateway,
   port security, port status, enumerating a tenant's networks/subnets/security
   groups). Tenant-scoped tokens remain restricted to their own project.
+  Cinder's by-id volume and snapshot endpoints (show/update/delete, metadata,
+  and `volumes/{id}/action`) follow the same rule (`_context_project` in
+  `emulator/api/cinder.py`): the restriction comes from the token, never from
+  the URL's project segment, so an admin acts on a tenant's volume through its
+  own project's URL. `os-force_delete` is admin-only (`403` otherwise, as
+  Cinder's policy says) and refuses an attached volume with `400`.
 - **Explicit list filters.** List endpoints honor an explicit
   `tenant_id`/`project_id` (and Neutron filters such as `fixed_ips=subnet_id=…`)
   so an admin session can scope a query to one tenant. As in Neutron

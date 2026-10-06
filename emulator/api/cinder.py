@@ -178,6 +178,20 @@ def get_token_or_raise(auth_token: str | None) -> TokenInfo:
     return validate_token_simple(auth_token, "Cinder")
 
 
+def _context_project(token: TokenInfo) -> str | None:
+    """Project a by-id volume/snapshot request is restricted to.
+
+    Cinder scopes a by-id lookup to the request context's project only for a
+    non-admin context (``volume_get`` and friends apply ``project_only``
+    filtering when ``not context.is_admin``); an admin context reads and acts on
+    any project's volume. The URL's project segment is the caller's own project
+    (Cinder rejects a mismatch as a malformed URL), so it never names the
+    owner. Returns ``None`` -- no restriction -- for an admin token, otherwise
+    the token's project.
+    """
+    return None if token.is_admin else token.project_id
+
+
 def _parse_is_public(value: str | None) -> bool | None:
     """Parse is_public query parameter.
 
@@ -335,8 +349,8 @@ async def show_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show volume details."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
     return {"volume": volume.to_dict()}
@@ -350,12 +364,12 @@ async def update_volume(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a volume."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     req = body.volume
 
     volume = db.update_volume(
         volume_id=volume_id,
-        project_id=project_id,
+        project_id=scope,
         name=req.name,
         description=req.description,
         metadata=req.metadata,
@@ -373,12 +387,12 @@ async def delete_volume(
     force: bool = Query(False),
 ) -> Response:
     """Delete a volume."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
 
-    if not db.delete_volume(volume_id, project_id=project_id):
+    if not db.delete_volume(volume_id, project_id=scope):
         raise HTTPException(
             status_code=400,
             detail="Volume cannot be deleted while in-use or attached",
@@ -393,9 +407,13 @@ async def volume_action(
     request: Request,
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response | dict[str, Any]:
-    """Perform an action on a volume."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    """Perform an action on a volume.
+
+    An admin token may act on any project's volume; a project-scoped token only
+    on its own (another project's volume is a 404, as in Cinder).
+    """
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
 
@@ -409,7 +427,7 @@ async def volume_action(
                 status_code=400,
                 detail="New size must be greater than current size",
             )
-        result = db.extend_volume(volume_id, new_size, project_id=project_id)
+        result = db.extend_volume(volume_id, new_size, project_id=scope)
         if not result:
             raise HTTPException(status_code=400, detail="Volume cannot be extended")
         return Response(status_code=202)
@@ -427,7 +445,7 @@ async def volume_action(
         attachment = db.attach_volume(
             volume_id=volume_id,
             server_id=instance_uuid,
-            project_id=project_id,
+            project_id=scope,
             device=mountpoint,
             host_name=host_name,
         )
@@ -441,12 +459,12 @@ async def volume_action(
         attachment_id = detach_data.get("attachment_id")
 
         if attachment_id:
-            if not db.detach_volume(volume_id, attachment_id, project_id=project_id):
+            if not db.detach_volume(volume_id, attachment_id, project_id=scope):
                 raise HTTPException(status_code=400, detail="Attachment not found")
         else:
             # Detach all
             for attachment in volume.attachments[:]:
-                db.detach_volume(volume_id, attachment.id, project_id=project_id)
+                db.detach_volume(volume_id, attachment.id, project_id=scope)
         return Response(status_code=202)
 
     # Handle os-set_bootable
@@ -455,7 +473,7 @@ async def volume_action(
         # Convert string to bool if needed
         if isinstance(bootable, str):
             bootable = bootable.lower() in ("true", "1", "yes")
-        db.set_volume_bootable(volume_id, bootable, project_id=project_id)
+        db.set_volume_bootable(volume_id, bootable, project_id=scope)
         return Response(status_code=200)
 
     # Handle os-reset_status (admin action)
@@ -463,9 +481,21 @@ async def volume_action(
         # For emulator, just accept the request
         return Response(status_code=202)
 
-    # Handle os-force_delete
+    # Handle os-force_delete. Cinder's policy makes it admin-only
+    # (volume_extension:volume_admin_actions:force_delete is rule:admin_api), and
+    # even forced, an attached volume is refused rather than silently kept.
     if "os-force_delete" in body:
-        db.delete_volume(volume_id, project_id=project_id)
+        if scope is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Policy doesn't allow volume_extension:volume_admin_actions:"
+                "force_delete to be performed.",
+            )
+        if not db.delete_volume(volume_id, project_id=scope):
+            raise HTTPException(
+                status_code=400,
+                detail="Volume cannot be deleted while in-use or attached",
+            )
         return Response(status_code=202)
 
     raise HTTPException(status_code=400, detail="Unknown action")
@@ -558,8 +588,8 @@ async def show_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show snapshot details."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    snapshot = db.get_snapshot(snapshot_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    snapshot = db.get_snapshot(snapshot_id, project_id=scope)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"snapshot": snapshot.to_dict()}
@@ -573,12 +603,12 @@ async def update_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a snapshot."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     req = body.snapshot
 
     snapshot = db.update_snapshot(
         snapshot_id=snapshot_id,
-        project_id=project_id,
+        project_id=scope,
         name=req.name,
         description=req.description,
     )
@@ -594,11 +624,11 @@ async def delete_snapshot(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a snapshot."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    if not db.get_snapshot(snapshot_id, project_id=project_id):
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    if not db.get_snapshot(snapshot_id, project_id=scope):
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
-    db.delete_snapshot(snapshot_id, project_id=project_id)
+    db.delete_snapshot(snapshot_id, project_id=scope)
     return Response(status_code=202)
 
 
@@ -610,8 +640,8 @@ async def list_snapshot_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List snapshot metadata."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    snapshot = db.get_snapshot(snapshot_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    snapshot = db.get_snapshot(snapshot_id, project_id=scope)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"metadata": snapshot.metadata}
@@ -625,11 +655,11 @@ async def update_snapshot_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update snapshot metadata."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     body = await request.json()
     metadata = body.get("metadata", {})
 
-    snapshot = db.update_snapshot(snapshot_id=snapshot_id, project_id=project_id, metadata=metadata)
+    snapshot = db.update_snapshot(snapshot_id=snapshot_id, project_id=scope, metadata=metadata)
     if not snapshot:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return {"metadata": snapshot.metadata}
@@ -849,8 +879,8 @@ async def list_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """List volume metadata."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
     return {"metadata": volume.metadata}
@@ -864,11 +894,11 @@ async def create_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Create or replace volume metadata."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     body = await request.json()
     metadata = body.get("metadata", {})
 
-    volume = db.get_volume(volume_id, project_id=project_id)
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
 
@@ -884,11 +914,11 @@ async def update_volume_metadata(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update volume metadata."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     body = await request.json()
     metadata = body.get("metadata", {})
 
-    volume = db.update_volume(volume_id=volume_id, project_id=project_id, metadata=metadata)
+    volume = db.update_volume(volume_id=volume_id, project_id=scope, metadata=metadata)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
     return {"metadata": volume.metadata}
@@ -902,8 +932,8 @@ async def show_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Show a volume metadata item."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
     if key not in volume.metadata:
@@ -920,14 +950,14 @@ async def update_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> dict[str, Any]:
     """Update a volume metadata item."""
-    get_token_or_raise(x_auth_token)  # Validate token
+    scope = _context_project(get_token_or_raise(x_auth_token))
     body = await request.json()
     meta = body.get("meta", {})
 
     if key not in meta:
         raise HTTPException(status_code=400, detail="Key mismatch")
 
-    volume = db.get_volume(volume_id, project_id=project_id)
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
 
@@ -943,8 +973,8 @@ async def delete_volume_metadata_item(
     x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> Response:
     """Delete a volume metadata item."""
-    get_token_or_raise(x_auth_token)  # Validate token
-    volume = db.get_volume(volume_id, project_id=project_id)
+    scope = _context_project(get_token_or_raise(x_auth_token))
+    volume = db.get_volume(volume_id, project_id=scope)
     if not volume:
         raise HTTPException(status_code=404, detail="Volume not found")
     if key not in volume.metadata:

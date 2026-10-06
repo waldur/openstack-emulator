@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from emulator.api.unified_app import create_all_service_apps
 from emulator.core.database import db
+from tests.conftest import scoped_token
 
 
 @pytest.fixture(autouse=True)
@@ -738,3 +739,146 @@ class TestAuthenticationRequired:
         """Test that listing snapshots requires authentication."""
         response = client.get(f"/v3/{project_id}/snapshots")
         assert response.status_code == 401
+
+
+class TestAdminActsOnAnyProjectsVolume:
+    """By-id volume and snapshot requests from an admin token span projects.
+
+    Cinder restricts a by-id lookup to the context's project only for a
+    non-admin context; an admin reads and acts on any project's volume through
+    its own project's URL. Waldur's tenant teardown force-deletes a tenant's
+    volumes that way, and a 404 here (read as "already gone") left it polling
+    for a volume that still existed.
+    """
+
+    OWNER = "cinder-owner"
+    OTHER = "cinder-other"
+
+    @staticmethod
+    def _headers(token) -> dict[str, str]:
+        return {"X-Auth-Token": token.id}
+
+    def _owner(self):
+        return scoped_token(project_name=self.OWNER, project_id=self.OWNER)
+
+    def _other(self):
+        return scoped_token(project_name=self.OTHER, project_id=self.OTHER)
+
+    @staticmethod
+    def _admin():
+        return scoped_token(project_name="admin", project_id="admin", role_name="admin")
+
+    def _volume(self, client) -> str:
+        owner = self._owner()
+        response = client.post(
+            f"/v3/{owner.project_id}/volumes",
+            json={"volume": {"name": "owned", "size": 1}},
+            headers=self._headers(owner),
+        )
+        assert response.status_code == 202, response.text
+        return response.json()["volume"]["id"]
+
+    @staticmethod
+    def _action(client, token, volume_id: str, body: dict):
+        return client.post(
+            f"/v3/{token.project_id}/volumes/{volume_id}/action",
+            json=body,
+            headers={"X-Auth-Token": token.id},
+        )
+
+    def test_admin_force_deletes_another_projects_volume(self, client):
+        volume_id = self._volume(client)
+        response = self._action(client, self._admin(), volume_id, {"os-force_delete": {}})
+        assert response.status_code == 202, response.text
+        assert db.get_volume(volume_id) is None
+
+    def test_admin_force_delete_of_an_attached_volume_is_refused(self, client):
+        volume_id = self._volume(client)
+        admin = self._admin()
+        attach = {"os-attach": {"instance_uuid": "server-1", "mountpoint": "/dev/vdb"}}
+        assert self._action(client, admin, volume_id, attach).status_code == 202
+
+        response = self._action(client, admin, volume_id, {"os-force_delete": {}})
+        assert response.status_code == 400, response.text
+        assert db.get_volume(volume_id) is not None
+
+    def test_admin_reads_updates_and_acts_on_another_projects_volume(self, client):
+        volume_id = self._volume(client)
+        admin = self._admin()
+        base = f"/v3/{admin.project_id}/volumes/{volume_id}"
+        headers = self._headers(admin)
+
+        assert client.get(base, headers=headers).status_code == 200
+        response = client.put(base, json={"volume": {"name": "renamed"}}, headers=headers)
+        assert response.status_code == 200, response.text
+        response = client.get(f"{base}/metadata", headers=headers)
+        assert response.status_code == 200, response.text
+
+        extend = self._action(client, admin, volume_id, {"os-extend": {"new_size": 2}})
+        assert extend.status_code == 202, extend.text
+        bootable = self._action(client, admin, volume_id, {"os-set_bootable": {"bootable": True}})
+        assert bootable.status_code == 200, bootable.text
+        attach = self._action(
+            client, admin, volume_id, {"os-attach": {"instance_uuid": "server-1"}}
+        )
+        assert attach.status_code == 202, attach.text
+        detach = self._action(client, admin, volume_id, {"os-detach": {}})
+        assert detach.status_code == 202, detach.text
+
+        volume = db.get_volume(volume_id)
+        assert volume is not None
+        assert (volume.name, volume.size, volume.bootable) == ("renamed", 2, True)
+        assert volume.project_id == self.OWNER
+
+        response = client.delete(base, headers=headers)
+        assert response.status_code == 202, response.text
+        assert db.get_volume(volume_id) is None
+
+    def test_admin_reads_and_deletes_another_projects_snapshot(self, client):
+        volume_id = self._volume(client)
+        owner = self._owner()
+        response = client.post(
+            f"/v3/{owner.project_id}/snapshots",
+            json={"snapshot": {"volume_id": volume_id, "name": "snap"}},
+            headers=self._headers(owner),
+        )
+        assert response.status_code == 202, response.text
+        snapshot_id = response.json()["snapshot"]["id"]
+
+        admin = self._admin()
+        base = f"/v3/{admin.project_id}/snapshots/{snapshot_id}"
+        headers = self._headers(admin)
+        assert client.get(base, headers=headers).status_code == 200
+        response = client.put(base, json={"snapshot": {"name": "renamed"}}, headers=headers)
+        assert response.status_code == 200, response.text
+        assert client.delete(base, headers=headers).status_code == 202
+        assert db.get_snapshot(snapshot_id) is None
+
+    def test_project_token_cannot_reach_another_projects_volume(self, client):
+        volume_id = self._volume(client)
+        other = self._other()
+        headers = self._headers(other)
+        base = f"/v3/{other.project_id}/volumes/{volume_id}"
+
+        assert client.get(base, headers=headers).status_code == 404
+        assert client.delete(base, headers=headers).status_code == 404
+        for body in ({"os-extend": {"new_size": 2}}, {"os-force_delete": {}}):
+            assert self._action(client, other, volume_id, body).status_code == 404
+
+        # Naming the owner in the URL does not borrow its scope either.
+        response = client.get(f"/v3/{self.OWNER}/volumes/{volume_id}", headers=headers)
+        assert response.status_code == 404
+        assert db.get_volume(volume_id) is not None
+
+    def test_force_delete_is_admin_only(self, client):
+        volume_id = self._volume(client)
+        response = self._action(client, self._owner(), volume_id, {"os-force_delete": {}})
+        assert response.status_code == 403, response.text
+        assert db.get_volume(volume_id) is not None
+
+        # A plain delete of its own volume still works.
+        owner = self._owner()
+        response = client.delete(
+            f"/v3/{owner.project_id}/volumes/{volume_id}", headers=self._headers(owner)
+        )
+        assert response.status_code == 202, response.text
