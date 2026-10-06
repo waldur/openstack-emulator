@@ -1415,6 +1415,91 @@ class TestSecurityGroups:
         assert response.status_code == 409
 
 
+class TestDeleteDefaultSecurityGroup:
+    """Deleting a project's ``default`` security group.
+
+    neutron/db/securitygroups_db.py ``delete_security_group`` refuses a group
+    still bound to a port (``SecurityGroupInUse``) for every caller, and the
+    default group (``SecurityGroupCannotRemoveDefault``) only when
+    ``not context.is_admin``. An admin deleting a project's default group is how
+    project cleanup works -- Waldur's tenant deletion removes every group of the
+    project through its admin session.
+    """
+
+    PROJECT = "default-sg-project"
+
+    @classmethod
+    def _tenant(cls) -> dict[str, str]:
+        token = scoped_token(project_name=cls.PROJECT, project_id=cls.PROJECT).id
+        return {"X-Auth-Token": token}
+
+    @staticmethod
+    def _admin() -> dict[str, str]:
+        token = scoped_token(project_name="admin", project_id="admin", role_name="admin").id
+        return {"X-Auth-Token": token}
+
+    def test_admin_deletes_another_projects_default_group(self):
+        default = db.get_or_create_default_security_group(self.PROJECT)
+        rule_ids = [rule.id for rule in default.security_group_rules]
+        assert rule_ids
+
+        response = client.delete(f"/v2.0/security-groups/{default.id}", headers=self._admin())
+        assert response.status_code == 204, response.text
+        assert db.get_security_group(default.id) is None
+        assert not [r for r in db.list_security_group_rules() if r.id in rule_ids]
+
+    def test_project_cannot_delete_its_own_default_group(self):
+        default = db.get_or_create_default_security_group(self.PROJECT)
+
+        response = client.delete(f"/v2.0/security-groups/{default.id}", headers=self._tenant())
+        assert response.status_code == 409, response.text
+        assert response.json()["NeutronError"]["type"] == "SecurityGroupCannotRemoveDefault"
+        assert db.get_security_group(default.id) is not None
+
+    def test_group_bound_to_a_port_cannot_be_deleted_even_by_admin(self):
+        tenant = self._tenant()
+        sg = client.post(
+            "/v2.0/security-groups",
+            json={"security_group": {"name": "bound-sg"}},
+            headers=tenant,
+        ).json()["security_group"]
+        net = client.post(
+            "/v2.0/networks", json={"network": {"name": "bound-net"}}, headers=tenant
+        ).json()["network"]
+        port = client.post(
+            "/v2.0/ports",
+            json={"port": {"network_id": net["id"], "security_groups": [sg["id"]]}},
+            headers=tenant,
+        ).json()["port"]
+        assert port["security_groups"] == [sg["id"]]
+
+        for headers in (tenant, self._admin()):
+            response = client.delete(f"/v2.0/security-groups/{sg['id']}", headers=headers)
+            assert response.status_code == 409, response.text
+            assert response.json()["NeutronError"]["type"] == "SecurityGroupInUse"
+
+        # Once the port is gone the group can go too.
+        assert client.delete(f"/v2.0/ports/{port['id']}", headers=tenant).status_code == 204
+        response = client.delete(f"/v2.0/security-groups/{sg['id']}", headers=tenant)
+        assert response.status_code == 204, response.text
+
+    def test_admin_cannot_delete_a_default_group_still_on_a_port(self):
+        """The in-use check comes first, so the admin exemption does not skip it."""
+        tenant = self._tenant()
+        net = client.post(
+            "/v2.0/networks", json={"network": {"name": "default-net"}}, headers=tenant
+        ).json()["network"]
+        port = client.post(
+            "/v2.0/ports", json={"port": {"network_id": net["id"]}}, headers=tenant
+        ).json()["port"]
+        default = db.get_or_create_default_security_group(self.PROJECT)
+        assert port["security_groups"] == [default.id]
+
+        response = client.delete(f"/v2.0/security-groups/{default.id}", headers=self._admin())
+        assert response.status_code == 409, response.text
+        assert response.json()["NeutronError"]["type"] == "SecurityGroupInUse"
+
+
 class TestSecurityGroupRules:
     """Test security group rule operations."""
 
