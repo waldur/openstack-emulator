@@ -24,6 +24,8 @@ from emulator.core.exceptions import (
     PortInUseError,
     PortNotFoundError,
     ScopeUnauthorizedError,
+    SecurityGroupCannotRemoveDefaultError,
+    SecurityGroupInUseError,
 )
 from emulator.core.models import (
     AllocationPool,
@@ -6287,12 +6289,23 @@ class Database:
     def delete_security_group(self, security_group_id: str, project_id: str | None = None) -> bool:
         """Delete a security group.
 
+        Mirrors ``delete_security_group`` in neutron/db/securitygroups_db.py: a
+        group still bound to a port is refused for every caller, and the
+        ``default`` group is refused only to a non-admin caller -- an admin may
+        delete a project's default group, as project cleanup does.
+
         Args:
             security_group_id: The security group ID to delete.
-            project_id: If provided, verify the security group belongs to this project.
+            project_id: The caller's project; the group must belong to it and
+                its default group is protected. ``None`` is an admin caller.
 
         Returns:
-            True if deleted, False if not found, not owned, or is the default group.
+            True if deleted, False if not found or not owned by the project.
+
+        Raises:
+            SecurityGroupInUseError: A port still references the group.
+            SecurityGroupCannotRemoveDefaultError: A non-admin caller targeted
+                the ``default`` group.
         """
         with self._lock:
             sg = self._security_groups.get(security_group_id)
@@ -6300,8 +6313,10 @@ class Database:
                 return False
             if project_id is not None and sg.project_id != project_id:
                 return False
-            if sg.name == "default":
-                return False  # Cannot delete default security group
+            if any(security_group_id in port.security_groups for port in self._ports.values()):
+                raise SecurityGroupInUseError(security_group_id)
+            if sg.name == "default" and project_id is not None:
+                raise SecurityGroupCannotRemoveDefaultError()
             # Delete associated rules
             for rule in sg.security_group_rules:
                 if rule.id in self._security_group_rules:

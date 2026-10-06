@@ -170,6 +170,12 @@ def _ensure_default_security_group(self, project_id: str) -> SecurityGroup:
     return sg
 ```
 
+Deleting a security group follows Neutron's `delete_security_group`: a group
+still bound to a port is refused with `409 SecurityGroupInUse` for every
+caller, and the `default` group is refused with
+`409 SecurityGroupCannotRemoveDefault` only to a non-admin caller. An admin
+token may delete a project's default group, as project cleanup does.
+
 ### Network Sharing
 
 Networks can be shared between projects via:
