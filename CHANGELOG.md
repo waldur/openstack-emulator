@@ -4,6 +4,18 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] - 2026-10-06
+
+### Changed
+- Filter Neutron network, subnet and port listings by owner when an admin passes `tenant_id` or `project_id`, as Neutron does; networks shared with that project over RBAC are no longer returned, and project-scoped callers still see their own, RBAC-shared and external networks
+- Let an admin act on any project's volumes and snapshots (show, update, delete, metadata and volume actions), as Cinder does, while a project-scoped token is restricted to its own project whatever the URL names
+- Make `os-force_delete` admin-only, as in Cinder's default policy
+
+### Fixed
+- Fix the subnets of networks shared with a project over RBAC missing from that project's subnet listing and `GET`
+- Fix an admin being refused deletion of another project's default security group; a project still cannot delete its own, and a group still attached to a port is refused with 409 `SecurityGroupInUse`
+- Fix `os-force_delete` answering 202 for an attached volume it kept; it now answers 400, as `DELETE` does
+
 ## [0.6.1] - 2026-10-02
 
 ### Changed
