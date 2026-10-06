@@ -319,7 +319,17 @@ infrastructure operations use the cloud **admin** session):
   groups). Tenant-scoped tokens remain restricted to their own project.
 - **Explicit list filters.** List endpoints honor an explicit
   `tenant_id`/`project_id` (and Neutron filters such as `fixed_ips=subnet_id=…`)
-  so an admin session can scope a query to one tenant.
+  so an admin session can scope a query to one tenant. As in Neutron
+  (`neutron_lib.db.model_query`: `apply_filters` vs `query_with_hooks`), the
+  owner filter and visibility are separate: visibility comes from the token
+  (an admin sees everything; a project-scoped token sees its own networks plus
+  those shared to it — `shared`/`external` flags and RBAC to the project or
+  `*` — and the subnets of those networks), and `tenant_id`/`project_id`
+  narrows that set by **owner**. An admin listing `GET /v2.0/networks?tenant_id=X`
+  therefore gets only the networks X owns, never the ones merely shared to X;
+  `router:external` is then the network's own flag, not the per-project
+  `access_as_external` view. The same applies to subnets, and to ports, which
+  are never RBAC-shared.
 - **RBAC ownership.** An RBAC policy is owned by the shared object's project
   (e.g. the network's tenant), not the admin project that created it.
 

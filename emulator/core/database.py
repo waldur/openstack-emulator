@@ -4735,18 +4735,30 @@ class Database:
         shared: bool | None = None,
         external: bool | None = None,
         status: str | None = None,
+        owner_id: str | None = None,
     ) -> list[Network]:
         """List networks with optional filtering.
 
-        Networks shared to the project through RBAC policies are included, and
-        the ``external`` filter is evaluated per-project so that networks shared
-        as external via an ``access_as_external`` RBAC policy are returned to the
-        target tenant.
+        ``project_id`` is the caller's scope, not a filter: a project-scoped
+        caller sees what is visible to its project -- owned networks, globally
+        shared/external ones, and networks shared to it (or to ``*``) through
+        RBAC -- and the ``external`` filter is evaluated per project, so a
+        network shared via ``access_as_external`` counts as external for its
+        target. ``None`` is an admin caller, who sees every network and for
+        whom ``external`` is the network's own flag.
+
+        ``owner_id`` is the ``tenant_id``/``project_id`` query filter. As in
+        Neutron's ``apply_filters`` it is a plain column filter on the owner,
+        applied on top of the visibility above: an admin listing a tenant's
+        networks gets only the networks that tenant owns, never the ones merely
+        shared to it.
         """
         with self._lock:
             networks = list(self._networks.values())
             if project_id:
                 networks = [n for n in networks if self._network_visible_to(n, project_id)]
+            if owner_id:
+                networks = [n for n in networks if n.project_id == owner_id]
             if name:
                 networks = [n for n in networks if n.name == name]
             if shared is not None:
@@ -4998,26 +5010,47 @@ class Database:
             subnet = self._subnets.get(subnet_id)
             if subnet is None:
                 return None
-            if project_id is not None:
-                # Check if subnet's network is shared
-                network = self._networks.get(subnet.network_id)
-                if network and (network.shared or network.external):
-                    return subnet
-                if subnet.project_id != project_id:
-                    return None
+            if not self._subnet_visible_to(subnet, project_id):
+                return None
             return subnet
+
+    def _subnet_visible_to(self, subnet: Subnet, project_id: str | None) -> bool:
+        """Whether a subnet is visible to the given project.
+
+        Subnets carry their network's RBAC entries in Neutron, so a subnet is
+        visible when owned by the project, when its network is globally
+        shared/external, or when its network is shared to the project (or
+        ``*``) with ``access_as_shared``.
+        """
+        if project_id is None or subnet.project_id == project_id:
+            return True
+        network = self._networks.get(subnet.network_id)
+        if network is None:
+            return False
+        if network.shared or network.external:
+            return True
+        return self._network_rbac_targets(network.id, project_id, actions=("access_as_shared",))
 
     def list_subnets(
         self,
         project_id: str | None = None,
         network_id: str | None = None,
         name: str | None = None,
+        owner_id: str | None = None,
     ) -> list[Subnet]:
-        """List subnets with optional filtering."""
+        """List subnets with optional filtering.
+
+        ``project_id`` is the caller's scope (``None`` for an admin, who sees
+        every subnet); ``owner_id`` is the ``tenant_id``/``project_id`` query
+        filter, applied to the subnet's owner on top of that visibility -- see
+        :meth:`list_networks`.
+        """
         with self._lock:
             subnets = list(self._subnets.values())
             if project_id:
-                subnets = [s for s in subnets if s.project_id == project_id]
+                subnets = [s for s in subnets if self._subnet_visible_to(s, project_id)]
+            if owner_id:
+                subnets = [s for s in subnets if s.project_id == owner_id]
             if network_id:
                 subnets = [s for s in subnets if s.network_id == network_id]
             if name:
@@ -5317,8 +5350,14 @@ class Database:
         device_owner: str | None = None,
         status: str | None = None,
         fixed_ips: list[str] | None = None,
+        owner_id: str | None = None,
     ) -> list[Port]:
         """List ports with optional filtering.
+
+        ``project_id`` is the caller's scope (``None`` for an admin); ports are
+        never RBAC-shared, so a project-scoped caller sees only its own.
+        ``owner_id`` is the ``tenant_id``/``project_id`` query filter on the
+        port's owner, applied on top of that.
 
         ``fixed_ips`` is the Neutron-style list of ``key=value`` filters (e.g.
         ``["subnet_id=<id>", "ip_address=<ip>"]``); a port matches when, for each
@@ -5328,6 +5367,8 @@ class Database:
             ports = list(self._ports.values())
             if project_id:
                 ports = [p for p in ports if p.project_id == project_id]
+            if owner_id:
+                ports = [p for p in ports if p.project_id == owner_id]
             if network_id:
                 ports = [p for p in ports if p.network_id == network_id]
             if device_id:

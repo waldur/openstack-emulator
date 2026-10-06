@@ -1858,3 +1858,186 @@ class TestRbacExternalNetworks:
         )
         assert response.status_code == 400, response.text
         assert "same as the gateway IP" in response.json()["error"]["message"]
+
+
+class TestListingOwnerFilter:
+    """``tenant_id``/``project_id`` on network, subnet and port listings.
+
+    Neutron (``neutron_lib.db.model_query``) adds RBAC visibility -- networks
+    shared to the caller's project or to ``*``, and external networks -- only
+    for a project-scoped, non-admin caller (``query_with_hooks``). An explicit
+    ``tenant_id``/``project_id`` is a plain owner filter (``apply_filters``)
+    applied on top of that. So an admin listing ``?tenant_id=<id>`` gets only
+    what the project owns, never what is merely shared to it; treating the
+    filter as "visible to that project" hid exactly that difference from the
+    clients tested here.
+    """
+
+    OWNER = "owner-filter-owner"
+    TARGET = "owner-filter-target"
+    OTHER = "owner-filter-other"
+
+    @staticmethod
+    def _token(project: str) -> str:
+        return scoped_token(project_name=project, project_id=project).id
+
+    @staticmethod
+    def _admin() -> dict[str, str]:
+        token = scoped_token(project_name="admin", project_id="admin", role_name="admin").id
+        return {"X-Auth-Token": token}
+
+    @staticmethod
+    def _post(path: str, key: str, body: dict, token: str) -> dict:
+        response = client.post(path, json={key: body}, headers={"X-Auth-Token": token})
+        assert response.status_code == 201, response.text
+        return response.json()[key]
+
+    def _share(self, network_id: str, target: str, action: str) -> None:
+        self._post(
+            "/v2.0/rbac-policies",
+            "rbac_policy",
+            {
+                "object_type": "network",
+                "object_id": network_id,
+                "target_tenant": target,
+                "action": action,
+            },
+            self._token(self.OWNER),
+        )
+
+    @staticmethod
+    def _ids(path: str, key: str, headers: dict[str, str], **params: str) -> set[str]:
+        response = client.get(path, params=params, headers=headers)
+        assert response.status_code == 200, response.text
+        return {item["id"] for item in response.json()[key]}
+
+    def _setup(self) -> dict[str, str]:
+        """Owner shares one network to the target, one to ``*``, one as external.
+
+        The target owns a network, subnet and port of its own.
+        """
+        owner = self._token(self.OWNER)
+        target = self._token(self.TARGET)
+        ids = {}
+        for name, share_to, action in (
+            ("shared", self.TARGET, "access_as_shared"),
+            ("wildcard", "*", "access_as_shared"),
+            ("external", self.TARGET, "access_as_external"),
+        ):
+            net = self._post("/v2.0/networks", "network", {"name": f"of-{name}"}, owner)
+            self._share(net["id"], share_to, action)
+            ids[name] = net["id"]
+        ids["shared_subnet"] = self._post(
+            "/v2.0/subnets",
+            "subnet",
+            {"network_id": ids["shared"], "cidr": "10.70.0.0/24"},
+            owner,
+        )["id"]
+        ids["owned"] = self._post("/v2.0/networks", "network", {"name": "of-owned"}, target)["id"]
+        ids["owned_subnet"] = self._post(
+            "/v2.0/subnets",
+            "subnet",
+            {"network_id": ids["owned"], "cidr": "10.71.0.0/24"},
+            target,
+        )["id"]
+        ids["owned_port"] = self._post("/v2.0/ports", "port", {"network_id": ids["owned"]}, target)[
+            "id"
+        ]
+        ids["owner_port"] = self._post("/v2.0/ports", "port", {"network_id": ids["shared"]}, owner)[
+            "id"
+        ]
+        return ids
+
+    def test_admin_tenant_filter_returns_owned_networks_only(self):
+        ids = self._setup()
+        for param in ("tenant_id", "project_id"):
+            listed = self._ids("/v2.0/networks", "networks", self._admin(), **{param: self.TARGET})
+            assert listed == {ids["owned"]}, param
+
+    def test_admin_tenant_filter_with_router_external_uses_the_network_flag(self):
+        """The admin+filter case has no caller project, so RBAC external does not count."""
+        ids = self._setup()
+        headers = self._admin()
+        external = self._ids(
+            "/v2.0/networks",
+            "networks",
+            headers,
+            tenant_id=self.OWNER,
+            **{"router:external": "true"},
+        )
+        assert ids["external"] not in external
+        internal = self._ids(
+            "/v2.0/networks",
+            "networks",
+            headers,
+            tenant_id=self.OWNER,
+            **{"router:external": "false"},
+        )
+        assert {ids["shared"], ids["wildcard"], ids["external"]} <= internal
+
+    def test_admin_without_filter_returns_every_network(self):
+        ids = self._setup()
+        listed = self._ids("/v2.0/networks", "networks", self._admin())
+        assert {ids["shared"], ids["wildcard"], ids["external"], ids["owned"]} <= listed
+        default_external = default_resource_id("network:external")
+        assert default_external in listed
+
+    def test_project_token_sees_owned_shared_and_external_networks(self):
+        ids = self._setup()
+        headers = {"X-Auth-Token": self._token(self.TARGET)}
+        listed = self._ids("/v2.0/networks", "networks", headers)
+        assert {ids["owned"], ids["shared"], ids["wildcard"], ids["external"]} <= listed
+
+        other = self._ids("/v2.0/networks", "networks", {"X-Auth-Token": self._token(self.OTHER)})
+        assert ids["wildcard"] in other
+        assert not {ids["owned"], ids["shared"], ids["external"]} & other
+
+    def test_project_token_tenant_filter_narrows_by_owner(self):
+        """A filter from a project-scoped caller is applied on top of its visibility."""
+        ids = self._setup()
+        headers = {"X-Auth-Token": self._token(self.TARGET)}
+        own = self._ids("/v2.0/networks", "networks", headers, tenant_id=self.TARGET)
+        assert own == {ids["owned"]}
+        theirs = self._ids("/v2.0/networks", "networks", headers, tenant_id=self.OWNER)
+        assert theirs == {ids["shared"], ids["wildcard"], ids["external"]}
+
+        # The filter never widens what the caller may see.
+        outsider = {"X-Auth-Token": self._token(self.OTHER)}
+        assert self._ids("/v2.0/networks", "networks", outsider, tenant_id=self.TARGET) == set()
+
+    def test_subnets_follow_the_same_rules(self):
+        ids = self._setup()
+        admin = self._admin()
+        assert self._ids("/v2.0/subnets", "subnets", admin, tenant_id=self.TARGET) == {
+            ids["owned_subnet"]
+        }
+        assert {ids["owned_subnet"], ids["shared_subnet"]} <= self._ids(
+            "/v2.0/subnets", "subnets", admin
+        )
+
+        target = {"X-Auth-Token": self._token(self.TARGET)}
+        assert {ids["owned_subnet"], ids["shared_subnet"]} <= self._ids(
+            "/v2.0/subnets", "subnets", target
+        )
+        response = client.get(f"/v2.0/subnets/{ids['shared_subnet']}", headers=target)
+        assert response.status_code == 200, response.text
+
+        outsider = {"X-Auth-Token": self._token(self.OTHER)}
+        assert not {ids["owned_subnet"], ids["shared_subnet"]} & self._ids(
+            "/v2.0/subnets", "subnets", outsider
+        )
+        assert self._ids("/v2.0/subnets", "subnets", outsider, tenant_id=self.TARGET) == set()
+
+    def test_ports_are_owner_only(self):
+        ids = self._setup()
+        admin = self._admin()
+        assert self._ids("/v2.0/ports", "ports", admin, tenant_id=self.TARGET) == {
+            ids["owned_port"]
+        }
+        assert {ids["owned_port"], ids["owner_port"]} <= self._ids("/v2.0/ports", "ports", admin)
+
+        target = {"X-Auth-Token": self._token(self.TARGET)}
+        listed = self._ids("/v2.0/ports", "ports", target)
+        assert ids["owned_port"] in listed and ids["owner_port"] not in listed
+        # Naming another project does not reveal its ports.
+        assert self._ids("/v2.0/ports", "ports", target, tenant_id=self.OWNER) == set()

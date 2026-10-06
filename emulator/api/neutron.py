@@ -204,13 +204,16 @@ async def list_networks(
 ) -> dict[str, Any]:
     """List networks.
 
-    An explicit ``tenant_id``/``project_id`` query filters to that project (used
-    by an admin session to enumerate a tenant's networks); otherwise the token's
-    project is used.
+    Visibility comes from the token, as in Neutron's ``query_with_hooks``: an
+    admin token sees every network, a project-scoped token sees its own plus
+    those shared to it (globally, or through RBAC). An explicit
+    ``tenant_id``/``project_id`` query is a plain owner filter applied on top
+    (``apply_filters``), so an admin listing ``?tenant_id=<id>`` gets only the
+    networks that project owns -- not the ones merely shared to it.
     """
-    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
     networks = db.list_networks(
-        project_id=effective_project,
+        project_id=_lookup_project_id(x_auth_token),
+        owner_id=project_id or tenant_id,
         name=name,
         shared=shared,
         external=router_external,
@@ -310,12 +313,17 @@ async def list_subnets(
 ) -> dict[str, Any]:
     """List subnets.
 
-    An explicit ``tenant_id``/``project_id`` query filters to that project (used
-    by an admin session to enumerate a tenant's subnets); otherwise the token's
-    project is used (admin tokens see all projects).
+    Visibility comes from the token: an admin token sees every subnet, a
+    project-scoped token its own plus the subnets of networks shared to it. An
+    explicit ``tenant_id``/``project_id`` query filters on the subnet's owner on
+    top of that, as for networks.
     """
-    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
-    subnets = db.list_subnets(project_id=effective_project, network_id=network_id, name=name)
+    subnets = db.list_subnets(
+        project_id=_lookup_project_id(x_auth_token),
+        owner_id=project_id or tenant_id,
+        network_id=network_id,
+        name=name,
+    )
     return {"subnets": [s.to_dict() for s in subnets]}
 
 
@@ -446,13 +454,13 @@ async def list_ports(
     """List ports.
 
     Supports the Neutron ``fixed_ips=key=value`` filter (e.g.
-    ``fixed_ips=subnet_id=<id>``). An explicit ``tenant_id``/``project_id``
-    filters to that project; otherwise the token's project is used (admin tokens
-    see all projects).
+    ``fixed_ips=subnet_id=<id>``). Visibility comes from the token (admin
+    tokens see all projects, others their own ports); an explicit
+    ``tenant_id``/``project_id`` filters on the port's owner on top of that.
     """
-    effective_project = project_id or tenant_id or _lookup_project_id(x_auth_token)
     ports = db.list_ports(
-        project_id=effective_project,
+        project_id=_lookup_project_id(x_auth_token),
+        owner_id=project_id or tenant_id,
         network_id=network_id,
         device_id=device_id,
         device_owner=device_owner,
