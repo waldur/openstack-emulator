@@ -4,6 +4,14 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.3] - 2026-10-12
+
+### Changed
+- Attach the volumes a server boots from (`block_device_mapping_v2` with `source_type=volume`) on creation, as Nova does: they are listed in `os-volume_attachments` as `vda`, `vdb`, … in boot order, read as in-use, and are released (or deleted, if `delete_on_termination`) with the server
+
+### Fixed
+- Fix detaching a volume through `DELETE /servers/{id}/os-volume_attachments/{volume_id}` answering 404 for every attachment: it is addressed by the volume's id, as in Nova, and releases the Cinder side of the attachment too
+
 ## [0.6.2] - 2026-10-06
 
 ### Changed
