@@ -293,6 +293,34 @@ async def list_servers_detail(
     }
 
 
+def _attach_mapped_volumes(server_id: str, mappings: list[BlockDeviceMapping]) -> None:
+    """Attach the existing volumes a server boots with, as Nova does.
+
+    Nova turns each ``source_type=volume`` mapping into an attachment on both
+    sides: it shows in the server's ``os-volume_attachments`` and in the
+    volume's ``attachments``, and detaching or deleting the server goes
+    through it. Volumes are named vda, vdb, ... in boot order.
+    """
+    volume_mappings = sorted(
+        (
+            m
+            for m in mappings
+            if m.source_type == "volume" and m.uuid and m.destination_type in (None, "volume")
+        ),
+        key=lambda m: (m.boot_index is None or m.boot_index < 0, m.boot_index or 0),
+    )
+    for index, mapping in enumerate(volume_mappings):
+        volume_id = mapping.uuid or ""  # never empty: filtered above
+        device = f"/dev/vd{chr(ord('a') + index)}"
+        db.attach_volume_to_server(
+            server_id=server_id,
+            volume_id=volume_id,
+            device=device,
+            delete_on_termination=mapping.delete_on_termination,
+        )
+        db.attach_volume(volume_id=volume_id, server_id=server_id, device=device)
+
+
 @router.post("/v2.1/servers", status_code=202)
 async def create_server(
     body: ServerCreateBody,
@@ -350,6 +378,8 @@ async def create_server(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PortInUseError as exc:
         raise HTTPException(status_code=400, detail=f"Port {exc.port_id} is still in use.") from exc
+
+    _attach_mapped_volumes(server.id, req.block_device_mapping_v2 or [])
 
     # Return response with admin password
     response_data = server.to_dict(detailed=False)
@@ -1592,21 +1622,24 @@ async def detach_volume_from_server(
     if not is_server_accessible(server, token):
         raise HTTPException(status_code=404, detail="Server not found")
 
-    success = db.detach_volume_from_server(server_id, attachment_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Volume attachment not found")
-
+    # Nova addresses an attachment by the volume's id; read it before the
+    # detach removes it, then release the Cinder side of the same attachment.
     attachment = db.get_server_volume_attachment(server_id, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Volume attachment not found")
 
-    success = db.detach_volume(
-        volume_id=attachment.volume_id,
-        attachment_id=attachment_id,
-        project_id=token.project_id,
+    db.detach_volume_from_server(server_id, attachment.attachment_id)
+
+    volume = db.get_volume(attachment.volume_id)
+    cinder_attachment = next(
+        (a for a in (volume.attachments if volume else []) if a.server_id == server_id),
+        None,
     )
-    if not success:
-        raise HTTPException(status_code=404, detail="Volume attachment not found")
+    if cinder_attachment is not None:
+        db.detach_volume(
+            volume_id=attachment.volume_id,
+            attachment_id=cinder_attachment.id,
+        )
 
     return Response(status_code=202)
 

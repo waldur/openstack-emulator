@@ -8656,7 +8656,12 @@ class Database:
         """Get a specific volume attachment."""
         with self._lock:
             attachments = self._server_volume_attachments.get(server_id, [])
-            return next((a for a in attachments if a.attachment_id == attachment_id), None)
+            # Nova's attachment id is the volume id; the generated one is kept
+            # for callers that saved it from an attach response.
+            return next(
+                (a for a in attachments if attachment_id in (a.volume_id, a.attachment_id)),
+                None,
+            )
 
     def detach_volume_from_server(self, server_id: str, attachment_id: str) -> bool:
         """Detach a volume from a server."""
