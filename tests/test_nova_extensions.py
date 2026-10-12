@@ -197,6 +197,91 @@ class TestServerVolumeAttachments:
         assert len(data["volumeAttachments"]) == 1
         assert data["volumeAttachments"][0]["volumeId"] == volume_id
 
+    def _create_volume(self, auth_token, name):
+        cinder_client = TestClient(create_all_service_apps()["cinder"])
+        response = cinder_client.post(
+            "/v3/admin/volumes",
+            json={"volume": {"name": name, "size": 1}},
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 202
+        return response.json()["volume"]["id"]
+
+    def test_detach_by_volume_id(self, auth_token, test_server):
+        """Nova addresses an attachment by the volume's id, and detaching
+        releases the Cinder side too."""
+        volume_id = self._create_volume(auth_token, "detach-me")
+        client.post(
+            f"/v2.1/servers/{test_server}/os-volume_attachments",
+            json={"volumeAttachment": {"volumeId": volume_id}},
+            headers={"X-Auth-Token": auth_token},
+        )
+
+        response = client.delete(
+            f"/v2.1/servers/{test_server}/os-volume_attachments/{volume_id}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 202
+
+        listed = client.get(
+            f"/v2.1/servers/{test_server}/os-volume_attachments",
+            headers={"X-Auth-Token": auth_token},
+        ).json()["volumeAttachments"]
+        assert listed == []
+        volume = db.get_volume(volume_id)
+        assert volume.attachments == []
+        assert volume.status.value == "available"
+
+    def test_boot_volumes_are_attached(self, auth_token):
+        """Volumes a server boots from are attachments, in boot order."""
+        boot = self._create_volume(auth_token, "boot")
+        data = self._create_volume(auth_token, "data")
+        response = client.post(
+            "/v2.1/servers",
+            json={
+                "server": {
+                    "name": "bfv-server",
+                    "flavorRef": "1",
+                    "imageRef": None,
+                    "block_device_mapping_v2": [
+                        {
+                            "uuid": data,
+                            "source_type": "volume",
+                            "destination_type": "volume",
+                            "boot_index": -1,
+                        },
+                        {
+                            "uuid": boot,
+                            "source_type": "volume",
+                            "destination_type": "volume",
+                            "boot_index": 0,
+                        },
+                    ],
+                }
+            },
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 202
+        server_id = response.json()["server"]["id"]
+
+        listed = client.get(
+            f"/v2.1/servers/{server_id}/os-volume_attachments",
+            headers={"X-Auth-Token": auth_token},
+        ).json()["volumeAttachments"]
+        assert [(a["volumeId"], a["device"]) for a in listed] == [
+            (boot, "/dev/vda"),
+            (data, "/dev/vdb"),
+        ]
+        assert db.get_volume(boot).status.value == "in-use"
+
+        # ...and can be detached like any other attachment.
+        response = client.delete(
+            f"/v2.1/servers/{server_id}/os-volume_attachments/{data}",
+            headers={"X-Auth-Token": auth_token},
+        )
+        assert response.status_code == 202
+        assert db.get_volume(data).status.value == "available"
+
 
 class TestServerNetworkInterfaces:
     """Test server network interface endpoints."""
