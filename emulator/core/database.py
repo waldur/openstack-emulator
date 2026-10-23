@@ -15,6 +15,7 @@ from emulator.core import persistence
 from emulator.core.exceptions import (
     AutoAddressSubnetError,
     FixedIPAlreadyInUseError,
+    InstanceInvalidStateError,
     InvalidAllowedAddressPairError,
     InvalidFixedIPError,
     InvalidIpv6ModeError,
@@ -127,6 +128,7 @@ from emulator.core.models import (
     SwiftAccount,
     SwiftContainer,
     SwiftObject,
+    TaskState,
     TaskStatus,
     TaskType,
     Token,
@@ -236,6 +238,88 @@ def default_resource_id(name: str) -> str:
     return str(uuid5(NAMESPACE_DNS, f"openstack-emulator:default:{name}"))
 
 
+def _utcnow() -> datetime:
+    """The clock server tasks run on; tests replace it to step through them."""
+    return datetime.now(timezone.utc)
+
+
+_ACTIVE = ServerStatus.ACTIVE
+_STOPPED = ServerStatus.SHUTOFF
+_NO_TASK: tuple[TaskState | None, ...] = (None,)
+# Nova's task_state.ALLOW_REBOOT: a hard reboot may take over a soft reboot and
+# a reboot that has not been picked up, but not one that is already running.
+_ALLOW_REBOOT: tuple[TaskState | None, ...] = (
+    None,
+    TaskState.REBOOTING,
+    TaskState.REBOOT_PENDING,
+    TaskState.REBOOT_STARTED,
+    TaskState.RESUMING,
+    TaskState.REBOOTING_HARD,
+    TaskState.UNPAUSING,
+    TaskState.PAUSING,
+    TaskState.SUSPENDING,
+)
+
+# Which vm_states and task_states each server action accepts, from the
+# check_instance_state decorators in nova/compute/api.py, and the action name
+# Nova's 409 uses.
+SERVER_ACTION_RULES: dict[str, tuple[set[ServerStatus], tuple[TaskState | None, ...], str]] = {
+    "start": ({_STOPPED}, _NO_TASK, "start"),
+    "os-start": ({_STOPPED}, _NO_TASK, "start"),
+    "stop": ({_ACTIVE, ServerStatus.ERROR}, _NO_TASK, "stop"),
+    "os-stop": ({_ACTIVE, ServerStatus.ERROR}, _NO_TASK, "stop"),
+    "reboot_soft": ({_ACTIVE}, _NO_TASK, "reboot"),
+    "reboot_hard": (
+        {_ACTIVE, _STOPPED, ServerStatus.PAUSED, ServerStatus.SUSPENDED, ServerStatus.ERROR},
+        _ALLOW_REBOOT,
+        "reboot",
+    ),
+    "pause": ({_ACTIVE}, _NO_TASK, "pause"),
+    "unpause": ({ServerStatus.PAUSED}, _NO_TASK, "unpause"),
+    "suspend": ({_ACTIVE}, _NO_TASK, "suspend"),
+    "resume": ({ServerStatus.SUSPENDED}, _NO_TASK, "resume"),
+    "shelve": (
+        {_ACTIVE, _STOPPED, ServerStatus.PAUSED, ServerStatus.SUSPENDED},
+        _NO_TASK,
+        "shelve",
+    ),
+    "unshelve": (
+        {ServerStatus.SHELVED, ServerStatus.SHELVED_OFFLOADED},
+        _NO_TASK,
+        "unshelve",
+    ),
+    "confirmresize": ({ServerStatus.VERIFY_RESIZE}, _NO_TASK, "confirmResize"),
+    "revertresize": ({ServerStatus.VERIFY_RESIZE}, _NO_TASK, "revertResize"),
+}
+
+# Actions that take time, with the task states Nova steps through and the
+# status the server settles into.
+TIMED_SERVER_ACTIONS: dict[str, tuple[list[TaskState], ServerStatus]] = {
+    "start": ([TaskState.POWERING_ON], _ACTIVE),
+    "os-start": ([TaskState.POWERING_ON], _ACTIVE),
+    "stop": ([TaskState.POWERING_OFF], _STOPPED),
+    "os-stop": ([TaskState.POWERING_OFF], _STOPPED),
+    "reboot_soft": (
+        [TaskState.REBOOTING, TaskState.REBOOT_PENDING, TaskState.REBOOT_STARTED],
+        _ACTIVE,
+    ),
+    "reboot_hard": (
+        [TaskState.REBOOTING_HARD, TaskState.REBOOT_PENDING_HARD, TaskState.REBOOT_STARTED_HARD],
+        _ACTIVE,
+    ),
+}
+
+# Actions that settle at once, with the status and power state they leave.
+SETTLED_SERVER_ACTIONS: dict[str, tuple[ServerStatus, PowerState]] = {
+    "pause": (ServerStatus.PAUSED, PowerState.PAUSED),
+    "unpause": (_ACTIVE, PowerState.RUNNING),
+    "suspend": (ServerStatus.SUSPENDED, PowerState.SUSPENDED),
+    "resume": (_ACTIVE, PowerState.RUNNING),
+    "shelve": (ServerStatus.SHELVED, PowerState.SHUTDOWN),
+    "unshelve": (_ACTIVE, PowerState.RUNNING),
+}
+
+
 class Database:
     """In-memory database for storing OpenStack resources."""
 
@@ -244,6 +328,9 @@ class Database:
         self._lock = threading.RLock()
         self.persist_path = persist_path
         self.auto_save = auto_save
+        # How long a server start, stop or reboot takes. 0 settles at once; a
+        # positive value lets clients see Nova's task states on the way.
+        self.server_action_seconds = float(os.environ.get("EMULATOR_SERVER_ACTION_SECONDS", "0"))
         # Shift applied to every port in the service catalog, so a catalog built
         # under --port-offset names the ports the services are actually bound to.
         # A deployment parameter rather than state: set at startup, never saved.
@@ -1309,7 +1396,10 @@ class Database:
     def get_server(self, server_id: str) -> Server | None:
         """Get a server by ID."""
         with self._lock:
-            return self._servers.get(server_id)
+            server = self._servers.get(server_id)
+            if server:
+                server.advance(_utcnow())
+            return server
 
     def list_servers(
         self,
@@ -1324,12 +1414,15 @@ class Database:
         """List servers with optional filtering."""
         with self._lock:
             servers = list(self._servers.values())
+            now = _utcnow()
+            for server in servers:
+                server.advance(now)
 
             # Apply filters
             if tenant_id:
                 servers = [s for s in servers if s.tenant_id == tenant_id]
             if status:
-                servers = [s for s in servers if s.status.value == status.upper()]
+                servers = [s for s in servers if s.api_status == status.upper()]
             if name:
                 servers = [s for s in servers if name in s.name]
             if flavor:
@@ -1419,114 +1512,78 @@ class Database:
                 volume.status = VolumeStatus.AVAILABLE
             volume.updated_at = datetime.now(timezone.utc)
 
-    def server_action(self, server_id: str, action: str) -> bool:
-        """Perform an action on a server."""
+    def server_action(self, server_id: str, action: str, reboot_type: str = "SOFT") -> bool:
+        """Perform an action on a server, as Nova's compute API checks it.
+
+        Returns False when the server does not exist. A server whose vm_state
+        or task_state refuses the action raises InstanceInvalidStateError, worded
+        as Nova's 409. Start, stop and reboot take ``server_action_seconds``,
+        stepping through Nova's task states; every other action settles at once.
+        """
         with self._lock:
             server = self._servers.get(server_id)
             if not server:
                 return False
+            now = _utcnow()
+            server.advance(now)
 
             action_lower = action.lower()
+            if action_lower == "reboot":
+                action_lower = f"reboot_{reboot_type.lower()}"
+            vm_states, task_states, nova_action = SERVER_ACTION_RULES[action_lower]
+            if server.status not in vm_states:
+                raise InstanceInvalidStateError(nova_action, server.id, "vm_state", server.vm_state)
+            if server.task_state not in task_states:
+                raise InstanceInvalidStateError(
+                    nova_action,
+                    server.id,
+                    "task_state",
+                    server.task_state.value if server.task_state else None,
+                )
 
-            if action_lower == "start" or action_lower == "os-start":
-                if server.status == ServerStatus.SHUTOFF:
-                    server.status = ServerStatus.ACTIVE
-                    server.power_state = PowerState.RUNNING
-                    server.updated = datetime.now(timezone.utc)
-                    if self.auto_save:
-                        self.save()
-                    return True
+            if action_lower in TIMED_SERVER_ACTIONS:
+                phases, result = TIMED_SERVER_ACTIONS[action_lower]
+                server.begin_task(phases, result, now, self.server_action_seconds)
+                server.updated = now
+                if self.auto_save:
+                    self.save()
+                return True
 
-            elif action_lower == "stop" or action_lower == "os-stop":
-                if server.status == ServerStatus.ACTIVE:
-                    server.status = ServerStatus.SHUTOFF
-                    server.power_state = PowerState.SHUTDOWN
-                    server.updated = datetime.now(timezone.utc)
-                    return True
+            if action_lower in SETTLED_SERVER_ACTIONS:
+                server.status, server.power_state = SETTLED_SERVER_ACTIONS[action_lower]
+                server.updated = now
+                return True
 
-            elif action_lower == "reboot":
-                if server.status in [ServerStatus.ACTIVE, ServerStatus.SHUTOFF]:
-                    server.status = ServerStatus.ACTIVE
-                    server.power_state = PowerState.RUNNING
-                    server.updated = datetime.now(timezone.utc)
-                    return True
+            # confirmResize or revertResize: the rule above admits only VERIFY_RESIZE
+            if action_lower == "revertresize" and server.original_flavor_id:
+                server.flavor_id = server.original_flavor_id
+            # Restore to pre-resize status (ACTIVE or SHUTOFF)
+            if server.pre_resize_status == ServerStatus.SHUTOFF:
+                server.status = ServerStatus.SHUTOFF
+                server.power_state = PowerState.SHUTDOWN
+            else:
+                server.status = ServerStatus.ACTIVE
+                server.power_state = PowerState.RUNNING
+            # Clear resize tracking fields
+            server.original_flavor_id = None
+            server.pre_resize_status = None
+            server.updated = now
+            return True
 
-            elif action_lower == "pause":
-                if server.status == ServerStatus.ACTIVE:
-                    server.status = ServerStatus.PAUSED
-                    server.power_state = PowerState.PAUSED
-                    server.updated = datetime.now(timezone.utc)
-                    return True
+    def reset_server_state(self, server_id: str, state: str) -> bool:
+        """Set a server's vm_state, as Nova's admin ``os-resetState`` does.
 
-            elif action_lower == "unpause":
-                if server.status == ServerStatus.PAUSED:
-                    server.status = ServerStatus.ACTIVE
-                    server.power_state = PowerState.RUNNING
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "suspend":
-                if server.status == ServerStatus.ACTIVE:
-                    server.status = ServerStatus.SUSPENDED
-                    server.power_state = PowerState.SUSPENDED
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "resume":
-                if server.status == ServerStatus.SUSPENDED:
-                    server.status = ServerStatus.ACTIVE
-                    server.power_state = PowerState.RUNNING
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "shelve":
-                if server.status == ServerStatus.ACTIVE:
-                    server.status = ServerStatus.SHELVED
-                    server.power_state = PowerState.SHUTDOWN
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "unshelve":
-                if server.status in [ServerStatus.SHELVED, ServerStatus.SHELVED_OFFLOADED]:
-                    server.status = ServerStatus.ACTIVE
-                    server.power_state = PowerState.RUNNING
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "confirmresize":
-                if server.status == ServerStatus.VERIFY_RESIZE:
-                    # Restore to pre-resize status (ACTIVE or SHUTOFF)
-                    if server.pre_resize_status == ServerStatus.SHUTOFF:
-                        server.status = ServerStatus.SHUTOFF
-                        server.power_state = PowerState.SHUTDOWN
-                    else:
-                        server.status = ServerStatus.ACTIVE
-                        server.power_state = PowerState.RUNNING
-                    # Clear resize tracking fields
-                    server.original_flavor_id = None
-                    server.pre_resize_status = None
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            elif action_lower == "revertresize":
-                if server.status == ServerStatus.VERIFY_RESIZE:
-                    # Revert to original flavor
-                    if server.original_flavor_id:
-                        server.flavor_id = server.original_flavor_id
-                    # Restore to pre-resize status (ACTIVE or SHUTOFF)
-                    if server.pre_resize_status == ServerStatus.SHUTOFF:
-                        server.status = ServerStatus.SHUTOFF
-                        server.power_state = PowerState.SHUTDOWN
-                    else:
-                        server.status = ServerStatus.ACTIVE
-                        server.power_state = PowerState.RUNNING
-                    # Clear resize tracking fields
-                    server.original_flavor_id = None
-                    server.pre_resize_status = None
-                    server.updated = datetime.now(timezone.utc)
-                    return True
-
-            return False
+        Only the recorded state changes: a task in progress is dropped and the
+        power state is left alone, so the guest keeps running whatever it says.
+        """
+        with self._lock:
+            server = self._servers.get(server_id)
+            if not server:
+                return False
+            server.cancel_task()
+            server.status = ServerStatus.ERROR if state == "error" else ServerStatus.ACTIVE
+            server.updated = _utcnow()
+            return True
 
     def server_resize(self, server_id: str, flavor_id: str) -> bool:
         """Resize a server to a new flavor.

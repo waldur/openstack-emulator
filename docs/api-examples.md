@@ -202,6 +202,19 @@ curl -s -X POST http://localhost:8774/v2.1/servers/{server_id}/action \
   -H "Content-Type: application/json" \
   -d '{"reboot": {"type": "SOFT"}}'
 
+# Hard reboot: also from SHUTOFF, PAUSED, SUSPENDED, ERROR and during a soft reboot
+curl -s -X POST http://localhost:8774/v2.1/servers/{server_id}/action \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reboot": {"type": "HARD"}}'
+
+# Admin only: record the server as being in error (or active), as Nova's
+# os-resetState does; the guest itself is left alone
+curl -s -X POST http://localhost:8774/v2.1/servers/{server_id}/action \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"os-resetState": {"state": "error"}}'
+
 # Delete server
 curl -s -X DELETE http://localhost:8774/v2.1/servers/{server_id} \
   -H "X-Auth-Token: $TOKEN"
