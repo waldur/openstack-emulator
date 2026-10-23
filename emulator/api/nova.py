@@ -480,30 +480,34 @@ async def server_action(
         return run_server_action(server_id, "stop")
 
     elif "reboot" in body:
-        reboot_type = str((body["reboot"] or {}).get("type", "")).upper()
-        if reboot_type not in ("SOFT", "HARD"):
+        # Nova's schema: an object whose type is one of these spellings.
+        reboot = body["reboot"]
+        reboot_type = reboot.get("type") if isinstance(reboot, dict) else None
+        if reboot_type not in ("HARD", "Hard", "hard", "SOFT", "Soft", "soft"):
             raise HTTPException(
                 status_code=400,
-                detail="Invalid input for field/attribute type. Value: "
-                f"{(body['reboot'] or {}).get('type')}. 'SOFT' or 'HARD' expected",
+                detail=f"Invalid input for field/attribute type. Value: {reboot_type}. "
+                "'SOFT' or 'HARD' expected",
             )
-        return run_server_action(server_id, "reboot", reboot_type=reboot_type)
+        return run_server_action(server_id, "reboot", reboot_type=reboot_type.upper())
 
     elif "os-resetState" in body:
-        # Admin-only in Nova's default policy: it rewrites the recorded state
-        # and leaves the guest alone.
-        if not token.is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail="Policy doesn't allow os_compute_api:os-admin-actions:reset_state "
-                "to be performed.",
-            )
-        state = (body["os-resetState"] or {}).get("state")
+        # Nova validates the body before its policy check, so a bad state is a
+        # 400 for anyone; reset is admin-only in the default policy and leaves
+        # the guest alone.
+        reset = body["os-resetState"]
+        state = reset.get("state") if isinstance(reset, dict) else None
         if state not in ("active", "error"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid input for field/attribute state. Value: {state}. "
                 "'active' or 'error' expected",
+            )
+        if not token.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Policy doesn't allow os_compute_api:os-admin-actions:reset_state "
+                "to be performed.",
             )
         db.reset_server_state(server_id, state)
         return Response(status_code=202)
@@ -590,7 +594,11 @@ async def server_action(
         flavor = db.get_flavor(flavor_ref)
         if not flavor:
             raise HTTPException(status_code=400, detail=f"Flavor {flavor_ref} not found")
-        if not db.server_resize(server_id, flavor_ref):
+        try:
+            resized = db.server_resize(server_id, flavor_ref)
+        except InstanceInvalidStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not resized:
             raise HTTPException(status_code=409, detail="Cannot resize server in current state")
         return Response(status_code=202)
 
@@ -606,7 +614,10 @@ async def server_action(
         if not image_name:
             raise HTTPException(status_code=400, detail="Image name is required")
         metadata = create_image_data.get("metadata", {})
-        image = db.create_server_snapshot(server_id, image_name, metadata)
+        try:
+            image = db.create_server_snapshot(server_id, image_name, metadata)
+        except InstanceInvalidStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not image:
             raise HTTPException(status_code=404, detail="Server not found")
         # Return the image ID in the Location header (OpenStack convention)

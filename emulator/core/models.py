@@ -499,7 +499,11 @@ class Server:
             self.task_finishes_at = None
             self.updated = now
             return
-        elapsed = (now - self.task_started_at) / (self.task_finishes_at - self.task_started_at)
+        # Clamped: a clock stepped back (NTP, a database saved on another host)
+        # must not index outside the phases.
+        elapsed = max(
+            0.0, (now - self.task_started_at) / (self.task_finishes_at - self.task_started_at)
+        )
         self.task_state = self.task_phases[
             min(int(elapsed * len(self.task_phases)), len(self.task_phases) - 1)
         ]

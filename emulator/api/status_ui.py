@@ -17,6 +17,7 @@ from emulator.core.database import db
 from emulator.core.exceptions import IpAddressGenerationFailureError, SecurityGroupInUseError
 from emulator.core.models import (
     ImageVisibility,
+    PowerState,
     ServerStatus,
 )
 from emulator.core.presets import PresetLoader
@@ -1636,7 +1637,7 @@ def render_servers_table(
     project_map = project_map or {}
     rows = ""
     for server in servers:
-        status = server.status.value if hasattr(server.status, "value") else str(server.status)
+        status = server.api_status
         status_class = get_status_class(status)
         created = getattr(server, "created", None)
         created_str = created.strftime("%Y-%m-%d %H:%M:%S") if created else "-"
@@ -4989,7 +4990,7 @@ async def api_create_server(
         user_id=user["id"],
     )
 
-    return {"server": {"id": server.id, "name": server.name, "status": server.status.value}}
+    return {"server": {"id": server.id, "name": server.name, "status": server.api_status}}
 
 
 @router.delete("/api/servers/{server_id}")
@@ -5020,12 +5021,16 @@ async def api_server_action(
         raise HTTPException(status_code=404, detail="Server not found")
 
     action_name = action.get("action", "")
-    if action_name == "start":
+    # An operator override: it ends any task in progress, so the task cannot
+    # put the server back when it finishes.
+    if action_name in ("start", "reboot"):
+        server.cancel_task()
         server.status = ServerStatus.ACTIVE
+        server.power_state = PowerState.RUNNING
     elif action_name == "stop":
+        server.cancel_task()
         server.status = ServerStatus.SHUTOFF
-    elif action_name == "reboot":
-        server.status = ServerStatus.ACTIVE
+        server.power_state = PowerState.SHUTDOWN
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action_name}")
 

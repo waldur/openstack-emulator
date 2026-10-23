@@ -276,3 +276,150 @@ def test_a_task_in_progress_survives_a_restart(monkeypatch):
         assert loaded.task_state == TaskState.REBOOTING_HARD
         monkeypatch.setattr(database, "_utcnow", lambda: now + timedelta(seconds=31))
         assert second.get_server(server.id).status == ServerStatus.ACTIVE
+
+
+class TestReviewFindings:
+    """Behaviour a review found missing or diverging from Nova."""
+
+    def test_resize_waits_for_a_task(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"os-stop": None})
+
+        response = act(client, headers, server_id, {"resize": {"flavorRef": "2"}})
+
+        assert conflict(response) == (
+            f"Cannot 'resize' instance {server_id} while it is in task_state powering-off"
+        )
+
+    def test_snapshot_waits_for_a_task(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"reboot": {"type": "SOFT"}})
+
+        response = act(client, headers, server_id, {"createImage": {"name": "snap"}})
+
+        assert conflict(response).endswith("while it is in task_state rebooting")
+
+    def test_active_filter_includes_a_rebooting_server(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"reboot": {"type": "SOFT"}})
+
+        listed = client.get("/v2.1/servers?status=ACTIVE", headers=headers).json()
+
+        assert [s["id"] for s in listed["servers"]] == [server_id]
+
+    def test_a_clock_stepped_back_does_not_break_reads(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"reboot": {"type": "HARD"}})
+        clock.tick(-120)
+
+        assert client.get("/v2.1/servers", headers=headers).status_code == 200
+        assert show(client, headers, server_id) == ("HARD_REBOOT", "rebooting_hard", "active")
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"reboot": "HARD"}, {"reboot": {"type": "sOfT"}}, {"os-resetState": "error"}],
+    )
+    def test_malformed_bodies_are_400(self, client, headers, server_id, body):
+        assert act(client, headers, server_id, body).status_code == 400
+
+    def test_a_bad_reset_state_is_400_before_the_policy_check(self, client):
+        member = {"X-Auth-Token": scoped_token(project_name="tenant-one").id}
+        own_server = create_server(client, member)
+
+        response = act(client, member, own_server, {"os-resetState": {"state": "stopped"}})
+
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize("into", [{"pause": None}, {"suspend": None}, {"os-stop": None}])
+    def test_a_paused_suspended_or_stopped_server_keeps_its_status_while_hard_rebooted(
+        self, client, headers, server_id, clock, into
+    ):
+        act(client, headers, server_id, into)
+        clock.tick(30)
+        status_before = show(client, headers, server_id)[0]
+
+        act(client, headers, server_id, {"reboot": {"type": "HARD"}})
+
+        assert show(client, headers, server_id)[:2] == (status_before, "rebooting_hard")
+        clock.tick(30)
+        assert show(client, headers, server_id) == ("ACTIVE", None, "active")
+
+    def test_a_pending_hard_reboot_cannot_be_restarted(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"reboot": {"type": "HARD"}})
+        clock.tick(12)
+
+        response = act(client, headers, server_id, {"reboot": {"type": "HARD"}})
+
+        assert conflict(response).endswith("while it is in task_state reboot_pending_hard")
+
+    def test_start_powers_on_before_the_status_changes(self, client, headers, server_id, clock):
+        act(client, headers, server_id, {"os-stop": None})
+        clock.tick(30)
+
+        act(client, headers, server_id, {"os-start": None})
+
+        assert show(client, headers, server_id) == ("SHUTOFF", "powering-on", "stopped")
+        clock.tick(30)
+        assert show(client, headers, server_id) == ("ACTIVE", None, "active")
+
+
+class TestSettledActions:
+    def test_pause_and_unpause(self, client, headers, server_id):
+        act(client, headers, server_id, {"pause": None})
+        assert show(client, headers, server_id) == ("PAUSED", None, "paused")
+
+        assert act(client, headers, server_id, {"unpause": None}).status_code == 202
+        assert show(client, headers, server_id) == ("ACTIVE", None, "active")
+
+    def test_suspend_and_resume(self, client, headers, server_id):
+        act(client, headers, server_id, {"suspend": None})
+        assert show(client, headers, server_id) == ("SUSPENDED", None, "suspended")
+
+        assert act(client, headers, server_id, {"resume": None}).status_code == 202
+        assert show(client, headers, server_id) == ("ACTIVE", None, "active")
+
+    def test_a_stopped_server_can_be_shelved_and_unshelved(self, client, headers, server_id):
+        act(client, headers, server_id, {"os-stop": None})
+
+        assert act(client, headers, server_id, {"shelve": None}).status_code == 202
+        assert show(client, headers, server_id) == ("SHELVED", None, "shelved")
+        assert act(client, headers, server_id, {"unshelve": None}).status_code == 202
+        assert show(client, headers, server_id) == ("ACTIVE", None, "active")
+
+    def test_unshelve_of_an_active_server_names_its_vm_state(self, client, headers, server_id):
+        response = act(client, headers, server_id, {"unshelve": None})
+
+        assert conflict(response).endswith("while it is in vm_state active")
+
+    @pytest.mark.parametrize(
+        ("action", "code", "flavor"), [("confirmResize", 204, "2"), ("revertResize", 202, "1")]
+    )
+    def test_confirm_and_revert_resize(self, client, headers, server_id, action, code, flavor):
+        act(client, headers, server_id, {"resize": {"flavorRef": "2"}})
+        assert show(client, headers, server_id) == ("VERIFY_RESIZE", None, "resized")
+
+        assert act(client, headers, server_id, {action: None}).status_code == code
+
+        server = client.get(f"/v2.1/servers/{server_id}", headers=headers).json()["server"]
+        assert (server["status"], server["flavor"]["id"]) == ("ACTIVE", flavor)
+
+    def test_confirm_without_a_resize_names_its_vm_state(self, client, headers, server_id):
+        response = act(client, headers, server_id, {"confirmResize": None})
+
+        assert conflict(response).endswith("while it is in vm_state active")
+
+
+def test_status_ui_override_ends_a_task(clock):
+    apps = create_all_service_apps()
+    nova, ui = TestClient(apps["nova"]), TestClient(apps["status"])
+    token = db.create_token(user_name="admin", project_name="admin", domain_id="default")
+    nova_headers = {"X-Auth-Token": token.id}
+    server_id = create_server(nova, nova_headers)
+    act(nova, nova_headers, server_id, {"reboot": {"type": "SOFT"}})
+    session = ui.post("/api/login", json={"username": "admin", "password": "s4l4dus"})
+
+    response = ui.post(
+        f"/api/servers/{server_id}/action",
+        json={"action": "stop"},
+        cookies={"auth_token": session.cookies.get("auth_token")},
+    )
+
+    assert response.status_code == 200
+    clock.tick(60)
+    assert show(nova, nova_headers, server_id) == ("SHUTOFF", None, "stopped")

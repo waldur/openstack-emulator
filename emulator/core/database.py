@@ -1422,7 +1422,10 @@ class Database:
             if tenant_id:
                 servers = [s for s in servers if s.tenant_id == tenant_id]
             if status:
-                servers = [s for s in servers if s.api_status == status.upper()]
+                # As Nova: ACTIVE means vm_state active whatever its task (a
+                # rebooting server too); REBOOT and HARD_REBOOT pick the task.
+                wanted = status.upper()
+                servers = [s for s in servers if wanted in (s.status.value, s.api_status)]
             if name:
                 servers = [s for s in servers if name in s.name]
             if flavor:
@@ -1512,6 +1515,24 @@ class Database:
                 volume.status = VolumeStatus.AVAILABLE
             volume.updated_at = datetime.now(timezone.utc)
 
+    @staticmethod
+    def _check_server_state(
+        server: Server,
+        vm_states: set[ServerStatus],
+        nova_action: str,
+        task_states: tuple[TaskState | None, ...] = _NO_TASK,
+    ) -> None:
+        """Refuse an action as Nova's check_instance_state does: vm_state first."""
+        if server.status not in vm_states:
+            raise InstanceInvalidStateError(nova_action, server.id, "vm_state", server.vm_state)
+        if server.task_state not in task_states:
+            raise InstanceInvalidStateError(
+                nova_action,
+                server.id,
+                "task_state",
+                server.task_state.value if server.task_state else None,
+            )
+
     def server_action(self, server_id: str, action: str, reboot_type: str = "SOFT") -> bool:
         """Perform an action on a server, as Nova's compute API checks it.
 
@@ -1531,15 +1552,7 @@ class Database:
             if action_lower == "reboot":
                 action_lower = f"reboot_{reboot_type.lower()}"
             vm_states, task_states, nova_action = SERVER_ACTION_RULES[action_lower]
-            if server.status not in vm_states:
-                raise InstanceInvalidStateError(nova_action, server.id, "vm_state", server.vm_state)
-            if server.task_state not in task_states:
-                raise InstanceInvalidStateError(
-                    nova_action,
-                    server.id,
-                    "task_state",
-                    server.task_state.value if server.task_state else None,
-                )
+            self._check_server_state(server, vm_states, nova_action, task_states)
 
             if action_lower in TIMED_SERVER_ACTIONS:
                 phases, result = TIMED_SERVER_ACTIONS[action_lower]
@@ -1552,6 +1565,8 @@ class Database:
             if action_lower in SETTLED_SERVER_ACTIONS:
                 server.status, server.power_state = SETTLED_SERVER_ACTIONS[action_lower]
                 server.updated = now
+                if self.auto_save:
+                    self.save()
                 return True
 
             # confirmResize or revertResize: the rule above admits only VERIFY_RESIZE
@@ -1568,6 +1583,8 @@ class Database:
             server.original_flavor_id = None
             server.pre_resize_status = None
             server.updated = now
+            if self.auto_save:
+                self.save()
             return True
 
     def reset_server_state(self, server_id: str, state: str) -> bool:
@@ -1583,6 +1600,8 @@ class Database:
             server.cancel_task()
             server.status = ServerStatus.ERROR if state == "error" else ServerStatus.ACTIVE
             server.updated = _utcnow()
+            if self.auto_save:
+                self.save()
             return True
 
     def server_resize(self, server_id: str, flavor_id: str) -> bool:
@@ -1595,10 +1614,10 @@ class Database:
             server = self._servers.get(server_id)
             if not server:
                 return False
+            server.advance(_utcnow())
 
-            # Can only resize from ACTIVE or SHUTOFF
-            if server.status not in [ServerStatus.ACTIVE, ServerStatus.SHUTOFF]:
-                return False
+            # Nova resizes an active or stopped server with no task in progress
+            self._check_server_state(server, {ServerStatus.ACTIVE, ServerStatus.SHUTOFF}, "resize")
 
             # Validate the new flavor exists
             if flavor_id not in self._flavors:
@@ -1615,6 +1634,8 @@ class Database:
             server.status = ServerStatus.VERIFY_RESIZE
             server.power_state = PowerState.SHUTDOWN
             server.updated = datetime.now(timezone.utc)
+            if self.auto_save:
+                self.save()
             return True
 
     def create_server_snapshot(
@@ -1631,6 +1652,17 @@ class Database:
             server = self._servers.get(server_id)
             if not server:
                 return None
+            server.advance(_utcnow())
+            self._check_server_state(
+                server,
+                {
+                    ServerStatus.ACTIVE,
+                    ServerStatus.SHUTOFF,
+                    ServerStatus.PAUSED,
+                    ServerStatus.SUSPENDED,
+                },
+                "createImage",
+            )
 
             # Create a new Glance image as a snapshot
             image = GlanceImage(
