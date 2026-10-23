@@ -56,6 +56,25 @@ single service, since it also applies `--port-offset`, presets and persistence.
 | `--log-level` | `info` | One of `debug`, `info`, `warning`, `error` |
 | `--persist-db` | — | JSON file to restore from at startup and save to |
 | `--auto-save` | off | Write the database on every change instead of on demand |
+| `--server-action-seconds` | `0` | How long a server start, stop or reboot takes (also `EMULATOR_SERVER_ACTION_SECONDS`); see below |
+
+### Server actions
+
+Server actions are accepted or refused as Nova's compute API does: each one
+checks the server's `vm_state` and `task_state`, and a refusal is a 409 worded
+as Nova's, e.g. `Cannot 'reboot' instance <id> while it is in vm_state
+stopped`. A soft reboot needs an active server; a hard reboot also works on a
+stopped, paused, suspended or errored one, and can take over a soft reboot.
+
+With `--server-action-seconds 0` (the default) start, stop and reboot finish
+at once. A positive value makes them take that long and step through Nova's
+task states, so a client polling the server sees what it would see on a real
+cloud: `powering-off` while a stop runs, and `rebooting_hard`,
+`reboot_pending_hard`, `reboot_started_hard` during a hard reboot. As in Nova,
+only an active server shows its reboot in `status` (`REBOOT`,
+`HARD_REBOOT`); a server that is stopped, paused, suspended or in error keeps
+that status until the reboot finishes. Any other action on the server is
+refused while the task runs.
 
 ### Persistence
 

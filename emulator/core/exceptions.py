@@ -203,6 +203,22 @@ class ScopeUnauthorizedError(Exception):
         super().__init__(f"User {user_id} has no access to project {project_id}")
 
 
+class InstanceInvalidStateError(Exception):
+    """A server action was asked of a server in a state that refuses it.
+
+    Worded as Nova's ``InstanceInvalidState`` conflict, which clients match on:
+    Waldur, for one, treats "while it is in vm_state stopped" on a stop as
+    already done.
+    """
+
+    def __init__(self, action: str, server_id: str, attr: str, state: str | None) -> None:
+        self.action = action
+        self.server_id = server_id
+        self.attr = attr
+        self.state = state
+        super().__init__(f"Cannot '{action}' instance {server_id} while it is in {attr} {state}")
+
+
 class NeutronAPIError(StarletteHTTPException):
     """An error that must be rendered in Neutron's own envelope.
 

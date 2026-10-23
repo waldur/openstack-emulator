@@ -154,8 +154,18 @@ class Server:
     access_ipv6: str = ""
     config_drive: str = ""
     progress: int = 0
-    fault: dict[str, Any] | None
+    fault: dict[str, Any] | None  # shown only while the server is in error
+    # A start, stop or reboot in progress (see --server-action-seconds)
+    task_phases: list[TaskState]  # the task states it steps through
+    task_started_at: datetime | None
+    task_finishes_at: datetime | None
+    task_result: ServerStatus | None  # the status it settles into
 ```
+
+`status` holds the settled state, which Nova calls `vm_state`; the API reports
+`vm_state` under Nova's names (`stopped` for `SHUTOFF`, `rescued`, `resized`,
+and so on) and derives the shown status from it and `task_state`, so an active
+server mid-reboot reads `REBOOT` or `HARD_REBOOT`.
 
 **Status Values:**
 - `BUILD` - Server is being created

@@ -1,7 +1,7 @@
 """Data models for OpenStack emulator."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -94,7 +94,11 @@ class TaskState(str, Enum):
     UNSHELVING = "unshelving"
     SPAWNING = "spawning"
     REBOOTING = "rebooting"
+    REBOOT_PENDING = "reboot_pending"
+    REBOOT_STARTED = "reboot_started"
     REBOOTING_HARD = "rebooting_hard"
+    REBOOT_PENDING_HARD = "reboot_pending_hard"
+    REBOOT_STARTED_HARD = "reboot_started_hard"
     POWERING_OFF = "powering-off"
     POWERING_ON = "powering-on"
     SUSPENDING = "suspending"
@@ -104,6 +108,37 @@ class TaskState(str, Enum):
     REBUILDING = "rebuilding"
     RESIZING = "resizing"
     MIGRATING = "migrating"
+
+
+SOFT_REBOOT_TASK_STATES = (
+    TaskState.REBOOTING,
+    TaskState.REBOOT_PENDING,
+    TaskState.REBOOT_STARTED,
+)
+HARD_REBOOT_TASK_STATES = (
+    TaskState.REBOOTING_HARD,
+    TaskState.REBOOT_PENDING_HARD,
+    TaskState.REBOOT_STARTED_HARD,
+)
+
+# Nova's vm_state for each status the emulator stores. Nova keeps the two apart:
+# the status a client sees is derived from vm_state and task_state.
+VM_STATES = {
+    "ACTIVE": "active",
+    "BUILD": "building",
+    "DELETED": "deleted",
+    "ERROR": "error",
+    "PAUSED": "paused",
+    "RESCUE": "rescued",
+    "RESIZE": "active",
+    "REVERT_RESIZE": "resized",
+    "SHELVED": "shelved",
+    "SHELVED_OFFLOADED": "shelved_offloaded",
+    "SHUTOFF": "stopped",
+    "SOFT_DELETED": "soft-delete",
+    "SUSPENDED": "suspended",
+    "VERIFY_RESIZE": "resized",
+}
 
 
 class PowerState(int, Enum):
@@ -411,6 +446,74 @@ class Server:
     original_flavor_id: str | None = None
     # Stores the status before resize to restore on confirm/revert
     pre_resize_status: ServerStatus | None = None
+    # A start, stop or reboot in progress: task_state steps through task_phases
+    # until task_finishes_at, when the server settles into task_result.
+    task_phases: list[TaskState] = field(default_factory=list)
+    task_started_at: datetime | None = None
+    task_finishes_at: datetime | None = None
+    task_result: ServerStatus | None = None
+
+    @property
+    def vm_state(self) -> str:
+        return VM_STATES.get(self.status.value, self.status.value.lower())
+
+    @property
+    def api_status(self) -> str:
+        """The status Nova shows: an active server mid-reboot reads REBOOT.
+
+        Only an active server shows its reboot. One that is stopped, paused,
+        suspended or in error keeps that status until the reboot finishes, as
+        in Nova's state map.
+        """
+        if self.status == ServerStatus.ACTIVE:
+            if self.task_state in SOFT_REBOOT_TASK_STATES:
+                return ServerStatus.REBOOT.value
+            if self.task_state in HARD_REBOOT_TASK_STATES:
+                return ServerStatus.HARD_REBOOT.value
+        return self.status.value
+
+    def begin_task(
+        self, phases: list[TaskState], result: ServerStatus, now: datetime, seconds: float
+    ) -> None:
+        """Start a task that settles into ``result`` after ``seconds``."""
+        self.task_phases = list(phases)
+        self.task_state = phases[0]
+        self.task_result = result
+        self.task_started_at = now
+        self.task_finishes_at = now + timedelta(seconds=seconds)
+        self.advance(now)
+
+    def advance(self, now: datetime) -> None:
+        """Move a task in progress to the phase it has reached by ``now``."""
+        if self.task_finishes_at is None or self.task_started_at is None:
+            return
+        if now >= self.task_finishes_at:
+            self.status = self.task_result or self.status
+            self.power_state = (
+                PowerState.RUNNING if self.status == ServerStatus.ACTIVE else PowerState.SHUTDOWN
+            )
+            self.task_state = None
+            self.task_phases = []
+            self.task_result = None
+            self.task_started_at = None
+            self.task_finishes_at = None
+            self.updated = now
+            return
+        # Clamped: a clock stepped back (NTP, a database saved on another host)
+        # must not index outside the phases.
+        elapsed = max(
+            0.0, (now - self.task_started_at) / (self.task_finishes_at - self.task_started_at)
+        )
+        self.task_state = self.task_phases[
+            min(int(elapsed * len(self.task_phases)), len(self.task_phases) - 1)
+        ]
+
+    def cancel_task(self) -> None:
+        self.task_state = None
+        self.task_phases = []
+        self.task_result = None
+        self.task_started_at = None
+        self.task_finishes_at = None
 
     def to_dict(self, detailed: bool = True) -> dict[str, Any]:
         """Convert to API response format."""
@@ -425,7 +528,7 @@ class Server:
         if detailed:
             result.update(
                 {
-                    "status": self.status.value,
+                    "status": self.api_status,
                     "tenant_id": self.tenant_id,
                     "user_id": self.user_id,
                     "hostId": hash(self.host) % (10**16) if self.host else "",
@@ -434,7 +537,7 @@ class Server:
                     "OS-EXT-SRV-ATTR:instance_name": f"instance-{self.id[:8]}",
                     "OS-EXT-STS:task_state": (self.task_state.value if self.task_state else None),
                     "OS-EXT-STS:power_state": self.power_state.value,
-                    "OS-EXT-STS:vm_state": self.status.value.lower(),
+                    "OS-EXT-STS:vm_state": self.vm_state,
                     "OS-EXT-AZ:availability_zone": self.availability_zone,
                     "flavor": {
                         "id": self.flavor_id,
@@ -476,7 +579,8 @@ class Server:
                     "progress": self.progress,
                 }
             )
-            if self.fault:
+            # Nova shows the fault only while the server is in error or deleted.
+            if self.fault and self.status in (ServerStatus.ERROR, ServerStatus.DELETED):
                 result["fault"] = self.fault
         return result
 

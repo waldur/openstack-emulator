@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from emulator.core.database import db
 from emulator.core.exceptions import (
     FixedIPAlreadyInUseError,
+    InstanceInvalidStateError,
     InvalidFixedIPError,
     PortInUseError,
     PortNotFoundError,
@@ -443,6 +444,18 @@ async def delete_server(
     return Response(status_code=204)
 
 
+def run_server_action(
+    server_id: str, action: str, status_code: int = 202, **kwargs: Any
+) -> Response:
+    """Run a server action, answering 409 in Nova's words when the state refuses it."""
+    try:
+        if not db.server_action(server_id, action, **kwargs):
+            raise HTTPException(status_code=404, detail="Server not found")
+    except InstanceInvalidStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=status_code)
+
+
 # Server actions
 @router.post("/v2.1/servers/{server_id}/action", status_code=202, response_model=None)
 async def server_action(
@@ -461,50 +474,49 @@ async def server_action(
 
     # Handle different actions
     if "os-start" in body:
-        if not db.server_action(server_id, "start"):
-            raise HTTPException(status_code=409, detail="Cannot start server in current state")
-        return Response(status_code=202)
+        return run_server_action(server_id, "start")
 
     elif "os-stop" in body:
-        if not db.server_action(server_id, "stop"):
-            raise HTTPException(status_code=409, detail="Cannot stop server in current state")
-        return Response(status_code=202)
+        return run_server_action(server_id, "stop")
 
     elif "reboot" in body:
-        body["reboot"].get("type", "SOFT")
-        if not db.server_action(server_id, "reboot"):
-            raise HTTPException(status_code=409, detail="Cannot reboot server in current state")
+        # Nova's schema: an object whose type is one of these spellings.
+        reboot = body["reboot"]
+        reboot_type = reboot.get("type") if isinstance(reboot, dict) else None
+        if reboot_type not in ("HARD", "Hard", "hard", "SOFT", "Soft", "soft"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid input for field/attribute type. Value: {reboot_type}. "
+                "'SOFT' or 'HARD' expected",
+            )
+        return run_server_action(server_id, "reboot", reboot_type=reboot_type.upper())
+
+    elif "os-resetState" in body:
+        # Nova validates the body before its policy check, so a bad state is a
+        # 400 for anyone; reset is admin-only in the default policy and leaves
+        # the guest alone.
+        reset = body["os-resetState"]
+        state = reset.get("state") if isinstance(reset, dict) else None
+        if state not in ("active", "error"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid input for field/attribute state. Value: {state}. "
+                "'active' or 'error' expected",
+            )
+        if not token.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Policy doesn't allow os_compute_api:os-admin-actions:reset_state "
+                "to be performed.",
+            )
+        db.reset_server_state(server_id, state)
         return Response(status_code=202)
 
-    elif "pause" in body:
-        if not db.server_action(server_id, "pause"):
-            raise HTTPException(status_code=409, detail="Cannot pause server in current state")
-        return Response(status_code=202)
-
-    elif "unpause" in body:
-        if not db.server_action(server_id, "unpause"):
-            raise HTTPException(status_code=409, detail="Cannot unpause server in current state")
-        return Response(status_code=202)
-
-    elif "suspend" in body:
-        if not db.server_action(server_id, "suspend"):
-            raise HTTPException(status_code=409, detail="Cannot suspend server in current state")
-        return Response(status_code=202)
-
-    elif "resume" in body:
-        if not db.server_action(server_id, "resume"):
-            raise HTTPException(status_code=409, detail="Cannot resume server in current state")
-        return Response(status_code=202)
-
-    elif "shelve" in body:
-        if not db.server_action(server_id, "shelve"):
-            raise HTTPException(status_code=409, detail="Cannot shelve server in current state")
-        return Response(status_code=202)
-
-    elif "unshelve" in body:
-        if not db.server_action(server_id, "unshelve"):
-            raise HTTPException(status_code=409, detail="Cannot unshelve server in current state")
-        return Response(status_code=202)
+    elif action := next(
+        (a for a in ("pause", "unpause", "suspend", "resume", "shelve", "unshelve") if a in body),
+        None,
+    ):
+        return run_server_action(server_id, action)
 
     elif "os-getConsoleOutput" in body:
         # Return fake console output
@@ -582,19 +594,19 @@ async def server_action(
         flavor = db.get_flavor(flavor_ref)
         if not flavor:
             raise HTTPException(status_code=400, detail=f"Flavor {flavor_ref} not found")
-        if not db.server_resize(server_id, flavor_ref):
+        try:
+            resized = db.server_resize(server_id, flavor_ref)
+        except InstanceInvalidStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not resized:
             raise HTTPException(status_code=409, detail="Cannot resize server in current state")
         return Response(status_code=202)
 
     elif "confirmResize" in body:
-        if not db.server_action(server_id, "confirmResize"):
-            raise HTTPException(status_code=409, detail="Cannot confirm resize in current state")
-        return Response(status_code=204)
+        return run_server_action(server_id, "confirmResize", status_code=204)
 
     elif "revertResize" in body:
-        if not db.server_action(server_id, "revertResize"):
-            raise HTTPException(status_code=409, detail="Cannot revert resize in current state")
-        return Response(status_code=202)
+        return run_server_action(server_id, "revertResize", status_code=202)
 
     elif "createImage" in body:
         create_image_data = body["createImage"]
@@ -602,7 +614,10 @@ async def server_action(
         if not image_name:
             raise HTTPException(status_code=400, detail="Image name is required")
         metadata = create_image_data.get("metadata", {})
-        image = db.create_server_snapshot(server_id, image_name, metadata)
+        try:
+            image = db.create_server_snapshot(server_id, image_name, metadata)
+        except InstanceInvalidStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not image:
             raise HTTPException(status_code=404, detail="Server not found")
         # Return the image ID in the Location header (OpenStack convention)

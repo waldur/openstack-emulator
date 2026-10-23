@@ -152,6 +152,13 @@ def main() -> None:
         action="store_true",
         help="Enable auto-saving of database on changes",
     )
+    parser.add_argument(
+        "--server-action-seconds",
+        type=float,
+        default=None,
+        help="How long a server start, stop or reboot takes, stepping through "
+        "Nova's task states (default: EMULATOR_SERVER_ACTION_SECONDS, else 0 = at once)",
+    )
 
     args = parser.parse_args()
 
@@ -162,6 +169,11 @@ def main() -> None:
     if args.list_presets:
         list_presets()
         sys.exit(0)
+
+    if args.server_action_seconds is not None:
+        from emulator.core.database import db
+
+        db.server_action_seconds = args.server_action_seconds
 
     # Configure persistence
     if args.persist_db:
