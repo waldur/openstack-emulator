@@ -4,6 +4,26 @@ All notable changes to openstack-emulator will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.4] - 2026-11-12
+
+### Added
+- Add `--server-action-seconds` option so start, stop and reboot take time and step through Nova's task states
+- Add `os-resetState` server action so admins can put a server into the error state
+
+### Changed
+- Check every Nova server action against Nova's `vm_state` and `task_state` rules, returning 409 errors worded as Nova words them
+- Derive the displayed server status from `vm_state` and `task_state`, using Nova's state names
+- Accept hard reboots from SHUTOFF, PAUSED, SUSPENDED and ERROR, and let them take over a soft reboot in progress
+- Match `?status=ACTIVE` server filters on `vm_state`, so active servers in the middle of a task are included
+- Match names exactly in Keystone, Glance and Cinder list filters, as OpenStack does
+
+### Fixed
+- Fix resize and snapshot being accepted while a server is in an incompatible state, such as during a stop
+- Fix reboot and `os-resetState` request bodies not being validated: malformed bodies now return 400 and reboot types must use Nova's exact spellings
+- Fix task phase lookup failing when the clock is stepped backwards
+- Fix the status UI override not ending a running task
+- Fix settled actions, resize, confirm/revert resize and reset state not triggering auto-save
+
 ## [0.6.3] - 2026-10-12
 
 ### Changed
