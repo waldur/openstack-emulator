@@ -458,3 +458,25 @@ class TestDefaultImages:
         response = client.get("/v2/images?status=active")
         images = response.json()["images"]
         assert len(images) >= 3
+
+
+class TestNameFilter:
+    """``?name=`` matches exactly, as Glance does: ``in:`` lists exact names."""
+
+    def test_list_images_by_name_matches_exactly(self):
+        for name in ("probe", "probe-2", "a-probe"):
+            response = client.post(
+                "/v2/images",
+                json={
+                    "name": name,
+                    "visibility": "public",
+                    "container_format": "bare",
+                    "disk_format": "qcow2",
+                },
+            )
+            assert response.status_code == 201, response.text
+
+        response = client.get("/v2/images", params={"name": "probe"})
+
+        assert response.status_code == 200
+        assert [image["name"] for image in response.json()["images"]] == ["probe"]

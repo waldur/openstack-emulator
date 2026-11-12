@@ -772,3 +772,18 @@ class TestErrorFormat:
 
         assert response.status_code == 404
         assert response.json() == {"error": {"message": "Not Found", "code": 404}}
+
+
+class TestImageNameFilter:
+    """The image proxy hands ``name`` to Glance, which matches it exactly."""
+
+    def test_list_images_by_name_matches_exactly(self, client, auth_token):
+        headers = {"X-Auth-Token": auth_token}
+        name = client.get("/v2.1/images", headers=headers).json()["images"][0]["name"]
+
+        for path in ("images", "images/detail"):
+            response = client.get(f"/v2.1/{path}", headers=headers, params={"name": name})
+            assert [image["name"] for image in response.json()["images"]] == [name]
+
+            response = client.get(f"/v2.1/{path}", headers=headers, params={"name": name[:-1]})
+            assert response.json()["images"] == []
