@@ -882,3 +882,47 @@ class TestAdminActsOnAnyProjectsVolume:
             f"/v3/{owner.project_id}/volumes/{volume_id}", headers=self._headers(owner)
         )
         assert response.status_code == 202, response.text
+
+
+class TestNameFilter:
+    """``?name=`` matches exactly, as Cinder does; its substring filter is ``name~``."""
+
+    def test_list_volumes_by_name_matches_exactly(self, client, auth_token, project_id):
+        headers = {"X-Auth-Token": auth_token}
+        for name in ("probe", "probe-2", "a-probe"):
+            response = client.post(
+                f"/v3/{project_id}/volumes",
+                headers=headers,
+                json={"volume": {"name": name, "size": 1}},
+            )
+            assert response.status_code == 202, response.text
+
+        for path in ("volumes", "volumes/detail"):
+            response = client.get(
+                f"/v3/{project_id}/{path}", headers=headers, params={"name": "probe"}
+            )
+            assert response.status_code == 200
+            assert [volume["name"] for volume in response.json()["volumes"]] == ["probe"]
+
+    def test_list_snapshots_by_name_matches_exactly(self, client, auth_token, project_id):
+        headers = {"X-Auth-Token": auth_token}
+        response = client.post(
+            f"/v3/{project_id}/volumes",
+            headers=headers,
+            json={"volume": {"name": "source", "size": 1}},
+        )
+        volume_id = response.json()["volume"]["id"]
+        for name in ("probe", "probe-2", "a-probe"):
+            response = client.post(
+                f"/v3/{project_id}/snapshots",
+                headers=headers,
+                json={"snapshot": {"name": name, "volume_id": volume_id}},
+            )
+            assert response.status_code == 202, response.text
+
+        for path in ("snapshots", "snapshots/detail"):
+            response = client.get(
+                f"/v3/{project_id}/{path}", headers=headers, params={"name": "probe"}
+            )
+            assert response.status_code == 200
+            assert [snap["name"] for snap in response.json()["snapshots"]] == ["probe"]
