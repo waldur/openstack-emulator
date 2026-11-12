@@ -1427,6 +1427,8 @@ class Database:
                 wanted = status.upper()
                 servers = [s for s in servers if wanted in (s.status.value, s.api_status)]
             if name:
+                # Nova matches name as a regular expression, so a substring is
+                # the nearer match here; the other services match it exactly.
                 servers = [s for s in servers if name in s.name]
             if flavor:
                 servers = [s for s in servers if s.flavor_id == flavor]
@@ -1768,7 +1770,7 @@ class Database:
             if status:
                 images = [i for i in images if i.status == status.upper()]
             if name:
-                images = [i for i in images if name in i.name]
+                images = [i for i in images if i.name == name]
 
             # Sort by name
             images.sort(key=lambda i: i.name)
@@ -2511,7 +2513,7 @@ class Database:
             if enabled is not None:
                 domains = [d for d in domains if d.enabled == enabled]
             if name:
-                domains = [d for d in domains if name in d.name]
+                domains = [d for d in domains if d.name == name]
             return domains
 
     def update_domain(
@@ -2612,7 +2614,7 @@ class Database:
             if enabled is not None:
                 projects = [p for p in projects if p.enabled == enabled]
             if name:
-                projects = [p for p in projects if name in p.name]
+                projects = [p for p in projects if p.name == name]
             if parent_id:
                 projects = [p for p in projects if p.parent_id == parent_id]
             if tags:
@@ -2753,7 +2755,9 @@ class Database:
             if enabled is not None:
                 users = [u for u in users if u.enabled == enabled]
             if name:
-                users = [u for u in users if name in u.name]
+                # Exact, as Keystone: clients look users up by name with
+                # find(), which fails when more than one comes back.
+                users = [u for u in users if u.name == name]
             return users
 
     def update_user(
@@ -2864,7 +2868,7 @@ class Database:
             if domain_id:
                 roles = [r for r in roles if r.domain_id == domain_id]
             if name:
-                roles = [r for r in roles if name in r.name]
+                roles = [r for r in roles if r.name == name]
             return roles
 
     def update_role(
@@ -3131,7 +3135,7 @@ class Database:
             if domain_id:
                 groups = [g for g in groups if g.domain_id == domain_id]
             if name:
-                groups = [g for g in groups if name in g.name]
+                groups = [g for g in groups if g.name == name]
             return groups
 
     def update_group(
@@ -3262,7 +3266,7 @@ class Database:
             if service_type:
                 services = [s for s in services if s.type == service_type]
             if name:
-                services = [s for s in services if name in s.name]
+                services = [s for s in services if s.name == name]
             return services
 
     def update_service(
@@ -3629,7 +3633,7 @@ class Database:
             if status:
                 volumes = [v for v in volumes if v.status.value == status]
             if name:
-                volumes = [v for v in volumes if name in v.name]
+                volumes = [v for v in volumes if v.name == name]
 
             # Sort by created date
             volumes.sort(key=lambda v: v.created_at)
@@ -3932,7 +3936,7 @@ class Database:
             if status:
                 snapshots = [s for s in snapshots if s.status.value == status]
             if name:
-                snapshots = [s for s in snapshots if name in s.name]
+                snapshots = [s for s in snapshots if s.name == name]
 
             # Sort by created date
             snapshots.sort(key=lambda s: s.created_at)
@@ -4277,7 +4281,7 @@ class Database:
             if status:
                 images = [i for i in images if i.status.value == status]
             if name:
-                images = [i for i in images if name in i.name]
+                images = [i for i in images if i.name == name]
             if tag:
                 images = [i for i in images if tag in i.tags]
 

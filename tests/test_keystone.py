@@ -863,3 +863,52 @@ class TestScopePrivilege:
 
         response = self._authenticate(client, {"project": {"id": admin_project.id}})
         assert response.status_code == 401
+
+
+class TestNameFilter:
+    """``?name=`` matches exactly, as Keystone's default ``equals`` filter does.
+
+    Clients look entities up by name with ``find()``, which raises
+    ``NoUniqueMatch`` when more than one comes back. A substring match let a
+    tenant user named ``acme-adminuser-user-x1y2`` break Waldur's
+    ``users.find(name="admin")`` for every tenant created after it.
+    """
+
+    @pytest.mark.parametrize(
+        ("collection", "member", "extra"),
+        [
+            ("domains", "domain", {}),
+            ("projects", "project", {}),
+            ("users", "user", {"password": "secret123"}),
+            ("roles", "role", {}),
+            ("groups", "group", {}),
+            ("services", "service", {"type": "probe"}),
+        ],
+    )
+    def test_name_matches_exactly(self, client, auth_token, collection, member, extra):
+        headers = {"X-Auth-Token": auth_token}
+        for name in ("probe", "probe-admin", "a-probe"):
+            response = client.post(
+                f"/v3/{collection}",
+                headers=headers,
+                json={member: {"name": name, **extra}},
+            )
+            assert response.status_code == 201, response.text
+
+        response = client.get(f"/v3/{collection}", headers=headers, params={"name": "probe"})
+
+        assert response.status_code == 200
+        assert [item["name"] for item in response.json()[collection]] == ["probe"]
+
+    def test_a_user_named_after_admin_leaves_admin_unique(self, client, auth_token):
+        headers = {"X-Auth-Token": auth_token}
+        response = client.post(
+            "/v3/users",
+            headers=headers,
+            json={"user": {"name": "acme-adminuser-user-x1y2", "password": "secret123"}},
+        )
+        assert response.status_code == 201, response.text
+
+        response = client.get("/v3/users", headers=headers, params={"name": "admin"})
+
+        assert [user["name"] for user in response.json()["users"]] == ["admin"]
