@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>waldur/waldur-pipelines//renovate/default"],
+  "enabledManagers": ["dockerfile", "custom.regex"],
+  "dependencyDashboardApproval": true
+}
